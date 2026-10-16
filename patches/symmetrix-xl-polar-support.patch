@@ -131,7 +131,7 @@ index 80169b3..9bbf03a 100644
          explicit Readout(const nlohmann::json& data);
          double evaluate(const std::vector<double>& features) const;
 diff --git a/libsymmetrix/source/mace_nonlinear_kokkos.hpp b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
-index ffcdc1c..017dc27 100644
+index ffcdc1c..1901c16 100644
 --- a/libsymmetrix/source/mace_nonlinear_kokkos.hpp
 +++ b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
 @@ -2,9 +2,12 @@
@@ -147,7 +147,7 @@ index ffcdc1c..017dc27 100644
  #include <span>
  #include <type_traits>
  
-@@ -339,13 +342,201 @@ public:
+@@ -339,13 +342,210 @@ public:
      Kokkos::View<int*> atomic_numbers;
      Kokkos::View<double*> atomic_energies,node_energies,node_forces,atom_forces,
          stress_tensor;
@@ -233,6 +233,15 @@ index ffcdc1c..017dc27 100644
 +        polar_dbg_rev_pos_coul_storage;                                  // (N,3)  ⑥ 段后位置伴
 +    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_dbg_rev_pos_all,
 +        polar_dbg_rev_pos_all_storage;                                   // (N,3)  全链位置伴(终值)
++    // ---- P4 RBE (随机批 Ewald k 采样;依据 docs/design/RBE_P4_DESIGN.md) ----
++    bool polar_rbe_enabled=false;                 // JSON "rbe".enabled(缺省关=确定性零改动)
++    int polar_rbe_p=200;                          // 批大小 P
++    double polar_rbe_sigma=1.5;                   // 采样包络 σ_q(=密度基宽)
++    unsigned long long polar_rbe_seed=20261016ULL; // RNG 种子(入 JSON;ENV 可覆盖)
++    long long polar_rbe_frame=0;                  // 帧计数(每 eval +1 ⇒ 帧间重采样)
++    double polar_rbe_zq=1.0;                      // 离散归一 Σ_{m≠0} e^{−σ²k²/2}(精确直和)
++    Kokkos::View<Precision*> polar_k_weight,
++        polar_k_weight_storage;                   // (K,) 每 k 权重: 确定性=1;RBE=Z_q·e^{+σ²k²/2}/(2P)
 +    // 前向缓存增量(§2.1):
 +    // [v3 适配·D-02] 校后逐步密度直接复用既有 polar_scf_step_densities
 +    // (其快照内核位于逐步 Fukui 校正之后 = 校后口径; 提案的 _post 重复视图不新增)。
@@ -350,7 +359,7 @@ index ffcdc1c..017dc27 100644
  
  private:
      struct SphericalHarmonicsState;
-@@ -430,17 +621,32 @@ private:
+@@ -430,17 +630,32 @@ private:
          Kokkos::View<const int*> neigh_types);
  public:
      struct Readout {
@@ -384,7 +393,7 @@ index ffcdc1c..017dc27 100644
          void reverse(Kokkos::View<const Precision**,Kokkos::LayoutRight> input,Precision scale,
                       Kokkos::View<Precision**,Kokkos::LayoutRight> input_adjoint);
      };
-@@ -690,6 +896,73 @@ private:
+@@ -690,6 +905,73 @@ private:
      std::vector<Interaction> interactions;
      std::vector<E3ProductBasisKokkosT<Precision>> products;
      std::vector<Readout> readouts;
@@ -952,10 +961,10 @@ index 7514438..5c4fbba 100644
              "MH-1 stress reduction inputs are inconsistent.");
 diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
 new file mode 100644
-index 0000000..2e9575a
+index 0000000..e2a47b0
 --- /dev/null
 +++ b/libsymmetrix/source/mace_polar_impl.tpp
-@@ -0,0 +1,2940 @@
+@@ -0,0 +1,3147 @@
 +// mace_polar_impl.tpp — P3 极性静电场独立编译单元(2026-10-15)。
 +// 目的: polar 逻辑(②Fukui/③k网格+GTO/④势特征/⑤SCF; 及未来⑥⑦⑧)与主 tpp 分离,
 +//       之后 polar 改动只重编本 TU(单 TU ~数分钟)而非四个大 TU(20-40 分钟)。
@@ -1280,6 +1289,148 @@ index 0000000..2e9575a
 +        for(int row=0;row<3;++row)
 +            for(int column=0;column<3;++column)
 +                polar_rcell_host[3*row+column]=Precision(reciprocal[row][column]);
++        // ---- P4 RBE 分支: 随机批采样(全空间; 逐轴取整高斯 + MH) ----
++        // 依据 docs/design/RBE_P4_DESIGN.md §1.2(Box-Muller+Metropolis 提议)/
++        // §3.3(采样包络 q(k)∝e^{−σ_q²k²/2}, σ_q=密度基宽 1.5; 1/k² 留在估计量)。
++        // 采样空间 = m∈Z³\{0}, k = rcellᵀ·m;不做 |k|≤cutoff 截断(全支撑, §3.3)。
++        // RNG = counter-based SplitMix64(纯函数于 (seed,frame,slot) ⇒ 与调度无关、
++        // 跨运行逐位可复现;种子入 JSON,见 PLAN 依据账本)。首版限正交晶胞。
++        std::vector<Precision> k_flat,k_norm2_host,k0_host;
++        if(polar_rbe_enabled) {
++            for(int i2=0;i2<3;++i2)
++                for(int j2=0;j2<3;++j2)
++                    if(i2!=j2&&std::fabs(lattice[i2][j2])
++                        >1e-10*std::max(1.0,std::fabs(lattice[i2][i2])))
++                        throw std::runtime_error(
++                            "polar_blocks: RBE 首版仅支持正交晶胞"
++                            " (off-diagonal cell entries must vanish).");
++            double s_axis[3];
++            for(int axis=0;axis<3;++axis) {
++                const double length=std::sqrt(
++                    lattice[axis][0]*lattice[axis][0]
++                    +lattice[axis][1]*lattice[axis][1]
++                    +lattice[axis][2]*lattice[axis][2]);
++                s_axis[axis]=length/(two_pi*polar_rbe_sigma);
++            }
++            // Z_q = Σ_{m≠0} e^{−σ_q²k²/2} = Π_i S_i − 1(每轴精确直和,非 Poisson 近似)
++            double zq=1.0;
++            for(int axis=0;axis<3;++axis) {
++                const double inv2s2=1.0/(2.0*s_axis[axis]*s_axis[axis]);
++                const int m_max=std::max(
++                    64,static_cast<int>(std::ceil(16.0*s_axis[axis])));
++                double axis_sum=1.0;
++                for(int m=1;m<=m_max;++m)
++                    axis_sum+=2.0*std::exp(
++                        -static_cast<double>(m)*static_cast<double>(m)*inv2s2);
++                zq*=axis_sum;
++            }
++            zq-=1.0;
++            polar_rbe_zq=zq;
++            const unsigned long long frame_id=static_cast<unsigned long long>(
++                polar_rbe_frame);
++            ++polar_rbe_frame;
++            const int p=polar_rbe_p;
++            const unsigned long long seed=polar_rbe_seed;
++            const double s0=s_axis[0],s1=s_axis[1],s2=s_axis[2];
++            const double r00=reciprocal[0][0],r10=reciprocal[1][0],
++                r20=reciprocal[2][0];
++            const double r01=reciprocal[0][1],r11=reciprocal[1][1],
++                r21=reciprocal[2][1];
++            const double r02=reciprocal[0][2],r12=reciprocal[1][2],
++                r22=reciprocal[2][2];
++            Kokkos::View<Precision*> m_view("polar rbe m",std::size_t(3)*p);
++            auto m_dev=m_view;
++            Kokkos::parallel_for("polar rbe sample",1,KOKKOS_LAMBDA(int) {
++                const auto splitmix=[](unsigned long long x) {
++                    x+=0x9E3779B97F4A7C15ULL;
++                    x=(x^(x>>30))*0xBF58476D1CE4E5B9ULL;
++                    x=(x^(x>>27))*0x94D049BB133111EBULL;
++                    return x^(x>>31);
++                };
++                unsigned long long ctr=1ULL;
++                const auto next_uniform=[&](unsigned long long idx)->double {
++                    const unsigned long long v=splitmix(seed
++                        +idx*0x100000001B3ULL
++                        +frame_id*0x9E3779B97F4A7C15ULL);
++                    return (static_cast<double>(v>>11)+0.5)
++                        *(1.0/9007199254740992.0); // (0,1)
++                };
++                const auto norm_z=[&]()->double {
++                    double u1=next_uniform(ctr);++ctr;
++                    const double u2=next_uniform(ctr);++ctr;
++                    if(u1<1e-300) u1=1e-300;
++                    return Kokkos::sqrt(-2.0*Kokkos::log(u1))
++                        *Kokkos::cos(6.283185307179586476925286766559*u2);
++                };
++                const auto erf_a=[](double x)->double {
++                    const double sgn=x<0.0?-1.0:1.0;
++                    if(x<0.0) x=-x;
++                    const double t=1.0/(1.0+0.3275911*x);
++                    const double y=1.0-((((1.061405429*t-1.453152027)*t
++                        +1.421413741)*t-0.284496736)*t+0.254829592)*t
++                        *Kokkos::exp(-x*x);
++                    return sgn*y;
++                };
++                const auto phi=[&](double z)->double {
++                    return 0.5*(1.0+erf_a(z*0.70710678118654752440084436210485));
++                };
++                const auto q_mass=[&](int m,double s)->double {
++                    return phi((static_cast<double>(m)+0.5)/s)
++                        -phi((static_cast<double>(m)-0.5)/s);
++                };
++                double mx[3]={0.0,0.0,0.0};
++                for(int slot=0;slot<p;++slot) {
++                    for(;;) {
++                        double cand[3];
++                        for(int axis=0;axis<3;++axis) {
++                            const double s=axis==0?s0:(axis==1?s1:s2);
++                            const int m_new=static_cast<int>(
++                                Kokkos::round(s*norm_z()));
++                            if(slot==0) {
++                                cand[axis]=static_cast<double>(m_new);
++                                continue;
++                            }
++                            // MH(独立提议; 目标 p∝e^{−m²/2s²}; 提议 q=区间质量,
++                            // 同 lammps-rbe kspace_style rbe L77-95/L299 语义)。
++                            const double p_old=Kokkos::exp(
++                                -0.5*mx[axis]*mx[axis]/(s*s));
++                            const double p_new=Kokkos::exp(
++                                -0.5*static_cast<double>(m_new)
++                                *static_cast<double>(m_new)/(s*s));
++                            const double q_old=q_mass(
++                                static_cast<int>(mx[axis]),s);
++                            const double q_new=q_mass(m_new,s);
++                            double acce=(p_new*q_old)/(p_old*q_new);
++                            if(acce>1.0) acce=1.0;
++                            const double u=next_uniform(ctr);++ctr;
++                            cand[axis]=(u<acce)
++                                ?static_cast<double>(m_new):mx[axis];
++                        }
++                        if(cand[0]==0.0&&cand[1]==0.0&&cand[2]==0.0)
++                            continue; // m≠0(采样空间)
++                        for(int axis=0;axis<3;++axis) mx[axis]=cand[axis];
++                        break;
++                    }
++                    m_dev(3*slot)=Precision(mx[0]);
++                    m_dev(3*slot+1)=Precision(mx[1]);
++                    m_dev(3*slot+2)=Precision(mx[2]);
++                }
++            });
++            const auto m_host=Kokkos::create_mirror_view_and_copy(
++                Kokkos::HostSpace(),m_view);
++            for(int slot=0;slot<p;++slot) {
++                const double n1=m_host(3*slot),n2=m_host(3*slot+1),
++                    n3=m_host(3*slot+2);
++                const double kx=n1*r00+n2*r10+n3*r20;
++                const double ky=n1*r01+n2*r11+n3*r21;
++                const double kz=n1*r02+n2*r12+n3*r22;
++                k_flat.push_back(Precision(kx));
++                k_flat.push_back(Precision(ky));
++                k_flat.push_back(Precision(kz));
++                k_norm2_host.push_back(Precision(kx*kx+ky*ky+kz*kz));
++                k0_host.push_back(Precision(0));
++            }
++        } else {
 +        // n 上界(kspace.py L41-53): max_ns=ceil(cutoff / (rcell_i·ĉell_i))
 +        int max_ns[3];
 +        for(int axis=0;axis<3;++axis) {
@@ -1305,7 +1456,6 @@ index 0000000..2e9575a
 +            for(int n2=-max_ns[1];n2<max_ns[1];++n2)
 +                for(int n3=-max_ns[2];n3<max_ns[2];++n3)
 +                    lattice_points.push_back({n1,n2,n3});
-+        std::vector<Precision> k_flat,k_norm2_host,k0_host;
 +        for(const auto& n:lattice_points) {
 +            const double kx=n.n1*reciprocal[0][0]+n.n2*reciprocal[1][0]
 +                +n.n3*reciprocal[2][0];
@@ -1323,6 +1473,7 @@ index 0000000..2e9575a
 +            k0_host.push_back(k_norm2_host.size()==1
 +                ?Precision(1):Precision(0));
 +        }
++        } // (else: 确定性半空间枚举)
 +        const int num_k=static_cast<int>(k_norm2_host.size());
 +        polar_k_vectors=toKokkosView("polar k vectors",k_flat,num_k,3);
 +        polar_k_norm2=toKokkosView("polar k norm2",k_norm2_host);
@@ -1393,6 +1544,32 @@ index 0000000..2e9575a
 +                    }
 +                });
 +        }
++        // ---- P4 RBE: 每 k 估计量权重 ----
++        // 确定性=1(乘 1.0 逐位精确 ⇒ 既有路径零改动);RBE=Z_q·e^{+σ_q²k²/2}/(2P),
++        // 1/2 为半空间↔全空间换算(RBE_P4_DESIGN §3.3 L2/L3)。乘点=各 k 求和项
++        // (投影累加/⑥ 能量/⑥ ρ̄/反投 ii、iii-b);assemble 与相位伴随经 ρ̄ 携带,不再单乘。
++        ensure_view(polar_k_weight,polar_k_weight_storage,
++            std::size_t(num_k));
++        {
++            auto kw=polar_k_weight;
++            if(polar_rbe_enabled) {
++                const Precision rbe_scale=Precision(polar_rbe_zq
++                    /(2.0*static_cast<double>(polar_rbe_p)));
++                const Precision rbe_half_sigma2=Precision(
++                    0.5*polar_rbe_sigma*polar_rbe_sigma);
++                auto kw_kn2=polar_k_norm2;
++                Kokkos::parallel_for("polar rbe weights",num_k,
++                    KOKKOS_LAMBDA(int k) {
++                        kw(k)=rbe_scale*Kokkos::exp(
++                            rbe_half_sigma2*kw_kn2(k));
++                    });
++            } else {
++                Kokkos::parallel_for("polar det weights",num_k,
++                    KOKKOS_LAMBDA(int k) {
++                        kw(k)=Precision(1);
++                    });
++            }
++        }
 +        // ---- P3 模块④: forward_dynamic(逐通道势特征) ----
 +        // 依据: features.py L617-658(assemble→库仑核→投影→permute→减去自相互作用)
 +        // + extensions.py L834-838(逐通道归一)与 L846-848(α|β 拼接)。
@@ -1416,6 +1593,7 @@ index 0000000..2e9575a
 +            auto permutation=polar_output_permutation;
 +            auto density_all=polar_working_density;
 +            auto potential_features=polar_potential_features;
++            auto kweight=polar_k_weight;
 +            for(int channel=0;channel<2;++channel) {
 +                // assemble: rho(k) = (2π)³/V · [Bᵣ·Σₙ C·q + Bᵢ·Σₙ S·q,
 +                //                               Bᵢ·Σₙ C·q − Bᵣ·Σₙ S·q]
@@ -1463,8 +1641,8 @@ index 0000000..2e9575a
 +                                    +pi*fbim(k,m))*kfp;
 +                                const Precision fb=(pr*fbim(k,m)
 +                                    -pi*fbre(k,m))*kfp;
-+                                proj_cos+=fa*kcos2(k,node);
-+                                proj_sin+=fb*ksin2(k,node);
++                                proj_cos+=(kweight(k)*fa)*kcos2(k,node);
++                                proj_sin+=(kweight(k)*fb)*ksin2(k,node);
 +                            }
 +                            feat[m]=proj_scale*(proj_cos+proj_sin);
 +                        }
@@ -1559,6 +1737,7 @@ index 0000000..2e9575a
 +            auto permutation_view=polar_output_permutation;
 +            auto si_overlap_view=polar_si_overlap;
 +            auto si_select_view=polar_si_select;
++            auto kweight=polar_k_weight;
 +            auto features_mixed_view=polar_features_mixed;
 +            auto pe_view=polar_pe_out;
 +            auto scratch_a=polar_scratch_a;
@@ -1724,8 +1903,8 @@ index 0000000..2e9575a
 +                                        +pi*fbim(k,m))*kfp;
 +                                    const Precision fb=(pr*fbim(k,m)
 +                                        -pi*fbre(k,m))*kfp;
-+                                    proj_cos+=fa*kcos2(k,node);
-+                                    proj_sin+=fb*ksin2(k,node);
++                                    proj_cos+=(kweight(k)*fa)*kcos2(k,node);
++                                    proj_sin+=(kweight(k)*fb)*ksin2(k,node);
 +                                }
 +                                feat[m]=scf_proj_scale*(proj_cos+proj_sin);
 +                            }
@@ -2035,13 +2214,15 @@ index 0000000..2e9575a
 +            //     标量风格一致:tpp "validate nonlinear nodes"/"reduce_stress")
 +            auto coulomb_kn2=polar_k_norm2;
 +            auto coulomb_k0=polar_k0_mask;
++            auto coulomb_kweight=polar_k_weight;   // P4 RBE: 确定性=1
 +            double coulomb_k_energy=0.0;
 +            Kokkos::parallel_reduce("polar coulomb k energy",num_k,
 +                KOKKOS_LAMBDA(int k,double& acc) {
 +                    if(coulomb_k0(k)>Precision(0)) return;
 +                    const double re=static_cast<double>(coulomb_rho_re(k));
 +                    const double im=static_cast<double>(coulomb_rho_im(k));
-+                    acc+=2.0*(re*re+im*im)
++                    const double w=static_cast<double>(coulomb_kweight(k));
++                    acc+=w*2.0*(re*re+im*im)
 +                        /static_cast<double>(coulomb_kn2(k));
 +                },coulomb_k_energy);
 +            double coulomb_energy_value=coulomb_k_energy
@@ -2320,6 +2501,35 @@ index 0000000..2e9575a
 +        // [v3 适配·D-10] ⑥ 已落码(v2 起前向能量已接入 node_energies)按提案 §0-3/§10-2
 +        // "⑥ 落码时置位" 启用 coulomb 反向种子(hpp 默认 false 保留)。
 +        polar_coulomb_enabled=true;
++    }
++
++    // ---- P4 RBE: 随机批 Ewald 采样配置(可选; 依据 docs/design/RBE_P4_DESIGN.md) ----
++    // JSON "rbe" 块: {enabled,p,sigma_q,seed};ENV 覆盖(MATOS_RBE_P/SEED/SIGMA)为
++    // 门/调试测试钩子(生产以 JSON 为准,见 PLAN 依据账本)。缺省(无块且无 ENV)关闭
++    // ⇒ 确定性路径逐位不变。
++    if(polar_json.contains("rbe")
++        ||std::getenv("MATOS_RBE_P")!=nullptr) {
++        if(polar_json.contains("rbe")) {
++            const auto& rbe=polar_json.at("rbe");
++            polar_rbe_enabled=rbe.value("enabled",true);
++            polar_rbe_p=rbe.value("p",200);
++            polar_rbe_sigma=rbe.value("sigma_q",1.5);
++            polar_rbe_seed=rbe.value("seed",20261016ULL);
++        } else {
++            polar_rbe_enabled=true;
++        }
++        if(const char* env=std::getenv("MATOS_RBE_P"))
++            polar_rbe_p=std::atoi(env);
++        if(const char* env=std::getenv("MATOS_RBE_SEED"))
++            polar_rbe_seed=std::strtoull(env,nullptr,10);
++        if(const char* env=std::getenv("MATOS_RBE_SIGMA"))
++            polar_rbe_sigma=std::atof(env);
++        if(polar_rbe_p<8||polar_rbe_p>65536)
++            throw std::invalid_argument(
++                "polar_blocks: rbe p must be in [8,65536].");
++        if(polar_rbe_sigma<=0.0)
++            throw std::invalid_argument(
++                "polar_blocks: rbe sigma_q must be positive.");
 +    }
 +
 +    // ---- P3 模块⑦: local_electron_energy（OneBodyMLPFieldReadout L652-752） ----
@@ -2744,6 +2954,7 @@ index 0000000..2e9575a
 +        auto fbre=polar_feature_basis_re,fbim=polar_feature_basis_im;
 +        auto kn2=polar_k_norm2,k0m=polar_k0_mask;
 +        auto kcos=polar_cosines,ksin=polar_sines;
++        auto kweight=polar_k_weight;
 +        ensure_view(polar_rev_ab,polar_rev_ab_storage,num_k,16);
 +        ensure_view(polar_rev_rho_adj_re,polar_rev_rho_adj_re_storage,num_k);
 +        ensure_view(polar_rev_rho_adj_im,polar_rev_rho_adj_im_storage,num_k);
@@ -2761,11 +2972,12 @@ index 0000000..2e9575a
 +        // (ii) Ā/Ŷ = Σ_i cos/sin·proj_scale·feat̄(逆置换并入:j ↦ m=perm(j) 为双射)。
 +        Kokkos::parallel_for("polar desc ab reverse",num_k,
 +            KOKKOS_LAMBDA(int k) {
++                const Precision w=kweight(k);   // P4 RBE: 确定性=1
 +                for(int j=0;j<8;++j) {
 +                    const int m=permutation(j);
 +                    Precision a=Precision(0),b=Precision(0);
 +                    for(int node=0;node<num_nodes;++node) {
-+                        const Precision z=proj_scale*feats_bar(node,j);
++                        const Precision z=w*proj_scale*feats_bar(node,j);
 +                        a+=kcos(k,node)*z;
 +                        b+=ksin(k,node)*z;
 +                    }
@@ -2844,10 +3056,11 @@ index 0000000..2e9575a
 +                            ?Precision(0):Precision(polar_field_constant)/kn2(k);
 +                        const Precision pr=rho_re(k)*inv_k2;
 +                        const Precision pi=rho_im(k)*inv_k2;
++                        const Precision w=kweight(k);   // P4 RBE: 确定性=1
 +                        Precision exp_c=Precision(0),exp_s=Precision(0);
 +                        for(int j=0;j<8;++j) {
 +                            const int m=permutation(j);
-+                            const Precision z=proj_scale*feats_bar(node,j);
++                            const Precision z=w*proj_scale*feats_bar(node,j);
 +                            exp_c+=z*fbre(k,m);
 +                            exp_s+=z*fbim(k,m);
 +                        }
@@ -2912,6 +3125,7 @@ index 0000000..2e9575a
 +                auto si_sel=polar_si_select;
 +                auto permutation=polar_output_permutation;
 +                auto knorm=polar_field_feature_norms;
++                auto kweight=polar_k_weight;
 +                const Precision proj_scale=Precision(2.0/two_pi_cubed);
 +                Kokkos::parallel_for("polar rev replay project",num_nodes,
 +                    KOKKOS_LAMBDA(int node) {
@@ -2931,8 +3145,8 @@ index 0000000..2e9575a
 +                                    +pi*fbim(k,m))*kfp;
 +                                const Precision fb=(pr*fbim(k,m)
 +                                    -pi*fbre(k,m))*kfp;
-+                                proj_cos+=fa*kcos(k,node);
-+                                proj_sin+=fb*ksin(k,node);
++                                proj_cos+=(kweight(k)*fa)*kcos(k,node);
++                                proj_sin+=(kweight(k)*fb)*ksin(k,node);
 +                            }
 +                            feat[m]=proj_scale*(proj_cos+proj_sin);
 +                        }
@@ -3453,6 +3667,7 @@ index 0000000..2e9575a
 +            auto rho_bar_re=polar_rev_rho_adj_re,rho_bar_im=polar_rev_rho_adj_im;
 +            auto rho_re=polar_rev_rho_fwd_re,rho_im=polar_rev_rho_fwd_im;
 +            auto kn2=polar_k_norm2,k0m=polar_k0_mask;
++            auto kb_kweight=polar_k_weight;   // P4 RBE: 确定性=1
 +            const Precision rho_bar_scale=Precision(
 +                2.0*polar_cell_volume/(two_pi_cubed*two_pi_cubed)
 +                    *polar_field_constant);
@@ -3460,8 +3675,9 @@ index 0000000..2e9575a
 +                KOKKOS_LAMBDA(int k) {
 +                    const Precision kfac=(k0m(k)>Precision(0))
 +                        ?Precision(0):Precision(1)/kn2(k);
-+                    rho_bar_re(k)=rho_re(k)*kfac*rho_bar_scale;
-+                    rho_bar_im(k)=rho_im(k)*kfac*rho_bar_scale;
++                    const Precision w=kb_kweight(k);   // P4 RBE: 确定性=1
++                    rho_bar_re(k)=rho_re(k)*kfac*rho_bar_scale*w;
++                    rho_bar_im(k)=rho_im(k)*kfac*rho_bar_scale*w;
 +                });
 +        }
 +        kspace_assemble_reverse(polar_rev_rho_adj_re,

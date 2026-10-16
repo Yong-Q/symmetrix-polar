@@ -432,3 +432,28 @@ pos += Σ_k k·(−s·cos̄_proj + c·sin̄_proj)
 - **回归全绿**(v27 日志 `logs/reg_*`):①(3.1e-8)②(6.3e-8 rel)③④(6.8e-8)⑤(全项 PASS)
   + 端到端 32 帧(≤1.0e-6 eV, rel ≤1.1e-11)。
 - **8/8 模块关闭。下一步:P4(RBE 实现)。**
+
+## 21. P4 RBE 落码 + 验收(v28,2026-10-16)—— ✅ 门 PASS
+
+**实现**(引擎;依据 `docs/design/RBE_P4_DESIGN.md` §1-3):
+- k 集合生成分叉(`run_polar_pipeline` ③ 段): RBE=随机批采样(全空间、无截断、
+  正交盒首版); 确定性=半空间枚举(乘 1.0 逐位不变 ⇒ 既有路径零改动);
+- 采样器: 逐轴取整高斯(Box-Muller)+ MH(目标=点质量 e^{−σ_q²k²/2}, 提议=区间
+  质量, 同 lammps-rbe `kspace_style rbe` 语义; z0 单用镜像上游); RNG = counter-
+  based SplitMix64(纯函数于 (seed,frame,slot) ⇒ 与线程调度无关、跨运行逐位可复现;
+  种子入 JSON "rbe" 块, ENV `MATOS_RBE_{P,SEED,SIGMA}` 为测试钩子);
+- Z_q = Π_i S_i − 1 精确直和(非 Poisson 近似); σ_q=1.5(=密度基宽);
+- 估计量: 全空间 (1/P)Σ f/q, 1/q=Z_q·e^{+σ_q²k²/2};每 k 权重
+  w=Z_q·e^{+σ_q²k²/2}/(2P) 乘入全部 k 求和点(投影累加 ⑤×2/replay、⑥ 能量、
+  ⑥ ρ̄、反投 ii/iii-b);assemble 与相位伴随经 ρ̄ 携带(不重乘);自能保持确定性。
+- 帧语义: 每 eval 帧计数 +1 ⇒ 帧间重采样,帧内(SCF 全程)同批(设计 §3.4 方案 A)。
+
+**验收(v28)**:
+- 确定性回归: 全链检查点与 v27 逐位一致 ✓;
+- **RBE 门 PASS**(`bench/polar_rbe_gate.py`, nh3+co2):
+  - 收敛: RMS_F(p) = 4.10e-2@50 → 2.14e-2@200 → **1.03e-2@800 eV/Å**,
+    log-log 斜率 **−0.499**(理论 −0.5);
+  - 无偏: meanΔE 全部 ≤3·SEM(p=800: +1.5e-3 ± 1.7e-2 eV);
+  - 复现: 同 seed 能量逐位相等(dE=0.000e+00),力残差 6.7e-16(atomic 次序噪声);
+    异 seed 明确不同(ΔE=0.10 eV)。
+- 产物: `bench/polar_rbe_gate.{png,json}`。**P4 关闭;剩余 P5。**

@@ -24,7 +24,7 @@ GPU speed in LAMMPS-class workflows, without retraining a universal potential.
 | P3 ⑦ | `local_electron_energy` | engine: 8/8 configs PASS (stage rel **≤1e-6**, out ≤4e-7) |
 | **End-to-end** | Engine vs PyTorch PolarMACE (energy + forces) | **32/32 frames PASS: energy rel 4e-12–1.1e-11 (≤1.0e-6 eV); forces ≤1.6e-7 eV/Å** |
 | P3 ⑧ | Forces (full-chain reverse mode) | **PASS (v27)**: 12/12 configs — FD self-consistency ≤5.8e-4 (gate 1e-3), force parity vs PyTorch ≤7.2e-7 (gate 1e-3; pre-⑧ baseline mean/max 1.24/4.15), ΣF ≈ 1e-14 (exact translation invariance). Root cause of the final gap: missing *project-phase adjoint* in the descriptor reverse (design §2 ⑧-3 (d3), second line) — located via checkpoint audit (`harness/polar_rev_stage_audit.py`), fixed in `descriptor_reverse_channel` (iii-b) |
-| P4 | Random Batch Ewald k-space | design complete (see `docs/design/RBE_P4_DESIGN.md`); implementation next |
+| P4 | Random Batch Ewald k-space | **PASS (v28)**: RBE sampling (per-axis rounded-Gaussian + MH per lammps-rbe, counter-based SplitMix64 RNG, seed in JSON, exact discrete Z_q, full-space estimator with importance weights); p-scan RMS_F 4.1e-2 → 1.0e-2 eV/Å @ p=50→800, slope **−0.499** (≈ −1/√p), unbiased, same-seed bitwise-reproducible; see `harness/polar_rbe_gate.py` |
 
 Every stage is accepted against **dual-source fixture gates** (frozen Python
 reference dumps + live recomputation through the same PyTorch model), including
