@@ -106,7 +106,9 @@ def run_frame(engine, ev, atoms, atom_ids, h, py_calc, want_python):
     fd = fd_check(engine, atoms, atom_ids, h)
     keys = list(fd.keys())
     fd_vals = np.array([fd[k] for k in keys], dtype=np.float64)
-    an_vals = np.array([-forces[k[0], k[1]] for k in keys], dtype=np.float64)
+    # [修正 2026-10-16] 引擎/ASE 力符号 = 物理力(与 python 同号, 已证): FD≈+F;
+    # 原 an_vals=-forces 为符号错误(测出 2|F| 伪影, 详见 le 调查日志)。
+    an_vals = np.array([forces[k[0], k[1]] for k in keys], dtype=np.float64)
     out = {"energy": energy, "terms": terms, "fd": dist(fd_vals, an_vals),
            "polar_max": float(np.abs(polar).max()),
            "force_balance": float(np.abs(forces.sum(axis=0)).max())}

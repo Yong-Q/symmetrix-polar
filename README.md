@@ -23,8 +23,8 @@ GPU speed in LAMMPS-class workflows, without retraining a universal potential.
 | P3 ⑥ | `coulomb_energy` (full-k Ewald baseline) | engine: ρ̂ rel **1.3e-15**, ΔE rel **8.4e-16** |
 | P3 ⑦ | `local_electron_energy` | engine: 8/8 configs PASS (stage rel **≤1e-6**, out ≤4e-7) |
 | **End-to-end** | Engine total energy vs PyTorch PolarMACE total | **32/32 frames PASS: rel 4e-12–1.1e-11 (≤1.0e-6 eV absolute)** |
-| P3 ⑧ | Forces (full-chain reverse mode) | design complete; implementation next (see `docs/design/POLAR_REVERSE_DESIGN.md`) |
-| P4 | Random Batch Ewald k-space | design complete (see `docs/design/RBE_P4_DESIGN.md`) |
+| P3 ⑧ | Forces (full-chain reverse mode) | implementation landed (engine build **v23**, 2026-10-16); acceptance gate in progress — CH4 PASS (2.8–3.0e-4), NH3/N2/CO2 at 2.9e-3–1.2e-2 vs 1e-3 eV/Å target (down from O(0.1–4) pre-⑧); see `harness/polar_module8_gate.py` + `docs/design/POLAR_REVERSE_DESIGN.md` |
+| P4 | Random Batch Ewald k-space | design complete (see `docs/design/RBE_P4_DESIGN.md`); implementation starts after ⑧ closes |
 
 Every stage is accepted against **dual-source fixture gates** (frozen Python
 reference dumps + live recomputation through the same PyTorch model), including
@@ -85,6 +85,20 @@ python harness/polar_engine_load_smoke.py
 python harness/polar_module1_gate.py --live 2
 python harness/polar_module34_gate.py
 python harness/polar_module5_gate.py
+```
+
+## Sync discipline
+
+Every change round is committed and pushed to this repository as an off-machine
+backup (policy set 2026-10-16). The engine patch in `patches/` is re-emitted from
+the working checkout after each round, and `harness/`, `docs/` are refreshed from
+the working tree before committing:
+
+```bash
+git add harness docs patches README.md
+git commit -m "<round summary>"
+GIT_SSH_COMMAND="ssh -i /home/workspace/.ssh/id_ed25519 -o IdentitiesOnly=yes" \
+  git push origin master
 ```
 
 ## Upstreams & attribution

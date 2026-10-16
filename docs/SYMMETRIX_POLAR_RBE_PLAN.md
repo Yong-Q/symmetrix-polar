@@ -363,3 +363,37 @@ rel 2~4e-8)+ stage 全链 11/11(rel 3~7e-8; se_out 逐位 0.00); 配对关系数
 SCF 循环(描述符→更新块→密度更新→逐步 Fukui)端到端数值正确。修复过程留档:
 快照移至校正后、门脚本 stage 段先重跑 NH3、成员捕获越界(compute-sanitizer 取证)。
 模块⑤关闭; 5/8 完成(①②③④⑤)。产品: bench/polar_module5_gate.{png,json}。
+
+## 18. 🎉 L1 里程碑达成(2026-10-16)—— 端到端能量全对齐
+
+- **⑥⑦ 门 PASS**(v19c): ⑥ coulomb ρ̂ rel 1.3e-15 / ΔE rel 8.4e-16 / e2e 1.5e-8 eV;
+  ⑦ le 8/8(stage max 2.2e-5【rel 口径】/ out max 4.0e-7)。
+- **端到端 parity(PASS 32/32 帧)**: 引擎总能量 vs Python mace_polar 全模型:
+  NH3 ≤1.8e-7 / CH4 ≤3.6e-7 / N2 ≤1.0e-6 / CO2 ≤6.9e-7 eV;
+  相对 **4.2e-12 ~ 1.1e-11** —— P2 遗留的 −9.2 eV 缺口闭合至亚微电子伏。
+- 力列(ΔF 0.04~4.2 eV/Å) = ⑧ 预期缺口(`--forces-expect-absent` 留档)。
+- 产物: `bench/polar_endtoend_parity.{png,json}` + 两日志。**6/8 模块关闭**;
+  TU 拆分后单轮构建 ~5-10 分钟。
+
+## 19. 模块⑧(力/全链反向)落盘 + 构建事故处置 + lint 修复(2026-10-16)
+
+- **⑧ 补丁 v3 应用**(2026-10-16 02:2x): 16/16 插入点写入 + 字节复验通过;受影响文件
+  hpp/主 tpp×2(TU 分区)/polar TU/binding/pair。适配智能体内嵌数值自检全绿
+  (Fukui 伴随 FD 修复 6.1e2→3.0e-9;⑥ 种子链 FD 9.6e-13;D-08 提案数学错已修)。
+- **v20 编译失败**(4 errors): `auto si_sel=polar_si_select,si_ov=polar_si_overlap;`
+  两处多声明符混型(int* vs Precision*)——R1 类历史错误复发。修复=拆独立声明。
+- **构建事故(v20/v20b 双 ninja 重叠)**: v20 ninja 失败后其**迟到边**仍在跑(ninja 等
+  在场边完成后才退出),v20b 已启动 ⇒ 02:47-02:52 两 ninja 并发同目录(相同输入产物,
+  无害但状态混淆)。**纪律**: 失败日志出现后必须等 `ps` 无 ninja/nvcc 再启新构建;
+  事故后必须做单进程收尾(v20c: ninja -n 复核 + 重链接 + 部署)。最终 v20c
+  REBUILD_EXIT=0(02:59:39 部署);余留 kokkos git-version 永久脏边(无害)。
+- **polar_lint R1 双盲区修复**(bench/polar_lint.py): (a) 旧版只记维度(view1d/2d),
+  漏检 int* vs Precision* 标量差异 ⇒ 改记 (维度数,标量名); (b) 旧版解析在含 "//"
+  注释的续行声明处截断(polar_rev_pe 等整块缺失)⇒ 逐行去注释+跨行捕获。
+  自证: 合成坏样本 2/2 精确命中(含标量诊断);真实树 3 文件 CLEAN;注册表 458 项。
+- **装载冒烟 PASS**(v20c;新 .so): polar JSON 解析 + 反例守卫 + LOAD-SMOKE-DONE;
+  尾噪 cudaStreamSynchronize 为已留档无害项。
+- **⑧-7 le 反向 slice 落树**(本日): compute_polar_reverse_forces 内单块插入
+  ("1.5) le 反向种子生产";读投递契约 §4.1): MLP 反(重算式)→invar̄ 拆两路→
+  uvu_reverse 复用→Lin_q/Lin_v 反→种子(d_final/d_init 双分支同值+P_last)→
+  n̄f_last ⑧-A 注入末层;零 hpp 改动。→ v21 构建中(仅 polar TU 重编)。

@@ -53,36 +53,44 @@ def main():
     lines = src.split("\n")
     findings = []
 
-    # R1: 多声明符 auto 类型不一致 —— 从 hpp 构建"视图形状注册表"后按名判定
+    # R1: 多声明符 auto 类型不一致 —— 从 hpp 构建"(维度数,标量)注册表"后按名判定
+    # 2026-10-16 修复双盲区: (a) 旧版只存维度(view1d/view2d), 漏检 int* vs Precision*
+    #   标量差异(v20 编译错 si_sel/si_ov 即此类); (b) 旧版解析在含 "//" 注释的续行
+    #   声明处截断, polar_rev_pe 等整块缺失。现按行去注释 + 跨行捕获 + 记录标量名。
     import os as _os
     hpp_path = _os.path.join(_os.path.dirname(path), "mace_nonlinear_kokkos.hpp")
     view_shape = {}
     if _os.path.exists(hpp_path):
         hpp = open(hpp_path).read()
-        # 抓 "Kokkos::View<...> a,b,c;" 声明块, 判定 ** → view2d, * → view1d
-        for m in re.finditer(r"Kokkos::View<([^;>]*(?:>[^;]*)*?)>\s*([A-Za-z0-9_,\s]+);", hpp):
+        # 逐行去 // 注释(声明区无字符串字面量, 安全)
+        hpp_nc = "\n".join(re.sub(r"//.*$", "", ln) for ln in hpp.split("\n"))
+        # 抓 "Kokkos::View<...> a,b,c;" 声明块(可跨行), 记录 (维度数, 标量名)
+        for m in re.finditer(r"Kokkos::View<((?:[^<>]|<[^<>]*>)*)>\s*([^;]+);", hpp_nc):
             dtype_block = m.group(1)
-            names = [n.strip() for n in m.group(2).split("\n")]
+            base = dtype_block.replace("Kokkos::LayoutRight", "").replace("Kokkos::LayoutLeft", "")
+            base = re.sub(r"\bconst\b", "", base)
+            dims = base.count("*")
+            scalar = re.sub(r"\*", "", base).strip().split(",")[0].strip() or "?"
             flat = []
             for chunk in m.group(2).replace("\n", " ").split(","):
                 n = chunk.strip()
                 if n and re.match(r"^[A-Za-z_]\w*$", n):
                     flat.append(n)
-            shape = "view2d" if "**" in dtype_block else ("view1d" if "*" in dtype_block else "other")
             for n in flat:
-                view_shape[n] = shape
+                view_shape[n] = (dims, scalar)
     for idx, line in enumerate(lines):
         m = re.match(r"\s*auto\s+(\w+)\s*=\s*([^,;]+)(,.+)?;\s*$", line)
         if not m or not m.group(3):
             continue
         decls = re.split(r",(?![^()]*\))", line[line.index("auto") + 4:].rstrip(";"))
-        shapes = set()
+        shapes = []
         for d in decls:
             rhs = d.split("=", 1)[1].strip() if "=" in d else ""
             if rhs in view_shape:
-                shapes.add(view_shape[rhs])
-        if len(shapes) > 1:
-            findings.append(("R1", idx + 1, "多声明符 auto 形状不一致: " + line.strip()[:90]))
+                shapes.append((rhs, view_shape[rhs]))
+        if len({s for _, s in shapes}) > 1:
+            detail = "; ".join(f"{n}={d}x{s}" for n, (d, s) in shapes)
+            findings.append(("R1", idx + 1, f"多声明符 auto 类型不一致 [{detail}]: " + line.strip()[:80]))
 
     # R2: realloc 五参误用(view, storage, ...)
     for idx, line in enumerate(lines):
