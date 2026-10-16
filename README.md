@@ -20,9 +20,10 @@ GPU speed in LAMMPS-class workflows, without retraining a universal potential.
 | P3 ③ | k-grid (half-space enumeration) + GTO geometry precompute | bit-level: k **0.0**, cos/sin 6.9e-15, basis 4.4e-16 |
 | P3 ④ | Potential features (`forward_dynamic`) | rel **6.8e-8** (gate 1e-6) |
 | P3 ⑤ | SCF density updates (update blocks ×2, per-step Fukui) | density evolution 12/12, stage-level 11/11, rel **~5e-8** |
-| P3 ⑥ | `coulomb_energy` (full-k Ewald baseline) | prep: numpy reference rel **≤1.2e-15**; engine gate pending |
-| P3 ⑦ | `local_electron_energy` | prep: numpy replay **9.4e-16**; engine gate pending |
-| P3 ⑧ | Forces (full-chain reverse mode) | design complete (see `docs/design/POLAR_REVERSE_DESIGN.md`) |
+| P3 ⑥ | `coulomb_energy` (full-k Ewald baseline) | engine: ρ̂ rel **1.3e-15**, ΔE rel **8.4e-16** |
+| P3 ⑦ | `local_electron_energy` | engine: 8/8 configs PASS (stage rel **≤1e-6**, out ≤4e-7) |
+| **End-to-end** | Engine total energy vs PyTorch PolarMACE total | **32/32 frames PASS: rel 4e-12–1.1e-11 (≤1.0e-6 eV absolute)** |
+| P3 ⑧ | Forces (full-chain reverse mode) | design complete; implementation next (see `docs/design/POLAR_REVERSE_DESIGN.md`) |
 | P4 | Random Batch Ewald k-space | design complete (see `docs/design/RBE_P4_DESIGN.md`) |
 
 Every stage is accepted against **dual-source fixture gates** (frozen Python

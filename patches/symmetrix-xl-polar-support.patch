@@ -131,7 +131,7 @@ index 80169b3..9bbf03a 100644
          explicit Readout(const nlohmann::json& data);
          double evaluate(const std::vector<double>& features) const;
 diff --git a/libsymmetrix/source/mace_nonlinear_kokkos.hpp b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
-index ffcdc1c..3f0a8f5 100644
+index ffcdc1c..8c96383 100644
 --- a/libsymmetrix/source/mace_nonlinear_kokkos.hpp
 +++ b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
 @@ -5,6 +5,7 @@
@@ -142,7 +142,7 @@ index ffcdc1c..3f0a8f5 100644
  #include <span>
  #include <type_traits>
  
-@@ -339,13 +340,65 @@ public:
+@@ -339,13 +340,93 @@ public:
      Kokkos::View<int*> atomic_numbers;
      Kokkos::View<double*> atomic_energies,node_energies,node_forces,atom_forces,
          stress_tensor;
@@ -189,6 +189,32 @@ index ffcdc1c..3f0a8f5 100644
 +        polar_scratch_b,polar_scratch_b_storage,polar_nl_input,
 +        polar_nl_input_storage,polar_nl_a,polar_nl_a_storage,polar_nl_b,
 +        polar_nl_b_storage;                                             // ⑤暂存
++    // ===== [v2 适配] 模块⑥⑦ hpp 公开增补(binding 与 run_polar_pipeline 共用) =====
++    // [公开(供 binding)] ⑦ 运行期视图(module7_patch_final.md §4.1a 原文; 注释 (N,512) 按预检 §8-1 保留):
++    // P3 模块⑦: local_electron_energy（OneBodyMLPFieldReadout; 仅 polar_le_enabled 填充）
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_le_q_in,
++        polar_le_q_in_storage;                                          // (N,8)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_le_q_up,
++        polar_le_q_up_storage,polar_le_v_up,polar_le_v_up_storage;      // (N,512)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_le_dot_q,
++        polar_le_dot_q_storage,polar_le_dot_v,polar_le_dot_v_storage;   // (N,512)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_le_invar,
++        polar_le_invar_storage;                                         // (N,1024)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_le_mlp_out,
++        polar_le_mlp_out_storage;                                       // (N,1)
++    Kokkos::View<Precision*> polar_le_atom,polar_le_atom_storage;       // (N,)
++    Precision polar_le_total=Precision(0);                              // 末次求值总量
++    // [公开(供 binding)] ⑥ 视图与配置(module6_patch_final.md §1(补丁 A)原文; si 表/bool 随提案同区):
++    // --- P3 模块⑥: coulomb_energy(全 k GTO-Ewald;前向标量 eV + ρ̂(k) 诊断) ---
++    // ρ̂ = 未乘 (2π)³/V 的傅里叶密度(即 features.py L58-63 的括号项);
++    // E = FIELD_CONSTANT/(2V)·Σ_k 2·(ρ̂_r²+ρ̂_i²)/|k|²(k=0 跳过)。
++    bool polar_include_self_interaction=true,polar_include_pbc_corrections=true;
++    Kokkos::View<Precision*> polar_coulomb_si_overlap;                   // (4)
++    Kokkos::View<int*> polar_coulomb_si_select;                          // (4)
++    Kokkos::View<Precision*> polar_coulomb_rho_re,polar_coulomb_rho_im,
++        polar_coulomb_rho_re_storage,polar_coulomb_rho_im_storage;       // (Nk)
++    Kokkos::View<double*> polar_coulomb_energy,polar_coulomb_energy_storage;
++                                                                        // (1) eV
      void compute_node_energies_forces(int num_nodes,Kokkos::View<const int*> node_types,
          Kokkos::View<const int*> num_neigh,Kokkos::View<const int*> neigh_indices,
          Kokkos::View<const int*> neigh_types,Kokkos::View<const double*> xyz,
@@ -206,10 +232,12 @@ index ffcdc1c..3f0a8f5 100644
 +        Kokkos::View<const double*> node_positions,
 +        Kokkos::View<const double*> cell,
 +        double total_charge,double total_spin);
++    // [v2 适配] 模块⑥⑦ 扩展表解析(定义于独立 TU mace_polar_impl.tpp; ctor 于 polar 解析块收尾调用)。
++    void parse_polar_extension_tables();
  
  private:
      struct SphericalHarmonicsState;
-@@ -430,17 +483,24 @@ private:
+@@ -430,17 +511,24 @@ private:
          Kokkos::View<const int*> neigh_types);
  public:
      struct Readout {
@@ -235,7 +263,7 @@ index ffcdc1c..3f0a8f5 100644
          void reverse(Kokkos::View<const Precision**,Kokkos::LayoutRight> input,Precision scale,
                       Kokkos::View<Precision**,Kokkos::LayoutRight> input_adjoint);
      };
-@@ -690,6 +750,61 @@ private:
+@@ -690,6 +778,73 @@ private:
      std::vector<Interaction> interactions;
      std::vector<E3ProductBasisKokkosT<Precision>> products;
      std::vector<Readout> readouts;
@@ -294,11 +322,23 @@ index ffcdc1c..3f0a8f5 100644
 +    };
 +    std::vector<E3LinearKokkosT<Precision>> polar_mixer_linears;
 +    std::vector<PolarUpdate> polar_updates;
++    // ===== [v2 适配] 模块⑥⑦ hpp 私有增补(表与配置; 仅本类成员函数消费) =====
++    // [私有] ⑦ 表与配置(module7_patch_final.md §4.1b 原文):
++    // --- P3 模块⑦: local_electron_energy 表与配置（ctor 解析） ---
++    // 依据: field_blocks.py L652-752（前向链）+ L294-466（SparseUvu mode0/mode1）。
++    bool polar_le_enabled=false,polar_le_add=false;
++    E3LinearKokkosT<Precision> polar_le_linear_up_q,polar_le_linear_up_v;
++    Kokkos::View<int**,Kokkos::LayoutRight> polar_le_q_meta,
++        polar_le_v_meta;                                // (np,8)
++    Kokkos::View<Precision*> polar_le_q_path_weight,polar_le_q_weight,
++        polar_le_q_mask,polar_le_v_path_weight,polar_le_v_weight,
++        polar_le_v_mask;
++    AffineMLPKokkosT<Precision> polar_le_mlp;   // RadialMLP 1024→128×3→1
      std::vector<LayerState> states;
      std::vector<ExecutionMH1NodeRuntime> execution_mh1_node_runtime;
      void prepare_execution_mh1_node_runtime_parameters();
 diff --git a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
-index 7514438..74c49b2 100644
+index 7514438..f5e776a 100644
 --- a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
 +++ b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
 @@ -46,7 +46,7 @@ template<typename Value>
@@ -464,7 +504,7 @@ index 7514438..74c49b2 100644
      for(const auto& runtime:execution_mh1_node_runtime)
          bytes+=runtime.bytes();
      bytes+=sizeof(Precision)*(
-@@ -3270,6 +3352,92 @@ MaceNonlinearKokkosT<Precision>::MaceNonlinearKokkosT(const nlohmann::json& data
+@@ -3270,6 +3352,93 @@ MaceNonlinearKokkosT<Precision>::MaceNonlinearKokkosT(const nlohmann::json& data
      const auto& radial_data=data.at("radial_embedding");apply_cutoff=radial_data.at("apply_cutoff").get<bool>();bessel_weights=toKokkosView("bessel weights",tensor_values<Precision>(radial_data.at("basis").at("weights")));num_bessel=bessel_weights.size();radial_prefactor=radial_data.at("basis").at("prefactor").get<double>();cutoff_power=radial_data.at("cutoff").at("p").get<int>();const auto& transform=radial_data.at("distance_transform");has_agnesi=transform.at("type").get<std::string>()=="agnesi";if(has_agnesi){agnesi_a=transform.at("a").get<double>();agnesi_q=transform.at("q").get<double>();agnesi_p=transform.at("p").get<double>();covalent_radii=toKokkosView("covalent radii",transform.at("covalent_radii").get<std::vector<Precision>>());}
      scale=tensor_values<double>(data.at("scale_shift").at("scale")).at(0);shift=tensor_values<double>(data.at("scale_shift").at("shift")).at(0);const auto all_e0=tensor_values<double>(data.at("atomic_energies"));std::vector<double> e0(atomic_numbers_host.size());auto indices=data.at("model_indices").get<std::vector<int>>();for(int i=0;i<e0.size();++i)e0[i]=all_e0.at(indices[i]);atomic_energies=toKokkosView("atomic energies",e0);
      for(const auto& value:data.at("interactions"))interactions.emplace_back(value);for(const auto& value:data.at("products"))products.emplace_back(value);for(const auto& value:data.at("readouts"))readouts.emplace_back(value);
@@ -554,10 +594,11 @@ index 7514438..74c49b2 100644
 +            throw std::invalid_argument(
 +                "polar_blocks: charges_maps count must match num_recursion_steps.");
 +    } else polar_enabled=false;
++    if(polar_enabled) parse_polar_extension_tables();
      if constexpr(std::is_same_v<Precision,float>
          &&std::is_same_v<typename Kokkos::DefaultExecutionSpace::memory_space,
              Kokkos::HostSpace>) {
-@@ -3316,6 +3484,15 @@ MaceNonlinearKokkosT<Precision>::MaceNonlinearKokkosT(const nlohmann::json& data
+@@ -3316,6 +3485,15 @@ MaceNonlinearKokkosT<Precision>::MaceNonlinearKokkosT(const nlohmann::json& data
          product.set_e3_linear_workspace(e3_linear_workspace);
      for(auto& readout:readouts)
          readout.set_e3_linear_workspace(e3_linear_workspace);
@@ -573,7 +614,7 @@ index 7514438..74c49b2 100644
      if(interactions.size()!=products.size()||interactions.size()!=readouts.size())
          throw std::invalid_argument("MACE_Nonlinear Kokkos layer counts are inconsistent.");
      mh1_family=analyze_mh1_family_architecture(data);
-@@ -3407,6 +3584,7 @@ void MaceNonlinearKokkosT<Precision>::prepare_execution_mh1_node_runtime_paramet
+@@ -3407,6 +3585,7 @@ void MaceNonlinearKokkosT<Precision>::prepare_execution_mh1_node_runtime_paramet
          if(readout.nonlinear) {
              append_linear(readout_parameters,readout.linear_1);
              append_linear(readout_parameters,readout.linear_2);
@@ -581,7 +622,7 @@ index 7514438..74c49b2 100644
          } else append_linear(readout_parameters,readout.linear);
  
          auto& runtime=execution_mh1_node_runtime.at(layer);
-@@ -3611,7 +3789,7 @@ void MaceNonlinearKokkosT<Precision>::compute_Y(
+@@ -3611,7 +3790,7 @@ void MaceNonlinearKokkosT<Precision>::compute_Y(
  }
  
  template<typename Precision>
@@ -590,7 +631,7 @@ index 7514438..74c49b2 100644
  {
      const bool use_pair_spline=mh1_edge_executor_=="pair_spline_v1";
      if(!use_pair_spline&&mace_uses_direct_execution(streamed_edges)
-@@ -4078,6 +4256,31 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -4078,6 +4257,31 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
          }
      };
  
@@ -622,7 +663,7 @@ index 7514438..74c49b2 100644
      for(int layer=0;layer<static_cast<int>(interactions.size());++layer) {
          auto& interaction=interactions[layer];
          auto& state=states[layer];
-@@ -5220,8 +5423,53 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5220,8 +5424,53 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                  :E3ProductBasisKokkosT<Precision>::InputLayout::native,
              interaction.skip.active_output_prefix_dimension());
          features=state.output;
@@ -676,7 +717,7 @@ index 7514438..74c49b2 100644
      for(int layer=0;!generated_node_program
          &&layer<static_cast<int>(readouts.size());++layer) {
          auto& state=states[layer];
-@@ -5249,6 +5497,11 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5249,6 +5498,11 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
          energies(node)=e0(node_types(node))+energy_scale*energies(node)+energy_shift;
      });
  
@@ -690,10 +731,10 @@ index 7514438..74c49b2 100644
      if(use_pair_spline) {
 diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
 new file mode 100644
-index 0000000..9657001
+index 0000000..2c076ed
 --- /dev/null
 +++ b/libsymmetrix/source/mace_polar_impl.tpp
-@@ -0,0 +1,1000 @@
+@@ -0,0 +1,1429 @@
 +// mace_polar_impl.tpp — P3 极性静电场独立编译单元(2026-10-15)。
 +// 目的: polar 逻辑(②Fukui/③k网格+GTO/④势特征/⑤SCF; 及未来⑥⑦⑧)与主 tpp 分离,
 +//       之后 polar 改动只重编本 TU(单 TU ~数分钟)而非四个大 TU(20-40 分钟)。
@@ -1689,7 +1730,436 @@ index 0000000..9657001
 +                    final_density(node,column)=density_all(node,column);
 +                });
 +        }
++        // [v2 适配] ⑥⑦ 运行期合计段: ⑥-C1(module6 §3.2 原文, 8 空格缩进不变)
++        // + ⑦-4.3/4.4(module7 原文, 整体 +4 缩进; 4.3 末态密度代名 spin_charge
++        //   _density -> polar_scf_final_density, 见行内注释) + ⑥-C2(module6 §3.3
++        // 原文, +4 缩进; energies 局部别名 -> 成员 node_energies)。插入点=⑤ 块之后、函数尾前。
++        // ---- P3 模块⑥: coulomb_energy(全 k GTO-Ewald 基线) ----
++        // 依据: graph_longrange v0.4.0 energy.py L113-166(_pbc_energy_batch)与
++        // features.py L28-83(结构因子/库仑核), gto_utils.py L283-302(自相互作用);
++        // 密度源 = SCF 末态(extensions.py L887-893 自旋求和, L910-924 调用)。
++        // 公式经 bench/polar_module6_preflight.py 对 4 夹具双源逐位锁定(rel ≤1.2e-15)。
++        // 化简: E = FIELD_CONSTANT/(2V)·Σ_k 2·kfac·(ρ̂_r²+ρ̂_i²), kfac=1/k²(k=0 跳过;
++        // 由 density=(2π)³ρ̂/V 对 energy.py L17-30 两次代入所得,与预检链等价)。
++        // 作用域: num_k/volume 为③ 块局部量,本块与③④⑤ 同处一个
++        // if(polar_enabled){...} 内 ⇒ 直接可见(不得移到块外,见 §3.1)。
++        {
++            constexpr double coulomb_field_constant=1.0/(5.526349406e-3);
++            // (a) ρ̂(k) = Σ_n e^{ik·r_n}·B(k)·q_n(未乘 (2π)³/V;q_n = 自旋和)
++            ensure_view(polar_coulomb_rho_re,polar_coulomb_rho_re_storage,
++                std::size_t(num_k));
++            ensure_view(polar_coulomb_rho_im,polar_coulomb_rho_im_storage,
++                std::size_t(num_k));
++            auto coulomb_rho_re=polar_coulomb_rho_re;
++            auto coulomb_rho_im=polar_coulomb_rho_im;
++            auto coulomb_cos=polar_cosines;
++            auto coulomb_sin=polar_sines;
++            auto coulomb_dbre=polar_density_basis_re;
++            auto coulomb_dbim=polar_density_basis_im;
++            // 密度源 = ⑤ 写入的 SCF 末态快照(N,8)。若在⑤ 未落地的分支打本补丁,
++            // 把下一行换成 polar_field_independent_density(② 出口;过渡门 §3.4)。
++            auto coulomb_density=polar_scf_final_density;
++            Kokkos::parallel_for("polar coulomb rho",num_k,KOKKOS_LAMBDA(int k) {
++                Precision acc_cos[4]={Precision(0),Precision(0),Precision(0),
++                    Precision(0)};
++                Precision acc_sin[4]={Precision(0),Precision(0),Precision(0),
++                    Precision(0)};
++                for(int node=0;node<num_nodes;++node) {
++                    const Precision c=coulomb_cos(k,node);
++                    const Precision s=coulomb_sin(k,node);
++                    for(int m=0;m<4;++m) {
++                        const Precision q=coulomb_density(node,m)
++                            +coulomb_density(node,4+m);
++                        acc_cos[m]+=c*q;
++                        acc_sin[m]+=s*q;
++                    }
++                }
++                Precision re=Precision(0),im=Precision(0);
++                for(int m=0;m<4;++m) {
++                    re+=coulomb_dbre(k,m)*acc_cos[m]
++                        +coulomb_dbim(k,m)*acc_sin[m];
++                    im+=coulomb_dbim(k,m)*acc_cos[m]
++                        -coulomb_dbre(k,m)*acc_sin[m];
++                }
++                coulomb_rho_re(k)=re;
++                coulomb_rho_im(k)=im;
++            });
++            // (b) E_k 归约(k=0 跳过;标量用 double,与库内既有 parallel_reduce
++            //     标量风格一致:tpp "validate nonlinear nodes"/"reduce_stress")
++            auto coulomb_kn2=polar_k_norm2;
++            auto coulomb_k0=polar_k0_mask;
++            double coulomb_k_energy=0.0;
++            Kokkos::parallel_reduce("polar coulomb k energy",num_k,
++                KOKKOS_LAMBDA(int k,double& acc) {
++                    if(coulomb_k0(k)>Precision(0)) return;
++                    const double re=static_cast<double>(coulomb_rho_re(k));
++                    const double im=static_cast<double>(coulomb_rho_im(k));
++                    acc+=2.0*(re*re+im*im)
++                        /static_cast<double>(coulomb_kn2(k));
++                },coulomb_k_energy);
++            double coulomb_energy_value=coulomb_k_energy
++                *coulomb_field_constant/(2.0*volume);
++            // (c) 自相互作用(GTO self block,energy.py L156-166 减 0.5·Σ<q,self>)。
++            //     本模型序列化 include_self_interaction=true ⇒ 分支不执行
++            //     (反事实诊断在门脚本)。表 = coulomb 自己的 [4] 表。
++            if(!polar_include_self_interaction) {
++                auto coulomb_si_overlap=polar_coulomb_si_overlap;
++                auto coulomb_si_select=polar_coulomb_si_select;
++                double coulomb_self_energy=0.0;
++                Kokkos::parallel_reduce("polar coulomb self interaction",
++                    num_nodes,KOKKOS_LAMBDA(int node,double& acc) {
++                        double value=0.0;
++                        for(int m=0;m<4;++m) {
++                            const int selected=coulomb_si_select(m);
++                            const double q=static_cast<double>(
++                                coulomb_density(node,m)
++                                +coulomb_density(node,4+m));
++                            const double q_selected=static_cast<double>(
++                                coulomb_density(node,selected)
++                                +coulomb_density(node,4+selected));
++                            value+=q*static_cast<double>(
++                                coulomb_si_overlap(m))*q_selected;
++                        }
++                        acc+=value;
++                    },coulomb_self_energy);
++                coulomb_energy_value-=0.5*coulomb_self_energy;
++            }
++            // (d) pbc 修正(energy.py L168-192): 本路径 = 全周期(TTT)盒,
++            //     is_molecule/is_slab 选择器均为假(slabs.py L185-256/L59-69 两项
++            //     不执行)⇒ 修正恒 0。include_pbc_corrections=true 的语义即
++            //     "该恒 0 项已被计入"。非全周期盒暂不支持(引擎无 pbc 入参;
++            //     后续 slice 显式实现 monopole/slab 解析式并拒绝未实现分支)。
++            if(polar_include_pbc_corrections) {
++                // TTT ⇒ 0(保留闸门语义与后续 slice 挂点)。
++            }
++            // (e) 标量落盘(device 端写;host 不得直接访存 CUDA 视图)
++            ensure_view(polar_coulomb_energy,polar_coulomb_energy_storage,
++                std::size_t(1));
++            auto coulomb_energy=polar_coulomb_energy;
++            const double coulomb_energy_host=coulomb_energy_value;
++            Kokkos::parallel_for("polar coulomb energy store",1,
++                KOKKOS_LAMBDA(int) {
++                    coulomb_energy(0)=coulomb_energy_host;
++                });
++        }
++
++        if(polar_enabled&&polar_le_enabled) {
++            // ---- P3 模块⑦: local_electron_energy（OneBodyMLPFieldReadout L652-752） ----
++            // 输入口径 = extensions.py L867-880：q_in = charges_induced(⑤末态)
++            // + charges_0(②校正后初态)；v_in = ⑤末次迭代势特征 α|β；node_feats =
++            // ① 末层 e3nn 基张量。前向 = linear_up → 两条 uvu 内积 → concat → RadialMLP
++            // → 逐原子 local_q_e；总量 = 图内和（单图=整盒，无缩放）。
++            if(static_cast<int>(polar_step_potential_features.extent(0))!=num_nodes
++                ||polar_step_potential_features.extent(1)!=16)
++                throw std::runtime_error(
++                    "polar_blocks: local_electron_energy requires module ⑤ SCF step "
++                    "potential features before it runs.");
++            const int le_dot_width=static_cast<int>(polar_le_q_mask.extent(0));
++            const int le_up_width=polar_le_linear_up_q.output_dimension();
++            ensure_view(polar_le_q_in,polar_le_q_in_storage,num_nodes,8);
++            ensure_view(polar_le_q_up,polar_le_q_up_storage,num_nodes,le_up_width);
++            ensure_view(polar_le_v_up,polar_le_v_up_storage,num_nodes,le_up_width);
++            ensure_view(polar_le_dot_q,polar_le_dot_q_storage,num_nodes,le_dot_width);
++            ensure_view(polar_le_dot_v,polar_le_dot_v_storage,num_nodes,le_dot_width);
++            ensure_view(polar_le_invar,polar_le_invar_storage,num_nodes,
++                2*le_dot_width);
++            ensure_view(polar_le_mlp_out,polar_le_mlp_out_storage,num_nodes,1);
++            ensure_view(polar_le_atom,polar_le_atom_storage,num_nodes);
++            {
++                auto q_in=polar_le_q_in;
++                auto charges_zero=polar_field_independent_density;
++                // [v2 适配] ⑤ 末态密度: 原提案取 polar_spin_charge_density, 该视图自
++                // 树 2026-10-15 12:13(工作密度引入) 起为只读①原始累积; 改用同值快照成员。
++                auto charges_final=polar_scf_final_density;
++                Kokkos::parallel_for("polar le q_in",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},{num_nodes,8}),
++                    KOKKOS_LAMBDA(int node,int column) {
++                        q_in(node,column)=charges_final(node,column)
++                            +charges_zero(node,column);
++                    });
++            }
++            polar_le_linear_up_q.evaluate(polar_le_q_in,polar_le_q_up);
++            polar_le_linear_up_v.evaluate(
++                polar_step_potential_features,polar_le_v_up);
++            // 自写 uvu 内核：镜像 field_blocks.py L405-466 的 mode0(l×l→0)/mode1(l×0→l),
++            // 逐路径乘序列化 path_weight（JSON 0.03125）；与⑤ launch_uvu 同构。
++            {
++                const auto launch_le_uvu=[&](const int nodes,
++                        const std::vector<int>& meta_host,
++                        const std::vector<Precision>& path_weight,
++                        Kokkos::View<Precision*> weight_view,
++                        Kokkos::View<Precision*> mask_view,
++                        Kokkos::View<Precision**,Kokkos::LayoutRight> x1,
++                        Kokkos::View<Precision**,Kokkos::LayoutRight> x2,
++                        Kokkos::View<Precision**,Kokkos::LayoutRight> output) {
++                    // 注: meta_host/path_weight 为 HostMirror, 形参必须 auto&（同⑤ launch_uvu）;
++                    // 显式 Kokkos::View<Precision*> 无法绑定 HostSpace 镜像。
++                    const int paths=static_cast<int>(meta_host.size())/8;
++                    Kokkos::parallel_for("polar le uvu zero",
++                        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                            {nodes,static_cast<int>(output.extent(1))}),
++                        KOKKOS_LAMBDA(int node,int column) {
++                            output(node,column)=Precision(0);
++                        });
++                    for(int p=0;p<paths;++p) {
++                        const int in1_off=meta_host[p*8+0],
++                            in2_off=meta_host[p*8+1],
++                            out_off=meta_host[p*8+2],
++                            w_off=meta_host[p*8+3],
++                            mul1=meta_host[p*8+4],mul2=meta_host[p*8+5],
++                            mode=meta_host[p*8+6],d1=meta_host[p*8+7];
++                        const Precision pw=path_weight[p];
++                        const Precision inv_sqrt_d1=Precision(1)
++                            /Kokkos::sqrt(Precision(d1));
++                        if(mode==0) {
++                            Kokkos::parallel_for("polar le uvu mode0",nodes,
++                                KOKKOS_LAMBDA(int node) {
++                                    for(int u=0;u<mul1;++u) {
++                                        Precision mixed=Precision(0);
++                                        for(int v=0;v<mul2;++v) {
++                                            Precision pair=Precision(0);
++                                            for(int c=0;c<d1;++c)
++                                                pair+=x1(node,in1_off+u*d1+c)
++                                                    *x2(node,in2_off+v*d1+c);
++                                            mixed+=pair*inv_sqrt_d1
++                                                *weight_view(w_off+u*mul2+v);
++                                        }
++                                        output(node,out_off+u)+=pw*mixed;
++                                    }
++                                });
++                        } else {
++                            Kokkos::parallel_for("polar le uvu mode1",nodes,
++                                KOKKOS_LAMBDA(int node) {
++                                    for(int u=0;u<mul1;++u) {
++                                        Precision mixed=Precision(0);
++                                        for(int v=0;v<mul2;++v)
++                                            mixed+=x2(node,in2_off+v)
++                                                *weight_view(w_off+u*mul2+v);
++                                        const Precision contribution=
++                                            pw*mixed*inv_sqrt_d1;
++                                        for(int c=0;c<d1;++c)
++                                            output(node,out_off+u*d1+c)+=
++                                                contribution*x1(node,
++                                                    in1_off+u*d1+c);
++                                    }
++                                });
++                        }
++                    }
++                    Kokkos::parallel_for("polar le uvu mask",
++                        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                            {nodes,static_cast<int>(output.extent(1))}),
++                        KOKKOS_LAMBDA(int node,int column) {
++                            output(node,column)*=mask_view(column);
++                        });
++                };
++                const auto le_to_host_vector=[&](const auto& view) {
++                    const auto mirror=Kokkos::create_mirror_view_and_copy(
++                        Kokkos::HostSpace(),view);
++                    std::vector<typename decltype(mirror)::value_type>
++                        values(mirror.size());
++                    for(std::size_t i2=0;i2<values.size();++i2)
++                        values[i2]=mirror.data()[i2];
++                    return values;
++                };
++                const std::vector<int> le_q_meta=
++                    le_to_host_vector(polar_le_q_meta);
++                const std::vector<Precision> le_q_path_weight=
++                    le_to_host_vector(polar_le_q_path_weight);
++                const std::vector<int> le_v_meta=
++                    le_to_host_vector(polar_le_v_meta);
++                const std::vector<Precision> le_v_path_weight=
++                    le_to_host_vector(polar_le_v_path_weight);
++                auto node_feats=polar_node_feats_e3nn;
++                launch_le_uvu(num_nodes,le_q_meta,le_q_path_weight,
++                    polar_le_q_weight,polar_le_q_mask,node_feats,
++                    polar_le_q_up,polar_le_dot_q);
++                launch_le_uvu(num_nodes,le_v_meta,le_v_path_weight,
++                    polar_le_v_weight,polar_le_v_mask,node_feats,
++                    polar_le_v_up,polar_le_dot_v);
++            }
++            {
++                auto invar=polar_le_invar,dot_q=polar_le_dot_q,dot_v=polar_le_dot_v;
++                Kokkos::parallel_for("polar le invar concat",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                        {num_nodes,le_dot_width}),
++                    KOKKOS_LAMBDA(int node,int column) {
++                        invar(node,column)=dot_q(node,column);
++                        invar(node,le_dot_width+column)=dot_v(node,column);
++                    });
++            }
++            polar_le_mlp.evaluate(polar_le_invar,polar_le_mlp_out);
++            {
++                auto atom=polar_le_atom;
++                auto mlp_out=polar_le_mlp_out;
++                Kokkos::parallel_for("polar le atom readout",num_nodes,
++                    KOKKOS_LAMBDA(int node) {
++                        atom(node)=mlp_out(node,0);
++                    });
++            }
++            // 总量：每图 scatter_sum（单图=整盒；无原子数缩放，mace L879-881）。
++            const auto le_atom_host=Kokkos::create_mirror_view_and_copy(
++                Kokkos::HostSpace(),polar_le_atom);
++            Precision le_sum=Precision(0);
++            for(int node=0;node<num_nodes;++node)
++                le_sum+=le_atom_host(node);
++            polar_le_total=le_sum;
++        }
++
++        if(polar_enabled&&polar_le_enabled&&polar_le_add) {
++            // 模块⑦ 能量装配（mace extensions.py L866-883）:
++            //   total = e0 + inter_e（已含 scale/shift） + le_total
++            // le 是 scale/shift 之后的加项（不乘 energy_scale），与 ⑥ electro 并列。
++            auto energies=node_energies;
++            auto le=polar_le_atom;
++            Kokkos::parallel_for("polar le energy add",num_nodes,
++                KOKKOS_LAMBDA(int node) {
++                    energies(node)+=le(node);
++                });
++        }
++
++        if(polar_enabled) {
++            // P3 模块⑥ 能量装配:参考装配序 = (e0+inter_e) → +le → +electro
++            // (extensions.py L866 → L925-929);scale_shift 仅作用于 node_inter_es
++            // (L706-708),electro **未缩放** ⇒ 必须位于 "scale nonlinear energies"
++            // 行之后,否则会被覆写为 e0+scale·E+shift(语义错)。本模型
++            // scale=1.0/shift=0.0(JSON 实值)数值无差,顺序语义必须正确。
++            // 单图口径: 整盒总量加入 node 0(calculator.py L3860 汇总全部 node 能量)。
++            auto coulomb_energy=polar_coulomb_energy;
++            auto coulomb_energies=node_energies;
++            Kokkos::parallel_for("add polar coulomb energy",1,
++                KOKKOS_LAMBDA(int) {
++                    coulomb_energies(0)+=coulomb_energy(0);
++                });
++        }
 +    }
++}
++
++template<typename Precision>
++void MaceNonlinearKokkosT<Precision>::parse_polar_extension_tables()
++{
++    // [v2 适配] ⑥-B(module6 §2) + ⑦-4.2a(module7 §4.2a) 合并迁入(原 ctor 解析段):
++    // 数据源=成员 polar_json(ctor 已赋值); epd 按主 tpp ctor ③ 段同一 JSON 路径重建;
++    // 两段整体缩进 -4(函数体作用域); `pb.` 已替换为 `polar_json.`。
++    const auto& epd=polar_json.at("electric_potential_descriptor");
++    // ---- P3 模块⑥: coulomb_energy(GTO 表与 descriptor 同源;SI 表独立) ----
++    // 依据: GL energy.py L33-68(同一 density_max_l/smearing_width/kspace_cutoff
++    // 构造 density_basis / self_interaction / realspace 三子块);
++    // 实测(2026-10-15): JSON 中 coulomb_energy.density_basis 与
++    // electric_potential_descriptor.density_basis 全子树逐值相等。
++    {
++        const auto& cb=polar_json.at("coulomb_energy");
++        polar_include_self_interaction=
++            cb.at("include_self_interaction").get<bool>();
++        polar_include_pbc_corrections=
++            cb.at("include_pbc_corrections").get<bool>();
++        // 逐值一致性断言(nlohmann::json == 为递归数值比较);不等即抛错,
++        // 防止未来 extractor/模型失配时静默复用错误表。
++        if(cb.at("density_basis")!=epd.at("density_basis")
++            ||cb.at("kspace_cutoff").get<double>()
++                !=epd.at("kspace_cutoff").get<double>())
++            throw std::invalid_argument(
++                "polar_blocks: coulomb_energy density_basis/kspace_cutoff must "
++                "match electric_potential_descriptor (same-source GTO tables; "
++                "see extract_polar_blocks.py::_gto_energy).");
++        // SI 表 = coulomb 自己的 [4] 表(实测 overlap=[5.4160867,0.4011916×3],
++        // select=[0,1,2,3]),与 descriptor 的 [8] 表**不同源**,且 realspace
++        // 分支自相互作用符号约定与 k 空间相反 → 必须单独解析,不得复用。
++        polar_coulomb_si_overlap=toKokkosView("polar coulomb si overlap",
++            tensor_values<Precision>(cb.at("self_interaction_terms")
++                .at("overlap_constants")));
++        polar_coulomb_si_select=toKokkosView("polar coulomb si select",
++            tensor_values<int>(cb.at("self_interaction_terms")
++                .at("select_indices")));
++    }
++
++    // ---- P3 模块⑦: local_electron_energy（OneBodyMLPFieldReadout L652-752） ----
++    // uvu 路径表列 = [in1_off,in2_off,out_off,w_off,mul1,mul2,mode,d1]
++    // （与 PART1 parse_uvu_paths L51-87 同一语义；PART 为独立 TU，此处内联）。
++    if(polar_json.contains("local_electron_energy")) {
++        const auto& le=polar_json.at("local_electron_energy");
++        polar_le_enabled=true;
++        polar_le_add=polar_json.at("configs").value("add_local_electron_energy",false);
++        polar_le_linear_up_q=E3LinearKokkosT<Precision>(le.at("linear_up_q"));
++        polar_le_linear_up_v=E3LinearKokkosT<Precision>(le.at("linear_up_v"));
++        const auto parse_le_uvu=[&](const nlohmann::json& data,
++                Kokkos::View<int**,Kokkos::LayoutRight>& meta_view,
++                Kokkos::View<Precision*>& paths_view,
++                Kokkos::View<Precision*>& weight_view,
++                Kokkos::View<Precision*>& mask_view,
++                const char* meta_label,const char* paths_label,
++                const char* weight_label,const char* mask_label) {
++            const Irreps in1(data.at("irreps_in1").get<std::string>());
++            const Irreps in2(data.at("irreps_in2").get<std::string>());
++            const Irreps out(data.at("irreps_out").get<std::string>());
++            const auto weights=tensor_values<Precision>(data.at("weight"));
++            const auto mask=tensor_values<Precision>(data.at("output_mask"));
++            std::vector<int> meta;
++            std::vector<Precision> paths;
++            int weight_offset=0;
++            for(const auto& value:data.at("instructions")) {
++                const auto& a=in1.blocks.at(value.at("i_in1").get<int>());
++                const auto& b=in2.blocks.at(value.at("i_in2").get<int>());
++                const auto& c=out.blocks.at(value.at("i_out").get<int>());
++                const auto shape=value.at("path_shape")
++                    .get<std::vector<int>>();
++                const int d1=2*a.l+1;
++                int mode=0;
++                if(c.l!=0) {
++                    mode=1;
++                    if(b.l!=0||a.l!=c.l)
++                        throw std::invalid_argument(
++                            "polar le uvu: mode1 requires l2==0 and l1==l_out.");
++                } else if(a.l!=b.l)
++                    throw std::invalid_argument(
++                        "polar le uvu: mode0 requires l1==l2.");
++                meta.insert(meta.end(),{a.offset,b.offset,c.offset,
++                    weight_offset,a.multiplicity,b.multiplicity,mode,d1});
++                paths.push_back(value.at("path_weight").get<Precision>());
++                weight_offset+=static_cast<int>(shape[0])
++                    *static_cast<int>(shape[1]);
++            }
++            if(weight_offset!=static_cast<int>(weights.size()))
++                throw std::invalid_argument(
++                    "polar le uvu: weight size mismatch.");
++            meta_view=toKokkosView(meta_label,meta,
++                static_cast<int>(paths.size()),8);
++            paths_view=toKokkosView(paths_label,paths);
++            weight_view=toKokkosView(weight_label,weights);
++            mask_view=toKokkosView(mask_label,mask);
++        };
++        parse_le_uvu(le.at("dot_products_q"),polar_le_q_meta,
++            polar_le_q_path_weight,polar_le_q_weight,polar_le_q_mask,
++            "polar le q meta","polar le q path weight",
++            "polar le q weight","polar le q mask");
++        parse_le_uvu(le.at("dot_products_v"),polar_le_v_meta,
++            polar_le_v_path_weight,polar_le_v_weight,polar_le_v_mask,
++            "polar le v meta","polar le v path weight",
++            "polar le v weight","polar le v mask");
++        // RadialMLP = [Linear,LayerNorm,SiLU]×3 + Linear（radial.py L361-384）。
++        // 提取器当前以 "layernorm" 落盘；引擎 AffineMLP schema 为 "layer_norm"
++        // （affine_mlp.cpp L57）→ 归一（两种拼写均接受；"layer_norm" 原样）。
++        nlohmann::json mlp=le.at("mlp");
++        for(auto& layer:mlp.at("layers"))
++            if(layer.value("type",std::string())=="layernorm")
++                layer["type"]="layer_norm";
++        polar_le_mlp=AffineMLPKokkosT<Precision>(mlp);
++        // 尺寸契约（装载即校验，失败信息见模块名）。
++        if(polar_le_linear_up_q.input_dimension()!=8
++            ||polar_le_linear_up_v.input_dimension()!=16)
++            throw std::invalid_argument(
++                "polar_blocks: local_electron_energy linear_up inputs must be 8/16.");
++        if(polar_le_linear_up_q.output_dimension()!=2048
++            ||polar_le_linear_up_v.output_dimension()!=2048)
++            throw std::invalid_argument(
++                "polar_blocks: local_electron_energy linear_up outputs must be 2048.");
++        if(static_cast<int>(polar_le_q_mask.extent(0))!=512
++            ||static_cast<int>(polar_le_v_mask.extent(0))!=512)
++            throw std::invalid_argument(
++                "polar_blocks: local_electron_energy dot_products outputs must be 512.");
++        if(polar_le_mlp.input_size()!=1024||polar_le_mlp.output_size()!=1)
++            throw std::invalid_argument(
++                "polar_blocks: local_electron_energy mlp must map 1024 -> 1.");
++    } else polar_le_enabled=false;
 +}
 +
 +template class MaceNonlinearKokkosT<float>;
@@ -1703,7 +2173,7 @@ index 0000000..8460105
 +// mace_polar_kokkos.cpp — P3 极性场独立 TU(2026-10-15)。
 +#include "mace_polar_impl.tpp"
 diff --git a/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp b/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp
-index c7972a2..74010a8 100644
+index c7972a2..0d3ce63 100644
 --- a/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp
 +++ b/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp
 @@ -456,8 +456,22 @@ void bind_mace_nonlinear_kokkos_evaluator(
@@ -1730,7 +2200,7 @@ index c7972a2..74010a8 100644
                      self.compute_node_energies_forces(
                          num_nodes,
                          create_kokkos_view("nonlinear node types",node_types),
-@@ -465,12 +479,103 @@ void bind_mace_nonlinear_kokkos_evaluator(
+@@ -465,12 +479,152 @@ void bind_mace_nonlinear_kokkos_evaluator(
                          create_kokkos_view("nonlinear neigh indices",neigh_indices),
                          create_kokkos_view("nonlinear neigh types",neigh_types),
                          create_kokkos_view("nonlinear xyz",xyz),
@@ -1832,6 +2302,55 @@ index c7972a2..74010a8 100644
 +        })
 +        .def("polar_scf_final_density",[](const Evaluator& self) {
 +            return view2vector(self.polar_scf_final_density);
++        })
++        .def("polar_le_q_in",[](const Evaluator& self) {
++            // 模块⑦: q_in = charges_induced + charges_0(N×8)。
++            return view2vector(self.polar_le_q_in);
++        })
++        .def("polar_le_q_up",[](const Evaluator& self) {
++            // 模块⑦: linear_up_q 输出(N×2048)。
++            return view2vector(self.polar_le_q_up);
++        })
++        .def("polar_le_v_up",[](const Evaluator& self) {
++            // 模块⑦: linear_up_v 输出(N×2048)。
++            return view2vector(self.polar_le_v_up);
++        })
++        .def("polar_le_dot_q",[](const Evaluator& self) {
++            // 模块⑦: uvu 内积 dot_products_q(node_feats, q_up)(N×512)。
++            return view2vector(self.polar_le_dot_q);
++        })
++        .def("polar_le_dot_v",[](const Evaluator& self) {
++            // 模块⑦: uvu 内积 dot_products_v(node_feats, v_up)(N×512)。
++            return view2vector(self.polar_le_dot_v);
++        })
++        .def("polar_le_invar",[](const Evaluator& self) {
++            // 模块⑦: cat(dot_q, dot_v)(N×1024; MLP 输入)。
++            return view2vector(self.polar_le_invar);
++        })
++        .def("polar_le_mlp_out",[](const Evaluator& self) {
++            // 模块⑦: RadialMLP 输出(N×1)。
++            return view2vector(self.polar_le_mlp_out);
++        })
++        .def("polar_local_electron_energy",[](const Evaluator& self) {
++            // 模块⑦: 逐原子 local_q_e(N,)（= mace 模块直出 squeeze(-1)）。
++            return view2vector(self.polar_le_atom);
++        })
++        .def("polar_le_energy",[](const Evaluator& self) {
++            // 模块⑦: le_total = 图内 Σ local_q_e（单图=整盒; 无缩放）。
++            return static_cast<double>(self.polar_le_total);
++        })
++        .def("polar_coulomb_energy",[](const Evaluator& self) {
++            // 模块⑥: 前向标量(1,), eV;口径 = SCF 末态密度 + 序列化
++            // include_self_interaction/include_pbc_corrections(本模型 True/True,
++            // TTT 修正恒 0)。polar 未启用时返回空列表。
++            return view2vector(self.polar_coulomb_energy);
++        })
++        .def("polar_coulomb_rho_re",[](const Evaluator& self) {
++            // 模块⑥ 诊断: ρ̂(k) 实部(Nk;未乘 (2π)³/V, 与预检脚本链口径见门脚本)。
++            return view2vector(self.polar_coulomb_rho_re);
++        })
++        .def("polar_coulomb_rho_im",[](const Evaluator& self) {
++            return view2vector(self.polar_coulomb_rho_im);
 +        });
  }
  

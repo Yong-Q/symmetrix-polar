@@ -25,7 +25,7 @@ export LIBRARY_PATH=/opt/matos-tools/conda/envs/matos-compute/lib:${LIBRARY_PATH
 cd "$BUILD" || exit 1
 {
   echo "== ninja incremental ($(date '+%H:%M:%S')) =="
-  /workspace/caches/conda/envs/polar/bin/ninja 2>&1 | tail -5
+  /workspace/caches/conda/envs/polar/bin/ninja 2>&1 | tee "$LOG.ninja" | tail -5
   rc=${PIPESTATUS[0]}
   if [ "$rc" -ne 0 ]; then
     echo "NINJA_FAIL rc=$rc"
