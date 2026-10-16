@@ -131,7 +131,7 @@ index 80169b3..9bbf03a 100644
          explicit Readout(const nlohmann::json& data);
          double evaluate(const std::vector<double>& features) const;
 diff --git a/libsymmetrix/source/mace_nonlinear_kokkos.hpp b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
-index ffcdc1c..7053739 100644
+index ffcdc1c..017dc27 100644
 --- a/libsymmetrix/source/mace_nonlinear_kokkos.hpp
 +++ b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
 @@ -2,9 +2,12 @@
@@ -147,7 +147,7 @@ index ffcdc1c..7053739 100644
  #include <span>
  #include <type_traits>
  
-@@ -339,13 +342,184 @@ public:
+@@ -339,13 +342,201 @@ public:
      Kokkos::View<int*> atomic_numbers;
      Kokkos::View<double*> atomic_energies,node_energies,node_forces,atom_forces,
          stress_tensor;
@@ -216,6 +216,23 @@ index ffcdc1c..7053739 100644
 +        polar_dbg_le_plast_bar_storage;                                  // (N,16) ∂E_le/∂P_last
 +    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_dbg_le_nf_bar,
 +        polar_dbg_le_nf_bar_storage;                                     // (N,2048) ∂E_le/∂nf_last
++    // [dbg 2026-10-16 v24] 反向链 stage 检查点(只读镜像;POLAR_DBG_CKPT 置位时写入)。
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_dbg_rev_dfinal,
++        polar_dbg_rev_dfinal_storage;                                    // (N,8)  ∂E/∂d_final(循环前全种子)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_dbg_rev_out_last,
++        polar_dbg_rev_out_last_storage;                                  // (N,10) ∂E/∂out(末步校正反向后)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_dbg_rev_out_first,
++        polar_dbg_rev_out_first_storage;                                 // (N,10) ∂E/∂out(首步校正反向后)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_dbg_rev_dpost,
++        polar_dbg_rev_dpost_storage;                                     // (N,8)  ∂E/∂d_post(末步迭代末)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_dbg_rev_dinit,
++        polar_dbg_rev_dinit_storage;                                     // (N,8)  ∂E/∂d_init(sd0 并入后)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_dbg_rev_fmix,
++        polar_dbg_rev_fmix_storage;                                      // (N,F)  ∂E/∂features_mixed
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_dbg_rev_pos_coul,
++        polar_dbg_rev_pos_coul_storage;                                  // (N,3)  ⑥ 段后位置伴
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_dbg_rev_pos_all,
++        polar_dbg_rev_pos_all_storage;                                   // (N,3)  全链位置伴(终值)
 +    // 前向缓存增量(§2.1):
 +    // [v3 适配·D-02] 校后逐步密度直接复用既有 polar_scf_step_densities
 +    // (其快照内核位于逐步 Fukui 校正之后 = 校后口径; 提案的 _post 重复视图不新增)。
@@ -333,7 +350,7 @@ index ffcdc1c..7053739 100644
  
  private:
      struct SphericalHarmonicsState;
-@@ -430,17 +604,32 @@ private:
+@@ -430,17 +621,32 @@ private:
          Kokkos::View<const int*> neigh_types);
  public:
      struct Readout {
@@ -367,7 +384,7 @@ index ffcdc1c..7053739 100644
          void reverse(Kokkos::View<const Precision**,Kokkos::LayoutRight> input,Precision scale,
                       Kokkos::View<Precision**,Kokkos::LayoutRight> input_adjoint);
      };
-@@ -690,6 +879,73 @@ private:
+@@ -690,6 +896,73 @@ private:
      std::vector<Interaction> interactions;
      std::vector<E3ProductBasisKokkosT<Precision>> products;
      std::vector<Readout> readouts;
@@ -935,10 +952,10 @@ index 7514438..5c4fbba 100644
              "MH-1 stress reduction inputs are inconsistent.");
 diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
 new file mode 100644
-index 0000000..f290e19
+index 0000000..2e9575a
 --- /dev/null
 +++ b/libsymmetrix/source/mace_polar_impl.tpp
-@@ -0,0 +1,2815 @@
+@@ -0,0 +1,2940 @@
 +// mace_polar_impl.tpp — P3 极性静电场独立编译单元(2026-10-15)。
 +// 目的: polar 逻辑(②Fukui/③k网格+GTO/④势特征/⑤SCF; 及未来⑥⑦⑧)与主 tpp 分离,
 +//       之后 polar 改动只重编本 TU(单 TU ~数分钟)而非四个大 TU(20-40 分钟)。
@@ -2776,6 +2793,76 @@ index 0000000..f290e19
 +        // (iv) assemble 反向 → q̄(4 列)+ 相位。
 +        kspace_assemble_reverse(rho_bar_re,rho_bar_im,density_in,
 +            4*channel,channel_adj,4*channel);
++        // (iii-b) 项目相位伴随【v27 修复: 设计 §2 ⑧-3 (d3) 第二行原文此前漏落】:
++        //   cos̄_proj(k,n) = Σ_m fa(k,m)·proj·feat̄(n,j(m));  sin̄_proj 同式(fb);
++        //   pos += Σ_k k·[−s·cos̄_proj + c·sin̄_proj];
++        //   fa/fb = 前向投影系数, 由本通道密度重算 ρ 后闭式:
++        //   fa=(pr·FBR+pi·FBI)·kfp;  fb=(pr·FBI−pi·FBR)·kfp;  pr/pi=ρ·inv_k2。
++        // (feat̄ 已经 (vi) /knorm 归一 ⇒ 与 (ii) 同口径。)
++        {
++            auto feats_bar=polar_rev_feats_adjoint;
++            auto kv=polar_k_vectors;
++            auto pos_adj=polar_rev_position_adjoint;
++            ensure_view(polar_rev_rho_fwd_re,polar_rev_rho_fwd_re_storage,
++                num_k);
++            ensure_view(polar_rev_rho_fwd_im,polar_rev_rho_fwd_im_storage,
++                num_k);
++            auto rho_re=polar_rev_rho_fwd_re,rho_im=polar_rev_rho_fwd_im;
++            { // ρ(本通道)重算(同 replay / ⑥ 同式同表)
++                auto dbre=polar_density_basis_re,dbim=polar_density_basis_im;
++                const Precision rho_scale=Precision(two_pi_cubed
++                    /polar_cell_volume);
++                Kokkos::parallel_for("polar desc proj rho recompute",num_k,
++                    KOKKOS_LAMBDA(int k) {
++                        Precision acc_cos[4],acc_sin[4];
++                        for(int m=0;m<4;++m) {
++                            acc_cos[m]=Precision(0);acc_sin[m]=Precision(0);
++                        }
++                        for(int node=0;node<num_nodes;++node) {
++                            const Precision c=kcos(k,node);
++                            const Precision s=ksin(k,node);
++                            for(int m=0;m<4;++m) {
++                                const Precision q=density_in(node,4*channel+m);
++                                acc_cos[m]+=c*q;acc_sin[m]+=s*q;
++                            }
++                        }
++                        Precision re=Precision(0),im=Precision(0);
++                        for(int m=0;m<4;++m) {
++                            re+=dbre(k,m)*acc_cos[m]+dbim(k,m)*acc_sin[m];
++                            im+=dbim(k,m)*acc_cos[m]-dbre(k,m)*acc_sin[m];
++                        }
++                        rho_re(k)=rho_scale*re;rho_im(k)=rho_scale*im;
++                    });
++            }
++            Kokkos::parallel_for("polar desc proj phase reverse",num_nodes,
++                KOKKOS_LAMBDA(int node) {
++                    Precision rx=Precision(0),ry=Precision(0),rz=Precision(0);
++                    for(int k=0;k<num_k;++k) {
++                        const Precision kfp=(k0m(k)>Precision(0))
++                            ?Precision(0.5):Precision(1);
++                        const Precision inv_k2=(k0m(k)>Precision(0))
++                            ?Precision(0):Precision(polar_field_constant)/kn2(k);
++                        const Precision pr=rho_re(k)*inv_k2;
++                        const Precision pi=rho_im(k)*inv_k2;
++                        Precision exp_c=Precision(0),exp_s=Precision(0);
++                        for(int j=0;j<8;++j) {
++                            const int m=permutation(j);
++                            const Precision z=proj_scale*feats_bar(node,j);
++                            exp_c+=z*fbre(k,m);
++                            exp_s+=z*fbim(k,m);
++                        }
++                        const Precision ex_c=kfp*(pr*exp_c+pi*exp_s);
++                        const Precision ex_s=kfp*(pr*exp_s-pi*exp_c);
++                        const Precision inner=-ksin(k,node)*ex_c
++                            +kcos(k,node)*ex_s;
++                        rx+=kv(k,0)*inner;ry+=kv(k,1)*inner;
++                        rz+=kv(k,2)*inner;
++                    }
++                    Kokkos::atomic_add(&pos_adj(node,0),rx);
++                    Kokkos::atomic_add(&pos_adj(node,1),ry);
++                    Kokkos::atomic_add(&pos_adj(node,2),rz);
++                });
++        }
 +    };
 +    // (2i) 逐步前向重放(③④ + ⑤; 输入 d_in,输出写 rev 视图;与⑤已落码逐算子镜像)。
 +    const auto replay_step_forward=[&](const int step,
@@ -3395,6 +3482,18 @@ index 0000000..f290e19
 +    }
 +
 +    // ---------- 5) SCF 逐步反向(step = M-1 … 0) ----------
++    // [dbg v24] stage 检查点开关;生产运行不置位 ⇒ 零开销。
++    const bool dbg_ckpt=(std::getenv("POLAR_DBG_CKPT")!=nullptr);
++    if(dbg_ckpt) {
++        ensure_view(polar_dbg_rev_dfinal,polar_dbg_rev_dfinal_storage,
++            num_nodes,8);
++        ordered_kokkos_deep_copy(polar_dbg_rev_dfinal,
++            polar_rev_density_adjoint);
++        ensure_view(polar_dbg_rev_pos_coul,polar_dbg_rev_pos_coul_storage,
++            num_nodes,3);
++        ordered_kokkos_deep_copy(polar_dbg_rev_pos_coul,
++            polar_rev_position_adjoint);
++    }
 +    ensure_view(polar_rev_fmix_adjoint,polar_rev_fmix_adjoint_storage,
 +        num_nodes,feature_width);
 +    ordered_kokkos_deep_copy(polar_rev_fmix_adjoint,Precision(0));
@@ -3448,6 +3547,23 @@ index 0000000..f290e19
 +                    out_adj(node,8)=s_bar(node,0);
 +                    out_adj(node,9)=s_bar(node,1);
 +                });
++        }
++        // [dbg v24] ∂E/∂out 检查点(末步=校正反向后全列伴)。
++        if(dbg_ckpt) {
++            if(step==polar_recursion_steps-1) {
++                ensure_view(polar_dbg_rev_out_last,
++                    polar_dbg_rev_out_last_storage,num_nodes,
++                    static_cast<int>(polar_rev_out_adjoint.extent(1)));
++                ordered_kokkos_deep_copy(polar_dbg_rev_out_last,
++                    polar_rev_out_adjoint);
++            }
++            if(step==0) {
++                ensure_view(polar_dbg_rev_out_first,
++                    polar_dbg_rev_out_first_storage,num_nodes,
++                    static_cast<int>(polar_rev_out_adjoint.extent(1)));
++                ordered_kokkos_deep_copy(polar_dbg_rev_out_first,
++                    polar_rev_out_adjoint);
++            }
 +        }
 +        // (b) 更新块反向: out̄ → gate2 → ro2 → gate1 → ro1 → tp → MLP → nl_in → dp/se
 +        //     → pe → P̄ / d̄_ce / fmix̄。
@@ -3657,6 +3773,13 @@ index 0000000..f290e19
 +                    dbar(node,column)+=extra(node,column);
 +                });
 +        }
++        // [dbg v24] ∂E/∂d_post 检查点(末步迭代末 = 步1 输入密度全伴)。
++        if(dbg_ckpt&&step==polar_recursion_steps-1) {
++            ensure_view(polar_dbg_rev_dpost,polar_dbg_rev_dpost_storage,
++                num_nodes,8);
++            ordered_kokkos_deep_copy(polar_dbg_rev_dpost,
++                polar_rev_density_adjoint);
++        }
 +    }
 +    // ⑦ 的 ∂E/∂d_init(初校正后密度)在 SCF 链尾并入。
 +    if(seed_terms&1) {
@@ -3667,6 +3790,17 @@ index 0000000..f290e19
 +            KOKKOS_LAMBDA(int node,int column) {
 +                dbar(node,column)+=seed_init(node,column);
 +            });
++    }
++    // [dbg v24] ∂E/∂d_init(全种子)+ ∂E/∂features_mixed 检查点。
++    if(dbg_ckpt) {
++        ensure_view(polar_dbg_rev_dinit,polar_dbg_rev_dinit_storage,
++            num_nodes,8);
++        ordered_kokkos_deep_copy(polar_dbg_rev_dinit,
++            polar_rev_density_adjoint);
++        ensure_view(polar_dbg_rev_fmix,polar_dbg_rev_fmix_storage,
++            num_nodes,feature_width);
++        ordered_kokkos_deep_copy(polar_dbg_rev_fmix,
++            polar_rev_fmix_adjoint);
 +    }
 +
 +    // ---------- 6) 初始化 Fukui 反向 → s̄0 → Readout::reverse_all → ⑧-A → 末层 ----------
@@ -3702,6 +3836,14 @@ index 0000000..f290e19
 +            polar_rev_nfeat_adjoint,/*initialize_input_adjoint=*/true);
 +        basis_adjoint_add(polar_rev_nfeat_adjoint,
 +            states[layer].layer_adjoint);
++    }
++
++    // [dbg v24] 全链位置伴检查点(相位伴随总账;node_forces 写出前)。
++    if(dbg_ckpt) {
++        ensure_view(polar_dbg_rev_pos_all,polar_dbg_rev_pos_all_storage,
++            num_nodes,3);
++        ordered_kokkos_deep_copy(polar_dbg_rev_pos_all,
++            polar_rev_position_adjoint);
 +    }
 +
 +    // ---------- 9) 位置伴 → 节点力(语义同 node_forces: −∂E/∂r) ----------
@@ -3787,7 +3929,7 @@ index 5b28ef1..18b0848 100644
      Kokkos::View<double*,Kokkos::LayoutRight> v("v", 6);
      Kokkos::deep_copy(v, 0.0);
 diff --git a/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp b/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp
-index c7972a2..c856728 100644
+index c7972a2..6b8182c 100644
 --- a/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp
 +++ b/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp
 @@ -456,8 +456,22 @@ void bind_mace_nonlinear_kokkos_evaluator(
@@ -3814,7 +3956,7 @@ index c7972a2..c856728 100644
                      self.compute_node_energies_forces(
                          num_nodes,
                          create_kokkos_view("nonlinear node types",node_types),
-@@ -465,12 +479,177 @@ void bind_mace_nonlinear_kokkos_evaluator(
+@@ -465,12 +479,209 @@ void bind_mace_nonlinear_kokkos_evaluator(
                          create_kokkos_view("nonlinear neigh indices",neigh_indices),
                          create_kokkos_view("nonlinear neigh types",neigh_types),
                          create_kokkos_view("nonlinear xyz",xyz),
@@ -3986,6 +4128,38 @@ index c7972a2..c856728 100644
 +        .def("polar_dbg_le_nf_bar",[](const Evaluator& self) {
 +            // [dbg 2026-10-16] ⑧-7 le 反向 ∂E_le/∂nf_last stage 探针(N×2048)。
 +            return view2vector(self.polar_dbg_le_nf_bar);
++        })
++        .def("polar_dbg_rev_dfinal",[](const Evaluator& self) {
++            // [dbg v24] 反向链 ∂E/∂d_final 检查点(N×8;POLAR_DBG_CKPT 置位时写入)。
++            return view2vector(self.polar_dbg_rev_dfinal);
++        })
++        .def("polar_dbg_rev_out_last",[](const Evaluator& self) {
++            // [dbg v24] 反向链 ∂E/∂out 末步检查点(N×10)。
++            return view2vector(self.polar_dbg_rev_out_last);
++        })
++        .def("polar_dbg_rev_out_first",[](const Evaluator& self) {
++            // [dbg v24] 反向链 ∂E/∂out 首步检查点(N×10)。
++            return view2vector(self.polar_dbg_rev_out_first);
++        })
++        .def("polar_dbg_rev_dpost",[](const Evaluator& self) {
++            // [dbg v24] 反向链 ∂E/∂d_post 末步迭代末检查点(N×8)。
++            return view2vector(self.polar_dbg_rev_dpost);
++        })
++        .def("polar_dbg_rev_dinit",[](const Evaluator& self) {
++            // [dbg v24] 反向链 ∂E/∂d_init 检查点(N×8)。
++            return view2vector(self.polar_dbg_rev_dinit);
++        })
++        .def("polar_dbg_rev_fmix",[](const Evaluator& self) {
++            // [dbg v24] 反向链 ∂E/∂features_mixed 检查点(N×F)。
++            return view2vector(self.polar_dbg_rev_fmix);
++        })
++        .def("polar_dbg_rev_pos_coul",[](const Evaluator& self) {
++            // [dbg v24] ⑥ 段后位置伴检查点(N×3)。
++            return view2vector(self.polar_dbg_rev_pos_coul);
++        })
++        .def("polar_dbg_rev_pos_all",[](const Evaluator& self) {
++            // [dbg v24] 全链位置伴终值检查点(N×3)。
++            return view2vector(self.polar_dbg_rev_pos_all);
 +        })
 +        .def("polar_blocks_enabled",[](const Evaluator& self) {
 +            // 模块⑧: polar_enabled 只读镜像(pair style 用同名 C++ 访问器)。

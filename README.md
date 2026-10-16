@@ -22,9 +22,9 @@ GPU speed in LAMMPS-class workflows, without retraining a universal potential.
 | P3 ⑤ | SCF density updates (update blocks ×2, per-step Fukui) | density evolution 12/12, stage-level 11/11, rel **~5e-8** |
 | P3 ⑥ | `coulomb_energy` (full-k Ewald baseline) | engine: ρ̂ rel **1.3e-15**, ΔE rel **8.4e-16** |
 | P3 ⑦ | `local_electron_energy` | engine: 8/8 configs PASS (stage rel **≤1e-6**, out ≤4e-7) |
-| **End-to-end** | Engine total energy vs PyTorch PolarMACE total | **32/32 frames PASS: rel 4e-12–1.1e-11 (≤1.0e-6 eV absolute)** |
-| P3 ⑧ | Forces (full-chain reverse mode) | implementation landed (engine build **v23**, 2026-10-16); acceptance gate in progress — CH4 PASS (2.8–3.0e-4), NH3/N2/CO2 at 2.9e-3–1.2e-2 vs 1e-3 eV/Å target (down from O(0.1–4) pre-⑧); see `harness/polar_module8_gate.py` + `docs/design/POLAR_REVERSE_DESIGN.md` |
-| P4 | Random Batch Ewald k-space | design complete (see `docs/design/RBE_P4_DESIGN.md`); implementation starts after ⑧ closes |
+| **End-to-end** | Engine vs PyTorch PolarMACE (energy + forces) | **32/32 frames PASS: energy rel 4e-12–1.1e-11 (≤1.0e-6 eV); forces ≤1.6e-7 eV/Å** |
+| P3 ⑧ | Forces (full-chain reverse mode) | **PASS (v27)**: 12/12 configs — FD self-consistency ≤5.8e-4 (gate 1e-3), force parity vs PyTorch ≤7.2e-7 (gate 1e-3; pre-⑧ baseline mean/max 1.24/4.15), ΣF ≈ 1e-14 (exact translation invariance). Root cause of the final gap: missing *project-phase adjoint* in the descriptor reverse (design §2 ⑧-3 (d3), second line) — located via checkpoint audit (`harness/polar_rev_stage_audit.py`), fixed in `descriptor_reverse_channel` (iii-b) |
+| P4 | Random Batch Ewald k-space | design complete (see `docs/design/RBE_P4_DESIGN.md`); implementation next |
 
 Every stage is accepted against **dual-source fixture gates** (frozen Python
 reference dumps + live recomputation through the same PyTorch model), including

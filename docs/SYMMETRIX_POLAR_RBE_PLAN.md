@@ -397,3 +397,38 @@ SCF 循环(描述符→更新块→密度更新→逐步 Fukui)端到端数值�
   ("1.5) le 反向种子生产";读投递契约 §4.1): MLP 反(重算式)→invar̄ 拆两路→
   uvu_reverse 复用→Lin_q/Lin_v 反→种子(d_final/d_init 双分支同值+P_last)→
   n̄f_last ⑧-A 注入末层;零 hpp 改动。→ v21 构建中(仅 polar TU 重编)。
+
+## 20. 模块⑧根因定位与修复(v24-v27,2026-10-16)—— ✅ 门 PASS, 8/8 模块关闭
+
+**根因(分段检查点审计,全程数值定位零猜测)**:描述符反向链漏落设计
+`POLAR_REVERSE_DESIGN.md` §2 ⑧-3 (d3) **第二行「项目相位伴随」**——
+前向 `feat = project(...)` 中 cos/sin 的第二处使用(fa/fb 系数×相位)在反向
+缺伴随;引擎原实现只有 assemble 路的相位伴随(kspace_assemble_reverse 内)。
+该项解释全部残余现象:d/P/coulomb 段 FD 偏差、净力(平移不变性)破缺、
+nf 通道独好(不经描述符)。
+
+**定位链(v24-v26 基建 + 审计)**:
+- 新增 7 个反向链 stage 检查点访问器(v24/v26,`POLAR_DBG_CKPT` 门控,生产零开销):
+  `polar_dbg_rev_{dfinal,out_last,out_first,dpost,dinit,fmix,pos_coul,pos_all}`;
+- `bench/polar_rev_stage_audit.py`:同帧「引擎检查点 vs python autograd 全模型」
+  逐段对账(含 le/⑥ 拆分与视图→父张量口径修正);
+- 结果:dfinal(sd+⑥q̄)/out_last/out_first/dpost/**dinit(父张量口径)**/fmix
+  全链 **1e-8~1e-7 通过**;唯一发散点 = 位置伴随:
+  `pos_desc`(描述符相位总账)为真值的 0.40×(nh3)/0.92×(co2),相关性 0.79/0.84;
+- 与设计 (d3) 对读:原文含两路 cos̄/sin̄ 累加(assemble 路 + project 路),代码仅第一路。
+
+**修复(v27)**:`descriptor_reverse_channel` 增 (iii-b) 内核——由本通道密度重算
+前向 ρ,闭式取 fa/fb,累加项目相位伴随:
+```
+cos̄_proj(k,n)=Σ_m fa·proj·feat̄(n,j(m));  sin̄_proj 同式(fb)
+pos += Σ_k k·(−s·cos̄_proj + c·sin̄_proj)
+```
+
+**验收(v27,2026-10-16)**:
+- 审计:pos_desc nh3 max|Δ|=2.9e-10 / co2 2.7e-9(修复前 2.5×/1.1× 级失配);
+- **模块⑧门 PASS**:12 配置 FD max **5.78e-4**(门 1e-3;修复前 8.2e-3)、
+  parity max **7.19e-7**(门 1e-3;修复前 1.16e-2;P2 遗留 mean/max 1.24/4.15)、
+  ΣF ~1e-14~1e-16(修复前 3.3e-3);
+- **回归全绿**(v27 日志 `logs/reg_*`):①(3.1e-8)②(6.3e-8 rel)③④(6.8e-8)⑤(全项 PASS)
+  + 端到端 32 帧(≤1.0e-6 eV, rel ≤1.1e-11)。
+- **8/8 模块关闭。下一步:P4(RBE 实现)。**
