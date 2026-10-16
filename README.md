@@ -97,8 +97,9 @@ the working tree before committing:
 ```bash
 git add harness docs patches README.md
 git commit -m "<round summary>"
-GIT_SSH_COMMAND="ssh -i /home/workspace/.ssh/id_ed25519 -o IdentitiesOnly=yes" \
-  git push origin master
+GIT_SSH_COMMAND="ssh -i /home/workspace/.ssh/id_ed25519 -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile=/home/workspace/.ssh/known_hosts \
+  -o StrictHostKeyChecking=accept-new" git push origin master
 ```
 
 ## Upstreams & attribution
