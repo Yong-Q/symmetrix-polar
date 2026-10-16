@@ -457,3 +457,32 @@ pos += Σ_k k·(−s·cos̄_proj + c·sin̄_proj)
   - 复现: 同 seed 能量逐位相等(dE=0.000e+00),力残差 6.7e-16(atomic 次序噪声);
     异 seed 明确不同(ΔE=0.10 eV)。
 - 产物: `bench/polar_rbe_gate.{png,json}`。**P4 关闭;剩余 P5。**
+
+## 22. P5 现状审计(v28,2026-10-16)—— pair style 接线:范围与剩余工作
+
+**目标(PLAN §3 P5)**: `pair_style symmetrix/polar-mace` 接线 = LAMMPS 端加载 polar 模型、
+cutoff=POLAR r_max(12 Å)、通讯截断、h2h 计时;门 = 与 python 参考同盒能量/力对照 + 稳定 MD。
+
+**现状审计(源码级,全部核实)**:
+1. pair 家族(`pair_symmetrix/pair_symmetrix_mace_kokkos.cpp`,与 LAMMPS 树副本同源):
+   基于**线性**引擎类 `MACEKokkos<P>`(mace_kokkos.hpp L84);coeff() 显式拒绝
+   MACE_Nonlinear(L416-417,上游行为);树内已含 +13 行 polar 节点力累加段
+   (L1205-1213,条件于 `polar_blocks_enabled()`)。
+2. 极性引擎 = 独立类 `MaceNonlinearKokkosT<P>`(mace_nonlinear_kokkos.hpp;
+   `polar_blocks_enabled()` L504 / `polar_node_forces` View<double*> L392 在其上)
+   ——与 pair 现用线性类**不同类**,计算接口不同(非线性:
+   `compute_node_energies_forces(num_nodes,node_types,...)` L531;线性路径为
+   JIT/execution-plan 家族)。
+3. **本日一致性修复(v28)**: MACEKokkos 增加 polar 路径**占位契约**
+   (`polar_blocks_enabled()→false` + 空 `polar_node_forces`)⇒ pair 的 +13 行 inert、
+   逐位零行为改变;pair/LAMMPS 树恢复**可编译**(增量 LAMMPS 重建验证中)。
+
+**P5 剩余工作清单(按依赖序)**:
+1. `coeff()` 放开 MACE_Nonlinear/polar 分派(按 JSON `model_type`);
+2. pair 构造非线性引擎(双指针/小工厂;复用 calculator 的 C++ 调用序:
+   node_attrs/positions/cell → `compute_node_energies_forces` → 图内能量归约,
+   polar_node_forces 经已有 +13 行零改动进 LAMMPS `f`);
+3. cutoff = r_max(12 Å)+ 邻居/通讯截断配置(键 force cutoff 与 POLAR 感受野对齐);
+4. LAMMPS 重建 + 单点能量/力 vs python 参考同盒对照(源 A/B 双源);
+5. 短 NVT MD 稳定性冒烟 + h2h 计时表(确定性 + RBE 两模式)。
+**状态: 未开始(接口契约已就位,树可编译)。**
