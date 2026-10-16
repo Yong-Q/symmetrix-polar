@@ -1,0 +1,2358 @@
+diff --git a/libsymmetrix/CMakeLists.txt b/libsymmetrix/CMakeLists.txt
+index 17625ec..f535eb8 100644
+--- a/libsymmetrix/CMakeLists.txt
++++ b/libsymmetrix/CMakeLists.txt
+@@ -359,6 +359,7 @@ if(SYMMETRIX_KOKKOS)
+         source/mace_nonlinear_kokkos_components.cpp
+         source/mace_nonlinear_kokkos_runtime.cpp
+         source/mace_nonlinear_kokkos_evaluate.cpp
++        source/mace_polar_kokkos.cpp
+         source/multilayer_perceptron_kokkos.cpp
+         source/multivariate_polynomial_kokkos.cpp
+         source/radial_function_set_kokkos.cpp
+diff --git a/libsymmetrix/source/e3nn.cpp b/libsymmetrix/source/e3nn.cpp
+index a1e99a4..e1f79cc 100644
+--- a/libsymmetrix/source/e3nn.cpp
++++ b/libsymmetrix/source/e3nn.cpp
+@@ -112,6 +112,9 @@ E3Linear::E3Linear(const nlohmann::json& data)
+     int weight_offset = 0;
+     for (const auto& entry : data.at("instructions")) {
+         auto instruction = parse_instruction(entry, false);
++        // e3nn (>=0.5) encodes bias-only slots as instructions with i_in == -1
++        // (no weight; values live in the separate `bias` field handled above).
++        if (instruction.input_1 == -1) continue;
+         if (instruction.input_1 < 0 || instruction.input_1 >= static_cast<int>(input.blocks.size())
+             || instruction.output < 0 || instruction.output >= static_cast<int>(output.blocks.size()))
+             throw std::invalid_argument("MACE_Nonlinear linear instruction has an invalid irrep index.");
+diff --git a/libsymmetrix/source/e3nn_kokkos.cpp b/libsymmetrix/source/e3nn_kokkos.cpp
+index af51573..63f9434 100644
+--- a/libsymmetrix/source/e3nn_kokkos.cpp
++++ b/libsymmetrix/source/e3nn_kokkos.cpp
+@@ -64,6 +64,8 @@ E3LinearKokkosT<Precision>::E3LinearKokkosT(const nlohmann::json& data)
+         runtime_output_blocks.push_back(
+             {block.offset,block.multiplicity,2*block.l+1});
+     for (const auto& value:data.at("instructions")) {
++        // e3nn bias-only instruction (i_in == -1): no weight; bias handled via the bias field.
++        if(value.at("i_in").get<int>()==-1)continue;
+         const auto& in=input.blocks.at(value.at("i_in").get<int>()); const auto& out=output.blocks.at(value.at("i_out").get<int>());
+         const auto shape=value.at("path_shape").get<std::vector<int>>();
+         instructions.push_back({in.offset,out.offset,in.multiplicity,
+diff --git a/libsymmetrix/source/mace_nonlinear.cpp b/libsymmetrix/source/mace_nonlinear.cpp
+index 4699c91..c892b9a 100644
+--- a/libsymmetrix/source/mace_nonlinear.cpp
++++ b/libsymmetrix/source/mace_nonlinear.cpp
+@@ -40,12 +40,18 @@ const nlohmann::json& checked_interaction(const nlohmann::json& data)
+     return data;
+ }
+ 
++bool readout_is_nonlinear(const std::string& readout_class)
++{
++    return readout_class == "NonLinearReadoutBlock"
++        || readout_class == "NonLinearBiasReadoutBlock";
++}
++
+ const nlohmann::json& readout_linear(const nlohmann::json& data)
+ {
+     const auto readout_class = data.at("class").get<std::string>();
+     if (readout_class == "LinearReadoutBlock")
+         return data.at("linear");
+-    if (readout_class == "NonLinearReadoutBlock")
++    if (readout_is_nonlinear(readout_class))
+         return data.at("linear_1");
+     throw std::invalid_argument(
+         "MACE_Nonlinear readout class is unsupported: " + readout_class);
+@@ -216,7 +222,7 @@ void MaceNonlinear::Interaction::validate_conditioned_type(int type) const
+ }
+ 
+ MaceNonlinear::Readout::Readout(const nlohmann::json& data)
+-    : nonlinear(data.at("class").get<std::string>() == "NonLinearReadoutBlock"),
++    : nonlinear(readout_is_nonlinear(data.at("class").get<std::string>())),
+       linear(readout_linear(data)),
+       activation_constant(1.0)
+ {
+@@ -226,6 +232,8 @@ MaceNonlinear::Readout::Readout(const nlohmann::json& data)
+         linear_1 = std::make_unique<E3Linear>(data.at("linear_1"));
+         linear_2 = std::make_unique<E3Linear>(data.at("linear_2"));
+         activation_constant = data.at("activation_constants").at(0).get<double>();
++        if (data.at("class").get<std::string>() == "NonLinearBiasReadoutBlock")
++            linear_mid = std::make_unique<E3Linear>(data.at("linear_mid"));
+     }
+ }
+ 
+@@ -234,6 +242,11 @@ double MaceNonlinear::Readout::evaluate(const std::vector<double>& features) con
+     if (!nonlinear) return linear.evaluate(features).at(0);
+     auto hidden = linear_1->evaluate(features);
+     for (double& value : hidden) value = activation_constant*silu(value);
++    if (linear_mid) {
++        auto mid = linear_mid->evaluate(hidden);
++        for (double& value : mid) value = activation_constant*silu(value);
++        return linear_2->evaluate(mid).at(0);
++    }
+     return linear_2->evaluate(hidden).at(0);
+ }
+ 
+@@ -249,6 +262,26 @@ std::vector<double> MaceNonlinear::Readout::reverse(
+     auto hidden = linear_1->evaluate(features);
+     auto activated = hidden;
+     for (double& value : activated) value = activation_constant*silu(value);
++    if (linear_mid) {
++        auto mid = linear_mid->evaluate(activated);
++        std::vector<double> mid_adjoint;
++        linear_2->reverse({output_adjoint}, mid_adjoint);
++        for (int index=0; index<static_cast<int>(mid.size()); ++index) {
++            const double probability = sigmoid(mid[index]);
++            mid_adjoint[index] *= activation_constant
++                *(probability+mid[index]*probability*(1.0-probability));
++        }
++        std::vector<double> activated_adjoint;
++        linear_mid->reverse(mid_adjoint, activated_adjoint);
++        for (int index=0; index<static_cast<int>(hidden.size()); ++index) {
++            const double probability = sigmoid(hidden[index]);
++            activated_adjoint[index] *= activation_constant
++                *(probability+hidden[index]*probability*(1.0-probability));
++        }
++        std::vector<double> result;
++        linear_1->reverse(activated_adjoint, result);
++        return result;
++    }
+     std::vector<double> activated_adjoint;
+     linear_2->reverse({output_adjoint}, activated_adjoint);
+     for (int index=0; index<static_cast<int>(hidden.size()); ++index) {
+diff --git a/libsymmetrix/source/mace_nonlinear.hpp b/libsymmetrix/source/mace_nonlinear.hpp
+index 80169b3..9bbf03a 100644
+--- a/libsymmetrix/source/mace_nonlinear.hpp
++++ b/libsymmetrix/source/mace_nonlinear.hpp
+@@ -103,6 +103,7 @@ private:
+         E3Linear linear;
+         std::unique_ptr<E3Linear> linear_1;
+         std::unique_ptr<E3Linear> linear_2;
++        std::unique_ptr<E3Linear> linear_mid;  // NonLinearBiasReadoutBlock only
+         double activation_constant;
+         explicit Readout(const nlohmann::json& data);
+         double evaluate(const std::vector<double>& features) const;
+diff --git a/libsymmetrix/source/mace_nonlinear_kokkos.hpp b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
+index ffcdc1c..3f0a8f5 100644
+--- a/libsymmetrix/source/mace_nonlinear_kokkos.hpp
++++ b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
+@@ -5,6 +5,7 @@
+ #include <cstdint>
+ #include <limits>
+ #include <memory>
++#include <optional>
+ #include <span>
+ #include <type_traits>
+ 
+@@ -339,13 +340,65 @@ public:
+     Kokkos::View<int*> atomic_numbers;
+     Kokkos::View<double*> atomic_energies,node_energies,node_forces,atom_forces,
+         stress_tensor;
++    // --- PolarMACE 中间量(P3 模块①;仅 polar_enabled 模型填充) ---
++    // 行=节点;8 列平坦序 [sα, xα, yα, zα, sβ, xβ, yβ, zβ]
++    // (= e3nn "1x0e+1x1o+1x0e+1x1o" 序列重复布局;依据 extensions.py L734 的 view(N,2,4))。
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_spin_charge_density,
++        polar_spin_charge_density_storage;
++    // P3 模块②: fukui_source_map 原始输出(N×2)与校正后初始密度(N×8,
++    // 即 mace 的 field_independent_spin_charge_density,SCF/local_electron 的输入)。
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_fukui_sources,
++        polar_fukui_sources_storage,polar_field_independent_density,
++        polar_field_independent_density_storage;
++    // P3 模块③④: k 网格 + GTO 几何预计算 + 势特征(几何缓存缓冲,每次求值重建)。
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_k_vectors;      // (Nk,3)
++    Kokkos::View<Precision*> polar_k_norm2,polar_k0_mask;               // (Nk)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_cosines,
++        polar_sines;                                                    // (Nk,N)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_density_basis_re,
++        polar_density_basis_im;                                         // (Nk,4)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_feature_basis_re,
++        polar_feature_basis_im;                                         // (Nk,8)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_potential_features;
++                                                                        // (N,16) α|β
++    // P3 模块⑤: SCF 密度更新(mixer → 更新块 → 逐步 Fukui 重校正)。
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_features_mixed,
++        polar_features_mixed_storage;                                   // (N,2048)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_pe_out,polar_tp_out; // (N,2048)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_dp_out,polar_se_out,
++        polar_nl_out;                                                   // (N,512)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_ro_l1_out,
++        polar_ro_lmid_out;                                              // (N,160)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_gate1_out,
++        polar_gate2_out;                                                // (N,128)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_update_out;     // (N,10)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_field_feats_a,
++        polar_field_feats_b,polar_step_potential_features;              // (N,8)/(N,16)
++    Kokkos::View<Precision***,Kokkos::LayoutRight> polar_scf_step_densities;
++                                                                        // (S,N,8)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_scf_final_density;
++                                                                        // (N,8)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_mixer_temp,
++        polar_mixer_temp_storage,polar_scratch_a,polar_scratch_a_storage,
++        polar_scratch_b,polar_scratch_b_storage,polar_nl_input,
++        polar_nl_input_storage,polar_nl_a,polar_nl_a_storage,polar_nl_b,
++        polar_nl_b_storage;                                             // ⑤暂存
+     void compute_node_energies_forces(int num_nodes,Kokkos::View<const int*> node_types,
+         Kokkos::View<const int*> num_neigh,Kokkos::View<const int*> neigh_indices,
+         Kokkos::View<const int*> neigh_types,Kokkos::View<const double*> xyz,
+         Kokkos::View<const double*> distances,
+-        std::uint64_t execution_graph_generation=0);
++        std::uint64_t execution_graph_generation=0,
++        double total_charge=0.0,double total_spin=1.0,
++        Kokkos::View<const double*> node_positions={},
++        Kokkos::View<const double*> cell={});
+     void compute_Y(
+         Kokkos::View<const double*> xyz,bool evaluator_stream=false);
++    // P3 极性静电场全链(定义在独立 TU mace_polar_impl.tpp; ②③④⑤及后续⑥⑦⑧)。
++    void run_polar_pipeline(int num_nodes,
++        Kokkos::View<Precision**,Kokkos::LayoutRight> node_attrs,
++        Kokkos::View<const double*> node_positions,
++        Kokkos::View<const double*> cell,
++        double total_charge,double total_spin);
+ 
+ private:
+     struct SphericalHarmonicsState;
+@@ -430,17 +483,24 @@ private:
+         Kokkos::View<const int*> neigh_types);
+ public:
+     struct Readout {
+-        bool nonlinear=false; E3LinearKokkosT<Precision> linear,linear_1,linear_2; Precision activation_constant=1.0;
++        bool nonlinear=false,has_mid=false; E3LinearKokkosT<Precision> linear,linear_1,linear_2,linear_mid; Precision activation_constant=1.0;
+         Kokkos::View<Precision**,Kokkos::LayoutRight> hidden,activated,result,seed,
+             activated_adj,hidden_adj;
++        Kokkos::View<Precision**,Kokkos::LayoutRight> hidden_mid,activated_mid,mid_adj,act_mid_adj;
+         Kokkos::View<Precision**,Kokkos::LayoutRight> hidden_storage,activated_storage,
+             result_storage,seed_storage,activated_adj_storage,hidden_adj_storage;
++        Kokkos::View<Precision**,Kokkos::LayoutRight> hidden_mid_storage,activated_mid_storage,
++            mid_adj_storage,act_mid_adj_storage;
+         explicit Readout(const nlohmann::json& data);
+         void set_e3_linear_backend(const std::string& backend);
+         void set_e3_linear_workspace(
+             const std::shared_ptr<typename E3LinearKokkosT<Precision>::Workspace>& workspace);
+         std::size_t linear_workspace_bytes() const;
+         void evaluate(Kokkos::View<const Precision**,Kokkos::LayoutRight> input,Kokkos::View<Precision*> output);
++        // 与 evaluate 同链,但复制 final linear 的全部列(供 2x0e 等多通道读出头,
++        // 如 PolarMACE 的 fukui_source_map;evaluate 只取第 0 列)。
++        void evaluate_all(Kokkos::View<const Precision**,Kokkos::LayoutRight> input,
++                          Kokkos::View<Precision**,Kokkos::LayoutRight> output);
+         void reverse(Kokkos::View<const Precision**,Kokkos::LayoutRight> input,Precision scale,
+                      Kokkos::View<Precision**,Kokkos::LayoutRight> input_adjoint);
+     };
+@@ -690,6 +750,61 @@ private:
+     std::vector<Interaction> interactions;
+     std::vector<E3ProductBasisKokkosT<Precision>> products;
+     std::vector<Readout> readouts;
++    // --- PolarMACE 静电层 ("polar_blocks" 段;可选) ---
++    // 首段仅解析 lr_source_maps + fukui_source_map (P3 模块①②);其余子段暂存
++    // polar_json,按执行规格 (§12) 逐模块实现对账后再逐段接入。
++    bool polar_enabled=false;
++    nlohmann::json polar_json;
++    std::vector<E3LinearKokkosT<Precision>> polar_lr_source_maps;
++    std::optional<Readout> polar_fukui_source_map;  // Readout 仅 json 构造
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_lr_contribution,
++        polar_lr_contribution_storage;  // 模块① 逐层求值暂存
++    // 引擎内部 node-feats 的 l=1 分量基与 mace/e3nn 基相差固定矩阵 -P(P=(2,0,1)
++    // 循环;含整体 -1;多构型数值实证残差 ~1e-8)。供 polar 块的 node_feats 须先
++    // 经该列映射转换:e3nn 列 c 的取值为 -(内部列 (c+1)%3)。映射在 ctor 内按
++    // lr_source_maps[0].irreps_in 构造(仅 l=0 直通与 l=1 循环,l>1 拒绝)。
++    int polar_feature_width=0;
++    Kokkos::View<int*> polar_basis_source;
++    Kokkos::View<Precision*> polar_basis_sign;
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_node_feats_e3nn,
++        polar_node_feats_e3nn_storage;
++    // --- P3 模块③④ 表与配置(ctor 解析;公式经 numpy 预检对参考逐位锁定) ---
++    Precision polar_kspace_cutoff=0.0;
++    int polar_num_feature_sigmas=0;
++    Kokkos::View<Precision*> polar_tab_density_cl,polar_tab_density_sigma2,
++        polar_tab_density_pref0,polar_tab_density_pref1,
++        polar_tab_feature_cl,polar_tab_feature_sigma2,
++        polar_tab_feature_pref0,polar_tab_feature_pref1,
++        polar_si_overlap,polar_field_feature_norms;
++    Kokkos::View<int*> polar_output_permutation,polar_si_select;
++    int polar_recursion_steps=0;
++    // --- P3 模块⑤: 更新块(每个 SCF 步一个实例) ---
++    // 依据: field_blocks.py::AgnosticEmbeddedOneBodyVariableUpdate L470-594;
++    // uvu 路径表语义镜像 SparseUvuTensorProduct._path_meta L368-403。
++    struct PolarUpdate {
++        E3LinearKokkosT<Precision> potential_linear,node_feats_linear,
++            charge_embedding,source_embedding,readout_linear_1,
++            readout_linear_mid,readout_linear_2;
++        Kokkos::View<Precision*> uvu_dot_weight,uvu_tp_weight;
++        Kokkos::View<Precision*> uvu_dot_mask,uvu_tp_mask;
++        Kokkos::View<int**,Kokkos::LayoutRight> uvu_dot_meta,
++            uvu_tp_meta;                                  // (np,8)
++        Kokkos::View<Precision*> uvu_dot_path_weight,uvu_tp_path_weight;
++        Precision gate_scalar_cst=Precision(1),gate_gate_cst=Precision(1);
++        int gate_scalar_count=0,gate_gate_count=0,gate_gated_count=0;
++        Kokkos::View<Precision**,Kokkos::LayoutRight> nl_w0,nl_w1,nl_w2,nl_w3;
++        Kokkos::View<Precision*> nl_b0,nl_b1,nl_b2,nl_b3;
++        Kokkos::View<Precision*> ln0_weight,ln0_bias,ln1_weight,ln1_bias,
++            ln2_weight,ln2_bias;
++        Precision ln_eps=Precision(1e-5);
++        int nl_in_width=0,nl_hidden_width=0;
++        explicit PolarUpdate(const nlohmann::json& data);
++        void set_e3_linear_backend(const std::string& backend);
++        void set_e3_linear_workspace(
++            const std::shared_ptr<typename E3LinearKokkosT<Precision>::Workspace>& workspace);
++    };
++    std::vector<E3LinearKokkosT<Precision>> polar_mixer_linears;
++    std::vector<PolarUpdate> polar_updates;
+     std::vector<LayerState> states;
+     std::vector<ExecutionMH1NodeRuntime> execution_mh1_node_runtime;
+     void prepare_execution_mh1_node_runtime_parameters();
+diff --git a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
+index 7514438..74c49b2 100644
+--- a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
++++ b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
+@@ -46,7 +46,7 @@ template<typename Value>
+ std::vector<Value> tensor_values(const nlohmann::json& value){return value.at("values").get<std::vector<Value>>();}
+ nlohmann::json load_model_json(const std::string& filename){std::ifstream stream(filename);if(!stream)throw std::runtime_error("Could not open MACE_Nonlinear Kokkos model file: "+filename);return nlohmann::json::parse(stream);}
+ const nlohmann::json& checked_interaction(const nlohmann::json& data){if(data.at("class").get<std::string>()!="RealAgnosticResidualNonLinearInteractionBlock")throw std::invalid_argument("MACE_Nonlinear Kokkos interaction class is unsupported.");return data;}
+-const nlohmann::json& readout_component(const nlohmann::json& data,int component){const auto readout_class=data.at("class").get<std::string>();if(readout_class=="LinearReadoutBlock")return data.at("linear");if(readout_class=="NonLinearReadoutBlock")return data.at(component==2?"linear_2":"linear_1");throw std::invalid_argument("MACE_Nonlinear Kokkos readout class is unsupported: "+readout_class);}
++const nlohmann::json& readout_component(const nlohmann::json& data,int component){const auto readout_class=data.at("class").get<std::string>();if(readout_class=="LinearReadoutBlock")return data.at("linear");if(readout_class=="NonLinearReadoutBlock")return data.at(component==2?"linear_2":"linear_1");if(readout_class=="NonLinearBiasReadoutBlock"){if(component==3)return data.at("linear_mid");return data.at(component==2?"linear_2":"linear_1");}throw std::invalid_argument("MACE_Nonlinear Kokkos readout class is unsupported: "+readout_class);}
+ 
+ template<class View>
+ void ensure_view(View& view,View& storage,std::size_t extent)
+@@ -1060,8 +1060,10 @@ bool MaceNonlinearKokkosT<Precision>::Interaction::prepare_pair_spline(
+ 
+ template<typename Precision>
+ MaceNonlinearKokkosT<Precision>::Readout::Readout(const nlohmann::json& data)
+-    :nonlinear(data.at("class").get<std::string>()=="NonLinearReadoutBlock"),linear(readout_component(data,0)),linear_1(readout_component(data,1)),linear_2(readout_component(data,2))
+-{if(nonlinear){if(data.at("activation").get<std::string>()!="silu")throw std::invalid_argument("MACE_Nonlinear Kokkos readout activation is unsupported.");activation_constant=data.at("activation_constants").at(0).get<Precision>();}}
++    :nonlinear(data.at("class").get<std::string>()=="NonLinearReadoutBlock"||data.at("class").get<std::string>()=="NonLinearBiasReadoutBlock"),
++     has_mid(data.at("class").get<std::string>()=="NonLinearBiasReadoutBlock"),
++     linear(readout_component(data,0)),linear_1(readout_component(data,1)),linear_2(readout_component(data,2))
++{if(nonlinear){if(data.at("activation").get<std::string>()!="silu")throw std::invalid_argument("MACE_Nonlinear Kokkos readout activation is unsupported.");activation_constant=data.at("activation_constants").at(0).get<Precision>();}if(has_mid)linear_mid=E3LinearKokkosT<Precision>(data.at("linear_mid"));}
+ 
+ template<typename Precision>
+ void MaceNonlinearKokkosT<Precision>::prepare_mh1_pair_spline_for_graph(
+@@ -1157,6 +1159,7 @@ void MaceNonlinearKokkosT<Precision>::Readout::set_e3_linear_backend(
+     linear.set_backend(backend);
+     linear_1.set_backend(backend);
+     linear_2.set_backend(backend);
++    if(has_mid)linear_mid.set_backend(backend);
+ }
+ 
+ template<typename Precision>
+@@ -1166,13 +1169,15 @@ void MaceNonlinearKokkosT<Precision>::Readout::set_e3_linear_workspace(
+     linear.set_workspace(workspace);
+     linear_1.set_workspace(workspace);
+     linear_2.set_workspace(workspace);
++    if(has_mid)linear_mid.set_workspace(workspace);
+ }
+ 
+ template<typename Precision>
+ std::size_t MaceNonlinearKokkosT<Precision>::Readout::linear_workspace_bytes() const
+ {
+     return linear.workspace_bytes()+linear_1.workspace_bytes()
+-        +linear_2.workspace_bytes();
++        +linear_2.workspace_bytes()
++        +(has_mid?linear_mid.workspace_bytes():0);
+ }
+ 
+ template<typename Precision>
+@@ -1183,7 +1188,57 @@ void MaceNonlinearKokkosT<Precision>::Readout::evaluate(Kokkos::View<const Preci
+     ensure_view(hidden,hidden_storage,input.extent(0),linear_1.output_dimension());
+     ensure_view(activated,activated_storage,input.extent(0),linear_1.output_dimension());
+     auto local_hidden=hidden;auto local_activated=activated;
+-    linear_1.evaluate(input,hidden);const Precision constant=activation_constant;Kokkos::parallel_for("readout silu",hidden.size(),KOKKOS_LAMBDA(std::size_t flat){const std::size_t i=flat/local_hidden.extent(1);const int j=flat%local_hidden.extent(1);const Precision x=local_hidden(i,j);local_activated(i,j)=constant*x/(Precision(1)+Kokkos::exp(-x));});linear_2.evaluate(activated,result);ordered_kokkos_deep_copy(output,Kokkos::subview(result,Kokkos::ALL,0));
++    linear_1.evaluate(input,hidden);const Precision constant=activation_constant;Kokkos::parallel_for("readout silu",hidden.size(),KOKKOS_LAMBDA(std::size_t flat){const std::size_t i=flat/local_hidden.extent(1);const int j=flat%local_hidden.extent(1);const Precision x=local_hidden(i,j);local_activated(i,j)=constant*x/(Precision(1)+Kokkos::exp(-x));});
++    if(has_mid)
++    {
++        ensure_view(hidden_mid,hidden_mid_storage,input.extent(0),linear_1.output_dimension());
++        ensure_view(activated_mid,activated_mid_storage,input.extent(0),linear_1.output_dimension());
++        auto local_hidden_mid=hidden_mid;
++        auto local_activated_mid=activated_mid;
++        linear_mid.evaluate(activated,hidden_mid);
++        Kokkos::parallel_for("readout mid silu",hidden_mid.size(),KOKKOS_LAMBDA(std::size_t flat){const std::size_t i=flat/local_hidden_mid.extent(1);const int j=flat%local_hidden_mid.extent(1);const Precision x=local_hidden_mid(i,j);local_activated_mid(i,j)=constant*x/(Precision(1)+Kokkos::exp(-x));});
++        linear_2.evaluate(activated_mid,result);
++        ordered_kokkos_deep_copy(output,Kokkos::subview(result,Kokkos::ALL,0));
++        return;
++    }
++    linear_2.evaluate(activated,result);ordered_kokkos_deep_copy(output,Kokkos::subview(result,Kokkos::ALL,0));
++}
++
++template<typename Precision>
++void MaceNonlinearKokkosT<Precision>::Readout::evaluate_all(
++    Kokkos::View<const Precision**,Kokkos::LayoutRight> input,
++    Kokkos::View<Precision**,Kokkos::LayoutRight> output)
++{
++    // 与 evaluate 相同的读出头链, 但复制 final linear 的全部列(而非第 0 列)。
++    if(!nonlinear)
++    {
++        ensure_view(result,result_storage,input.extent(0),linear.output_dimension());
++        linear.evaluate(input,result);
++        ordered_kokkos_deep_copy(output,result);
++        return;
++    }
++    ensure_view(hidden,hidden_storage,input.extent(0),linear_1.output_dimension());
++    ensure_view(activated,activated_storage,input.extent(0),linear_1.output_dimension());
++    auto local_hidden=hidden;auto local_activated=activated;
++    linear_1.evaluate(input,hidden);
++    const Precision constant=activation_constant;
++    Kokkos::parallel_for("readout all silu",hidden.size(),KOKKOS_LAMBDA(std::size_t flat){const std::size_t i=flat/local_hidden.extent(1);const int j=flat%local_hidden.extent(1);const Precision x=local_hidden(i,j);local_activated(i,j)=constant*x/(Precision(1)+Kokkos::exp(-x));});
++    if(has_mid)
++    {
++        ensure_view(hidden_mid,hidden_mid_storage,input.extent(0),linear_1.output_dimension());
++        ensure_view(activated_mid,activated_mid_storage,input.extent(0),linear_1.output_dimension());
++        auto local_hidden_mid=hidden_mid;
++        auto local_activated_mid=activated_mid;
++        linear_mid.evaluate(activated,hidden_mid);
++        Kokkos::parallel_for("readout all mid silu",hidden_mid.size(),KOKKOS_LAMBDA(std::size_t flat){const std::size_t i=flat/local_hidden_mid.extent(1);const int j=flat%local_hidden_mid.extent(1);const Precision x=local_hidden_mid(i,j);local_activated_mid(i,j)=constant*x/(Precision(1)+Kokkos::exp(-x));});
++        ensure_view(result,result_storage,input.extent(0),linear_2.output_dimension());
++        linear_2.evaluate(activated_mid,result);
++        ordered_kokkos_deep_copy(output,result);
++        return;
++    }
++    ensure_view(result,result_storage,input.extent(0),linear_2.output_dimension());
++    linear_2.evaluate(activated,result);
++    ordered_kokkos_deep_copy(output,result);
+ }
+ 
+ template<typename Precision>
+@@ -1195,7 +1250,23 @@ void MaceNonlinearKokkosT<Precision>::Readout::reverse(Kokkos::View<const Precis
+     ensure_view(activated_adj,activated_adj_storage,input.extent(0),linear_1.output_dimension());
+     ensure_view(hidden_adj,hidden_adj_storage,input.extent(0),linear_1.output_dimension());
+     auto local_hidden=hidden;auto local_activated_adj=activated_adj;auto local_hidden_adj=hidden_adj;
+-    linear_2.reverse(seed,activated_adj);const Precision constant=activation_constant;Kokkos::parallel_for("reverse readout silu",hidden.size(),KOKKOS_LAMBDA(std::size_t flat){const std::size_t i=flat/local_hidden.extent(1);const int j=flat%local_hidden.extent(1);const Precision x=local_hidden(i,j),probability=Precision(1)/(Precision(1)+Kokkos::exp(-x));local_hidden_adj(i,j)=local_activated_adj(i,j)*constant*(probability+x*probability*(Precision(1)-probability));});linear_1.reverse(hidden_adj,input_adjoint);
++    const Precision constant=activation_constant;
++    if(has_mid)
++    {
++        ensure_view(hidden_mid,hidden_mid_storage,input.extent(0),linear_1.output_dimension());
++        ensure_view(mid_adj,mid_adj_storage,input.extent(0),linear_1.output_dimension());
++        ensure_view(act_mid_adj,act_mid_adj_storage,input.extent(0),linear_1.output_dimension());
++        auto local_hidden_mid=hidden_mid;
++        auto local_mid_adj=mid_adj;
++        auto local_act_mid_adj=act_mid_adj;
++        linear_2.reverse(seed,activated_adj);
++        Kokkos::parallel_for("reverse readout mid silu",hidden_mid.size(),KOKKOS_LAMBDA(std::size_t flat){const std::size_t i=flat/local_hidden_mid.extent(1);const int j=flat%local_hidden_mid.extent(1);const Precision x=local_hidden_mid(i,j),probability=Precision(1)/(Precision(1)+Kokkos::exp(-x));local_mid_adj(i,j)=local_activated_adj(i,j)*constant*(probability+x*probability*(Precision(1)-probability));});
++        linear_mid.reverse(mid_adj,act_mid_adj);
++        Kokkos::parallel_for("reverse readout head silu",hidden.size(),KOKKOS_LAMBDA(std::size_t flat){const std::size_t i=flat/local_hidden.extent(1);const int j=flat%local_hidden.extent(1);const Precision x=local_hidden(i,j),probability=Precision(1)/(Precision(1)+Kokkos::exp(-x));local_hidden_adj(i,j)=local_act_mid_adj(i,j)*constant*(probability+x*probability*(Precision(1)-probability));});
++        linear_1.reverse(hidden_adj,input_adjoint);
++        return;
++    }
++    linear_2.reverse(seed,activated_adj);Kokkos::parallel_for("reverse readout silu",hidden.size(),KOKKOS_LAMBDA(std::size_t flat){const std::size_t i=flat/local_hidden.extent(1);const int j=flat%local_hidden.extent(1);const Precision x=local_hidden(i,j),probability=Precision(1)/(Precision(1)+Kokkos::exp(-x));local_hidden_adj(i,j)=local_activated_adj(i,j)*constant*(probability+x*probability*(Precision(1)-probability));});linear_1.reverse(hidden_adj,input_adjoint);
+ }
+ 
+ #elif SYMMETRIX_MACE_NONLINEAR_KOKKOS_PART == 2
+@@ -3001,6 +3072,12 @@ void MaceNonlinearKokkosT<Precision>::set_e3_linear_backend(
+     for(auto& interaction:interactions)
+         interaction.set_e3_linear_backend(selected);
+     for(auto& readout:readouts) readout.set_e3_linear_backend(selected);
++    if(polar_enabled){
++        for(auto& linear:polar_lr_source_maps)linear.set_backend(selected);
++        polar_fukui_source_map->set_e3_linear_backend(selected);
++        for(auto& linear:polar_mixer_linears)linear.set_backend(selected);
++        for(auto& update:polar_updates)update.set_e3_linear_backend(selected);
++    }
+ }
+ 
+ template<typename Precision>
+@@ -3232,12 +3309,17 @@ std::size_t MaceNonlinearKokkosT<Precision>::node_workspace_bytes() const
+         SYMMETRIX_ADD_NODE_BYTES(normalization_inverse);
+ #undef SYMMETRIX_ADD_NODE_BYTES
+     }
+-    for(const auto& readout:readouts)
++    for(const auto& readout:readouts) {
+         bytes+=sizeof(Precision)*(
+             readout.hidden_storage.size()+readout.activated_storage.size()
+             +readout.result_storage.size()+readout.seed_storage.size()
+             +readout.activated_adj_storage.size()
+             +readout.hidden_adj_storage.size());
++        if(readout.has_mid)
++            bytes+=sizeof(Precision)*(
++                readout.hidden_mid_storage.size()+readout.activated_mid_storage.size()
++                +readout.mid_adj_storage.size()+readout.act_mid_adj_storage.size());
++    }
+     for(const auto& runtime:execution_mh1_node_runtime)
+         bytes+=runtime.bytes();
+     bytes+=sizeof(Precision)*(
+@@ -3270,6 +3352,92 @@ MaceNonlinearKokkosT<Precision>::MaceNonlinearKokkosT(const nlohmann::json& data
+     const auto& radial_data=data.at("radial_embedding");apply_cutoff=radial_data.at("apply_cutoff").get<bool>();bessel_weights=toKokkosView("bessel weights",tensor_values<Precision>(radial_data.at("basis").at("weights")));num_bessel=bessel_weights.size();radial_prefactor=radial_data.at("basis").at("prefactor").get<double>();cutoff_power=radial_data.at("cutoff").at("p").get<int>();const auto& transform=radial_data.at("distance_transform");has_agnesi=transform.at("type").get<std::string>()=="agnesi";if(has_agnesi){agnesi_a=transform.at("a").get<double>();agnesi_q=transform.at("q").get<double>();agnesi_p=transform.at("p").get<double>();covalent_radii=toKokkosView("covalent radii",transform.at("covalent_radii").get<std::vector<Precision>>());}
+     scale=tensor_values<double>(data.at("scale_shift").at("scale")).at(0);shift=tensor_values<double>(data.at("scale_shift").at("shift")).at(0);const auto all_e0=tensor_values<double>(data.at("atomic_energies"));std::vector<double> e0(atomic_numbers_host.size());auto indices=data.at("model_indices").get<std::vector<int>>();for(int i=0;i<e0.size();++i)e0[i]=all_e0.at(indices[i]);atomic_energies=toKokkosView("atomic energies",e0);
+     for(const auto& value:data.at("interactions"))interactions.emplace_back(value);for(const auto& value:data.at("products"))products.emplace_back(value);for(const auto& value:data.at("readouts"))readouts.emplace_back(value);
++    if(data.contains("polar_blocks")){
++        const auto& pb=data.at("polar_blocks");
++        polar_enabled=true;polar_json=pb;
++        for(const auto& value:pb.at("lr_source_maps"))
++            polar_lr_source_maps.emplace_back(value);
++        if(static_cast<int>(polar_lr_source_maps.size())!=static_cast<int>(interactions.size()))
++            throw std::invalid_argument(
++                "polar_blocks: lr_source_maps must match the interaction layer count.");
++        polar_fukui_source_map.emplace(pb.at("fukui_source_map"));
++        // 基变换列映射(见 hpp 注释):e3nn 列 c = -(内部列 (c+1)%3)(l=1 块内),
++        // l=0 直通;l>1 明确拒绝。依据: 多构型 scf 夹具数值实证(计划文档 §14)。
++        const Irreps polar_feature_irreps(
++            pb.at("lr_source_maps").at(0).at("irreps_in").get<std::string>());
++        polar_feature_width=polar_feature_irreps.dimension();
++        std::vector<int> basis_source(polar_feature_width);
++        std::vector<Precision> basis_sign(polar_feature_width,Precision(1));
++        for(int column=0;column<polar_feature_width;++column)
++            basis_source[column]=column;
++        for(const auto& block:polar_feature_irreps.blocks) {
++            if(block.l==0) continue;
++            if(block.l!=1)
++                throw std::invalid_argument(
++                    "polar_blocks: node-feature l>1 is unsupported.");
++            for(int m=0;m<block.multiplicity;++m)
++                for(int component=0;component<3;++component) {
++                    const int column=block.offset+3*m+component;
++                    basis_source[column]=block.offset+3*m+((component+1)%3);
++                    basis_sign[column]=Precision(-1);
++                }
++        }
++        polar_basis_source=toKokkosView("polar basis source",basis_source);
++        polar_basis_sign=toKokkosView("polar basis sign",basis_sign);
++        // ---- 模块③④: electric_potential_descriptor 表 + configs ----
++        // 依据: extract_polar_blocks.py::_gto_basis/_gto_features/_self_interaction
++        // 输出结构;公式与表语义经 numpy 预检对 geo3 参考 dump 逐位锁定。
++        const auto& epd=pb.at("electric_potential_descriptor");
++        polar_kspace_cutoff=epd.at("kspace_cutoff").get<Precision>();
++        if(epd.at("density_basis").at("max_l").get<int>()!=1
++            ||epd.at("feature_basis").at("max_l").get<int>()!=1)
++            throw std::invalid_argument(
++                "polar_blocks: GTO basis max_l must be 1.");
++        const auto table_vec=[&](const nlohmann::json& basis,const char* key) {
++            return tensor_values<Precision>(basis.at(key));
++        };
++        polar_tab_density_cl=toKokkosView("polar density cl",
++            table_vec(epd.at("density_basis"),"cl_scale"));
++        polar_tab_density_sigma2=toKokkosView("polar density sigma2",
++            table_vec(epd.at("density_basis").at("radial_spline"),"sigma2"));
++        polar_tab_density_pref0=toKokkosView("polar density pref0",
++            table_vec(epd.at("density_basis").at("radial_spline"),"pref0"));
++        polar_tab_density_pref1=toKokkosView("polar density pref1",
++            table_vec(epd.at("density_basis").at("radial_spline"),"pref1"));
++        polar_tab_feature_cl=toKokkosView("polar feature cl",
++            table_vec(epd.at("feature_basis"),"cl_scale"));
++        polar_tab_feature_sigma2=toKokkosView("polar feature sigma2",
++            table_vec(epd.at("feature_basis").at("radial_spline"),"sigma2"));
++        polar_tab_feature_pref0=toKokkosView("polar feature pref0",
++            table_vec(epd.at("feature_basis").at("radial_spline"),"pref0"));
++        polar_tab_feature_pref1=toKokkosView("polar feature pref1",
++            table_vec(epd.at("feature_basis").at("radial_spline"),"pref1"));
++        polar_num_feature_sigmas=static_cast<int>(
++            epd.at("feature_basis").at("sigmas").size());
++        polar_si_overlap=toKokkosView("polar si overlap",
++            tensor_values<Precision>(epd.at("self_interaction_terms")
++                .at("overlap_constants")));
++        polar_si_select=toKokkosView("polar si select",
++            tensor_values<int>(epd.at("self_interaction_terms")
++                .at("select_indices")));
++        polar_output_permutation=toKokkosView("polar output permutation",
++            tensor_values<int>(epd.at("output_permutation")));
++        polar_field_feature_norms=toKokkosView("polar field feature norms",
++            tensor_values<Precision>(pb.at("configs").at("field_feature_norms")));
++        polar_recursion_steps=pb.at("configs").at("num_recursion_steps").get<int>();
++        // ---- 模块⑤: mixer + 更新块(依据 extensions.py L730/L777-866) ----
++        for(const auto& value:pb.at("layer_feature_mixer").at("linears"))
++            polar_mixer_linears.emplace_back(value);
++        for(const auto& value:pb.at("field_dependent_charges_maps"))
++            polar_updates.emplace_back(value);
++        if(static_cast<int>(polar_mixer_linears.size())
++            !=static_cast<int>(interactions.size()))
++            throw std::invalid_argument(
++                "polar_blocks: layer_feature_mixer count must match layers.");
++        if(static_cast<int>(polar_updates.size())!=polar_recursion_steps)
++            throw std::invalid_argument(
++                "polar_blocks: charges_maps count must match num_recursion_steps.");
++    } else polar_enabled=false;
+     if constexpr(std::is_same_v<Precision,float>
+         &&std::is_same_v<typename Kokkos::DefaultExecutionSpace::memory_space,
+             Kokkos::HostSpace>) {
+@@ -3316,6 +3484,15 @@ MaceNonlinearKokkosT<Precision>::MaceNonlinearKokkosT(const nlohmann::json& data
+         product.set_e3_linear_workspace(e3_linear_workspace);
+     for(auto& readout:readouts)
+         readout.set_e3_linear_workspace(e3_linear_workspace);
++    if(polar_enabled){
++        for(auto& linear:polar_lr_source_maps)
++            linear.set_workspace(e3_linear_workspace);
++        polar_fukui_source_map->set_e3_linear_workspace(e3_linear_workspace);
++        for(auto& linear:polar_mixer_linears)
++            linear.set_workspace(e3_linear_workspace);
++        for(auto& update:polar_updates)
++            update.set_e3_linear_workspace(e3_linear_workspace);
++    }
+     if(interactions.size()!=products.size()||interactions.size()!=readouts.size())
+         throw std::invalid_argument("MACE_Nonlinear Kokkos layer counts are inconsistent.");
+     mh1_family=analyze_mh1_family_architecture(data);
+@@ -3407,6 +3584,7 @@ void MaceNonlinearKokkosT<Precision>::prepare_execution_mh1_node_runtime_paramet
+         if(readout.nonlinear) {
+             append_linear(readout_parameters,readout.linear_1);
+             append_linear(readout_parameters,readout.linear_2);
++            if(readout.has_mid) append_linear(readout_parameters,readout.linear_mid);
+         } else append_linear(readout_parameters,readout.linear);
+ 
+         auto& runtime=execution_mh1_node_runtime.at(layer);
+@@ -3611,7 +3789,7 @@ void MaceNonlinearKokkosT<Precision>::compute_Y(
+ }
+ 
+ template<typename Precision>
+-void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes,Kokkos::View<const int*> node_types,Kokkos::View<const int*> num_neigh,Kokkos::View<const int*> neigh_indices,Kokkos::View<const int*> neigh_types,Kokkos::View<const double*> xyz,Kokkos::View<const double*> distances,const std::uint64_t execution_graph_generation)
++void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes,Kokkos::View<const int*> node_types,Kokkos::View<const int*> num_neigh,Kokkos::View<const int*> neigh_indices,Kokkos::View<const int*> neigh_types,Kokkos::View<const double*> xyz,Kokkos::View<const double*> distances,const std::uint64_t execution_graph_generation,const double total_charge,const double total_spin,Kokkos::View<const double*> node_positions,Kokkos::View<const double*> cell)
+ {
+     const bool use_pair_spline=mh1_edge_executor_=="pair_spline_v1";
+     if(!use_pair_spline&&mace_uses_direct_execution(streamed_edges)
+@@ -4078,6 +4256,31 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+         }
+     };
+ 
++    if(polar_enabled) {
++        // P3 模块①(PolarMACE 初值自旋电荷密度):
++        // spin_charge_density = Σ_ℓ lr_source_maps[ℓ](node_feats[ℓ])
++        // 依据: mace extensions.py L666-703(逐层累积), L734(view(N,2,4))。
++        // 仅标准 materialized 图提供标准 node_feats;direct/节点程序不适用。
++        if(generated_node_program||mace_uses_prepared_execution(streamed_edges))
++            throw std::runtime_error(
++                "polar_blocks requires the standard materialized evaluation graph.");
++        const int polar_density_width=static_cast<int>(
++            polar_lr_source_maps.front().output_dimension());
++        ensure_view(polar_spin_charge_density,polar_spin_charge_density_storage,
++            num_nodes,polar_density_width);
++        ordered_kokkos_deep_copy(polar_spin_charge_density,Precision(0));
++        ensure_view(polar_lr_contribution,polar_lr_contribution_storage,
++            num_nodes,polar_density_width);
++        // 模块⑤: features_mixed 缓冲(mixer 逐层累积,循环前清零)。
++        const int polar_mixer_width=static_cast<int>(
++            polar_mixer_linears.front().output_dimension());
++        ensure_view(polar_features_mixed,polar_features_mixed_storage,
++            num_nodes,polar_mixer_width);
++        ordered_kokkos_deep_copy(polar_features_mixed,Precision(0));
++        ensure_view(polar_mixer_temp,polar_mixer_temp_storage,
++            num_nodes,polar_mixer_width);
++    }
++
+     for(int layer=0;layer<static_cast<int>(interactions.size());++layer) {
+         auto& interaction=interactions[layer];
+         auto& state=states[layer];
+@@ -5220,8 +5423,53 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+                 :E3ProductBasisKokkosT<Precision>::InputLayout::native,
+             interaction.skip.active_output_prefix_dimension());
+         features=state.output;
++        if(polar_enabled) {
++            // P3 模块①: 逐层 lr_source_maps[ℓ](node_feats[ℓ]) 累加
++            // (依据: mace extensions.py L702-703;node_feats[ℓ]=state.output)。
++            // 注意: 先做引擎内部基 -> e3nn 基变换(列映射,见 hpp/ctor 注释)。
++            if(static_cast<int>(state.output.extent(1))!=polar_feature_width)
++                throw std::runtime_error(
++                    "polar_blocks: node-feature width does not match the "
++                    "lr_source_maps input width.");
++            ensure_view(polar_node_feats_e3nn,polar_node_feats_e3nn_storage,
++                num_nodes,polar_feature_width);
++            auto polar_internal=state.output;
++            auto polar_converted=polar_node_feats_e3nn;
++            auto polar_basis=polar_basis_source;
++            auto polar_basis_flip=polar_basis_sign;
++            Kokkos::parallel_for("polar node feats basis conversion",
++                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                    {num_nodes,polar_feature_width}),
++                KOKKOS_LAMBDA(int node,int column) {
++                    polar_converted(node,column)=polar_basis_flip(column)
++                        *polar_internal(node,polar_basis(column));
++                });
++            polar_lr_source_maps[layer].evaluate(
++                polar_converted,polar_lr_contribution);
++            auto polar_accumulator=polar_spin_charge_density;
++            auto polar_sources=polar_lr_contribution;
++            Kokkos::parallel_for("polar lr source accumulation",
++                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                    {num_nodes,static_cast<int>(polar_accumulator.extent(1))}),
++                KOKKOS_LAMBDA(int node,int k) {
++                    polar_accumulator(node,k)+=polar_sources(node,k);
++                });
++            // P3 模块⑤: features_mixed 逐层累积 =
++            // Σ_ℓ mixer_linear[ℓ](node_feats_e3nn[ℓ])(extensions.py L730)。
++            polar_mixer_linears[layer].evaluate(
++                polar_converted,polar_mixer_temp);
++            auto mixer_accumulator=polar_features_mixed;
++            auto mixer_term=polar_mixer_temp;
++            Kokkos::parallel_for("polar feature mixer accumulation",
++                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                    {num_nodes,static_cast<int>(mixer_accumulator.extent(1))}),
++                KOKKOS_LAMBDA(int node,int k) {
++                    mixer_accumulator(node,k)+=mixer_term(node,k);
++                });
++        }
+     }
+ 
++
+     for(int layer=0;!generated_node_program
+         &&layer<static_cast<int>(readouts.size());++layer) {
+         auto& state=states[layer];
+@@ -5249,6 +5497,11 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+         energies(node)=e0(node_types(node))+energy_scale*energies(node)+energy_shift;
+     });
+ 
++    // P3 极性静电场全链(独立 TU mace_polar_impl.tpp; ②③④⑤, ⑥⑦⑧后续同线扩展)
++    if(polar_enabled)
++        run_polar_pipeline(num_nodes,attrs,node_positions,cell,
++            total_charge,total_spin);
++
+     ensure_view(harmonic_adjoints,harmonic_adjoints_storage,edges,num_lm);
+     ordered_kokkos_deep_copy(harmonic_adjoints,Precision(0));
+     if(use_pair_spline) {
+diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
+new file mode 100644
+index 0000000..9657001
+--- /dev/null
++++ b/libsymmetrix/source/mace_polar_impl.tpp
+@@ -0,0 +1,1000 @@
++// mace_polar_impl.tpp — P3 极性静电场独立编译单元(2026-10-15)。
++// 目的: polar 逻辑(②Fukui/③k网格+GTO/④势特征/⑤SCF; 及未来⑥⑦⑧)与主 tpp 分离,
++//       之后 polar 改动只重编本 TU(单 TU ~数分钟)而非四个大 TU(20-40 分钟)。
++// 由 mace_polar_kokkos.cpp 单独 include; 不要被其它 TU include。
++// 各处依据/锚点沿用主 tpp 注释(未搬动的①/mixer/ctor 解析仍在主 tpp)。
++
++#include "mace_nonlinear_kokkos.hpp"
++#include "tools_kokkos.hpp"
++
++namespace {
++
++template<typename Value>
++std::vector<Value> tensor_values(const nlohmann::json& value){return value.at("values").get<std::vector<Value>>();}
++const nlohmann::json& checked_interaction(const nlohmann::json& data){if(data.at("class").get<std::string>()!="RealAgnosticResidualNonLinearInteractionBlock")throw std::invalid_argument("MACE_Nonlinear Kokkos interaction class is unsupported.");return data;}
++const nlohmann::json& readout_component(const nlohmann::json& data,int component){const auto readout_class=data.at("class").get<std::string>();if(readout_class=="LinearReadoutBlock")return data.at("linear");if(readout_class=="NonLinearReadoutBlock")return data.at(component==2?"linear_2":"linear_1");if(readout_class=="NonLinearBiasReadoutBlock"){if(component==3)return data.at("linear_mid");return data.at(component==2?"linear_2":"linear_1");}throw std::invalid_argument("MACE_Nonlinear Kokkos readout class is unsupported: "+readout_class);}
++
++// P3 模块⑤: sparse_uvu 路径表解析(镜像 field_blocks.py SparseUvuTensorProduct
++// L368-403 的 _path_meta 语义: 每条指令 = (in1_off,in2_off,out_off,w_off,
++// mul1,mul2,mode,d1); mode0=l×l→0(成对收缩/√d1), mode1=l×0→l(标量调制)。
++template<typename Precision>
++void parse_uvu_paths(const nlohmann::json& data,std::vector<int>& meta,
++    std::vector<Precision>& path_weights,std::vector<Precision>& weight_values,
++    std::vector<Precision>& mask_values)
++{
++    const Irreps in1(data.at("irreps_in1").get<std::string>());
++    const Irreps in2(data.at("irreps_in2").get<std::string>());
++    const Irreps out(data.at("irreps_out").get<std::string>());
++    weight_values=tensor_values<Precision>(data.at("weight"));
++    mask_values=tensor_values<Precision>(data.at("output_mask"));
++    int weight_offset=0;
++    for(const auto& value:data.at("instructions")) {
++        const auto& a=in1.blocks.at(value.at("i_in1").get<int>());
++        const auto& b=in2.blocks.at(value.at("i_in2").get<int>());
++        const auto& c=out.blocks.at(value.at("i_out").get<int>());
++        const auto shape=value.at("path_shape").get<std::vector<int>>();
++        const int d1=2*a.l+1;
++        int mode=0;
++        if(c.l!=0) {
++            mode=1;
++            if(b.l!=0||a.l!=c.l)
++                throw std::invalid_argument(
++                    "polar uvu: mode1 requires l2==0 and l1==l_out.");
++        } else if(a.l!=b.l)
++            throw std::invalid_argument(
++                "polar uvu: mode0 requires l1==l2.");
++        meta.insert(meta.end(),{a.offset,b.offset,c.offset,weight_offset,
++            a.multiplicity,b.multiplicity,mode,d1});
++        path_weights.push_back(value.at("path_weight").get<Precision>());
++        weight_offset+=static_cast<int>(shape[0])*static_cast<int>(shape[1]);
++    }
++    if(weight_offset!=static_cast<int>(weight_values.size()))
++        throw std::invalid_argument("polar uvu: weight size mismatch.");
++}
++
++template<class View>
++void ensure_view(View& view,View& storage,std::size_t extent)
++{
++    if(storage.extent(0)<extent)
++        Kokkos::realloc(Kokkos::WithoutInitializing,storage,extent);
++    view=Kokkos::subview(
++        storage,std::make_pair(std::size_t(0),extent));
++}
++
++template<class View>
++void ensure_view(View& view,View& storage,int first,int second)
++{
++    if(storage.extent(0)<static_cast<std::size_t>(first)
++        ||storage.extent(1)!=static_cast<std::size_t>(second))
++        Kokkos::realloc(Kokkos::WithoutInitializing,storage,first,second);
++    view=Kokkos::subview(storage,std::make_pair(0,first),Kokkos::ALL);
++}
++
++// P3 模块⑤: sparse_uvu 路径表解析(镜像 field_blocks.py SparseUvuTensorProduct
++// L368-403 的 _path_meta 语义: 每条指令 = (in1_off,in2_off,out_off,w_off,
++// mul1,mul2,mode,d1); mode0=l×l→0(成对收缩/√d1), mode1=l×0→l(标量调制)。
++
++}  // namespace
++
++template<typename Precision>
++MaceNonlinearKokkosT<Precision>::PolarUpdate::PolarUpdate(
++    const nlohmann::json& data)
++    :potential_linear(data.at("potential_embedding").at("potential_linear")),
++     node_feats_linear(data.at("potential_embedding").at("node_feats_linear")),
++     charge_embedding(data.at("potential_embedding").at("charge_embedding")),
++     source_embedding(data.at("source_embedding")),
++     readout_linear_1(data.at("readout").at("linear_1")),
++     readout_linear_mid(data.at("readout").at("linear_mid")),
++     readout_linear_2(data.at("readout").at("linear_2"))
++{
++    // uvu 路径表(依据 field_blocks.py L368-403; path_weight 经审计补序列化)
++    {
++        std::vector<int> meta;
++        std::vector<Precision> path_weights,weight_values,mask_values;
++        parse_uvu_paths(data.at("dot_products"),meta,path_weights,
++            weight_values,mask_values);
++        const int dot_paths=static_cast<int>(path_weights.size());
++        uvu_dot_meta=toKokkosView("polar uvu dot meta",meta,dot_paths,8);
++        uvu_dot_path_weight=toKokkosView(
++            "polar uvu dot path weight",path_weights);
++        uvu_dot_weight=toKokkosView("polar uvu dot weight",weight_values);
++        uvu_dot_mask=toKokkosView("polar uvu dot mask",mask_values);
++        meta.clear();path_weights.clear();weight_values.clear();mask_values.clear();
++        parse_uvu_paths(data.at("tp_out"),meta,path_weights,
++            weight_values,mask_values);
++        const int tp_paths=static_cast<int>(path_weights.size());
++        uvu_tp_meta=toKokkosView("polar uvu tp meta",meta,tp_paths,8);
++        uvu_tp_path_weight=toKokkosView(
++            "polar uvu tp path weight",path_weights);
++        uvu_tp_weight=toKokkosView("polar uvu tp weight",weight_values);
++        uvu_tp_mask=toKokkosView("polar uvu tp mask",mask_values);
++    }
++    // e3nn.nn.Gate(readout 中段; 语义经 charges_hooks 数值锁定 2.2e-16:
++    // scalars=cst_s·silu; gates=cst_g·sigmoid; vec=cst_g·sigmoid⊗gated)
++    {
++        const auto& gate=data.at("readout_gate");
++        gate_scalar_cst=gate.at("act_scalars").at(0).at("cst")
++            .get<Precision>();
++        gate_gate_cst=gate.at("act_gates").at(0).at("cst")
++            .get<Precision>();
++        // 分组计数(irreps 形如 "32x0e");切片 [scalars|gates|gated(3×)]。
++        const auto parse_count=[&](const char* key) {
++            const std::string spec=gate.at(key).get<std::string>();
++            const auto separator=spec.find('x');
++            return separator==std::string::npos
++                ?0:std::stoi(spec.substr(0,separator));
++        };
++        gate_scalar_count=parse_count("irreps_scalars");
++        gate_gate_count=parse_count("irreps_gates");
++        gate_gated_count=parse_count("irreps_gated");
++    }
++    // RadialMLP: [linear, LayerNorm, silu]×3 + linear (mace.modules.radial FullyConnectedNet)
++    {
++        const auto& layers=data.at("nonlinearity").at("layers");
++        const auto dense_weight=[&](const nlohmann::json& layer,
++                const char* label) {
++            const auto weight=tensor_values<Precision>(layer.at("weight"));
++            const auto shape=layer.at("weight").at("shape")
++                .get<std::vector<int>>();
++            return toKokkosView(label,weight,shape.at(0),shape.at(1));
++        };
++        nl_w0=dense_weight(layers.at(0),"polar nl w0");
++        nl_w1=dense_weight(layers.at(3),"polar nl w1");
++        nl_w2=dense_weight(layers.at(6),"polar nl w2");
++        nl_w3=dense_weight(layers.at(9),"polar nl w3");
++        nl_b0=toKokkosView("polar nl b0",
++            tensor_values<Precision>(layers.at(0).at("bias")));
++        nl_b1=toKokkosView("polar nl b1",
++            tensor_values<Precision>(layers.at(3).at("bias")));
++        nl_b2=toKokkosView("polar nl b2",
++            tensor_values<Precision>(layers.at(6).at("bias")));
++        nl_b3=toKokkosView("polar nl b3",
++            tensor_values<Precision>(layers.at(9).at("bias")));
++        ln0_weight=toKokkosView("polar ln0 weight",
++            tensor_values<Precision>(layers.at(1).at("weight")));
++        ln0_bias=toKokkosView("polar ln0 bias",
++            tensor_values<Precision>(layers.at(1).at("bias")));
++        ln1_weight=toKokkosView("polar ln1 weight",
++            tensor_values<Precision>(layers.at(4).at("weight")));
++        ln1_bias=toKokkosView("polar ln1 bias",
++            tensor_values<Precision>(layers.at(4).at("bias")));
++        ln2_weight=toKokkosView("polar ln2 weight",
++            tensor_values<Precision>(layers.at(7).at("weight")));
++        ln2_bias=toKokkosView("polar ln2 bias",
++            tensor_values<Precision>(layers.at(7).at("bias")));
++        ln_eps=layers.at(1).at("eps").get<Precision>();
++        const auto input_shape=layers.at(0).at("weight").at("shape")
++            .get<std::vector<int>>();
++        nl_in_width=input_shape.at(1);
++        nl_hidden_width=input_shape.at(0);
++    }
++}
++
++template<typename Precision>
++void MaceNonlinearKokkosT<Precision>::PolarUpdate::set_e3_linear_backend(
++    const std::string& backend)
++{
++    potential_linear.set_backend(backend);
++    node_feats_linear.set_backend(backend);
++    charge_embedding.set_backend(backend);
++    source_embedding.set_backend(backend);
++    readout_linear_1.set_backend(backend);
++    readout_linear_mid.set_backend(backend);
++    readout_linear_2.set_backend(backend);
++}
++
++template<typename Precision>
++void MaceNonlinearKokkosT<Precision>::PolarUpdate::set_e3_linear_workspace(
++    const std::shared_ptr<typename E3LinearKokkosT<Precision>::Workspace>&
++        workspace)
++{
++    potential_linear.set_workspace(workspace);
++    node_feats_linear.set_workspace(workspace);
++    charge_embedding.set_workspace(workspace);
++    source_embedding.set_workspace(workspace);
++    readout_linear_1.set_workspace(workspace);
++    readout_linear_mid.set_workspace(workspace);
++    readout_linear_2.set_workspace(workspace);
++}
++
++template<typename Precision>
++void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
++    Kokkos::View<Precision**,Kokkos::LayoutRight> node_attrs,
++    Kokkos::View<const double*> node_positions,
++    Kokkos::View<const double*> cell,
++    double total_charge,double total_spin)
++{
++    // 工作密度: ②/⑤ 在其上改写; ① 的原始累积(polar_spin_charge_density)
++    // 保持只读(修复 ① 门语义漂移: 该视图此前被 ②/⑤ 原地改写)。
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_working_density(
++        "polar working density",num_nodes,
++        static_cast<int>(polar_spin_charge_density.extent(1)));
++    ordered_kokkos_deep_copy(polar_working_density,polar_spin_charge_density);
++    if(polar_enabled) {
++        // P3 模块②: Fukui 初始化校正(依据: mace extensions.py L737-766)。
++        // fukui 源(全列 2 通道;输入=末层 node_feats 的 e3nn 基转换张量,
++        // 标量通道与内部基一致, 转换保持口径统一)。
++        if(static_cast<int>(polar_fukui_source_map->linear_2.output_dimension())!=2)
++            throw std::runtime_error(
++                "polar_blocks: fukui_source_map must output 2 channels.");
++        ensure_view(polar_fukui_sources,polar_fukui_sources_storage,num_nodes,2);
++        polar_fukui_source_map->evaluate_all(
++            polar_node_feats_e3nn,polar_fukui_sources);
++        auto polar_sources=polar_fukui_sources;
++        auto polar_accumulator=polar_working_density;
++        // 每图(本调用=单图,整盒)归约: 源和 + l=0 两通道预测总量。
++        const auto polar_sources_host=Kokkos::create_mirror_view_and_copy(
++            Kokkos::HostSpace(),polar_sources);
++        const auto polar_accumulator_host=Kokkos::create_mirror_view_and_copy(
++            Kokkos::HostSpace(),polar_accumulator);
++        Precision source_sums[2]={Precision(0),Precision(0)};
++        Precision predicted_zero[2]={Precision(0),Precision(0)};
++        for(int node=0;node<num_nodes;++node) {
++            source_sums[0]+=polar_sources_host(node,0);
++            source_sums[1]+=polar_sources_host(node,1);
++            predicted_zero[0]+=polar_accumulator_host(node,0);
++            predicted_zero[1]+=polar_accumulator_host(node,4);
++        }
++        for(int channel=0;channel<2;++channel)
++            if(source_sums[channel]==Precision(0))
++                source_sums[channel]=Precision(1);
++        // Q_p_S=Q+(S-1), Q_m_S=Q-(S-1)(extensions.py L752-753);
++        // total_spin 为 2S+1 多重度(mace info 口径, 默认 1)。
++        const Precision charge=Precision(total_charge);
++        const Precision spin_multiplicity=Precision(total_spin);
++        const Precision target_alpha=Precision(0.5)
++            *(charge+(spin_multiplicity-Precision(1)));
++        const Precision target_beta=Precision(0.5)
++            *(charge-(spin_multiplicity-Precision(1)));
++        const Precision factor_alpha=(target_alpha-predicted_zero[0])
++            /source_sums[0];
++        const Precision factor_beta=(target_beta-predicted_zero[1])
++            /source_sums[1];
++        Kokkos::parallel_for("polar fukui correction",num_nodes,
++            KOKKOS_LAMBDA(int node) {
++                polar_accumulator(node,0)+=
++                    polar_sources(node,0)*factor_alpha;
++                polar_accumulator(node,4)+=
++                    polar_sources(node,1)*factor_beta;
++            });
++        // 校正后 = field_independent_spin_charge_density(mace L774 clone)。
++        ensure_view(polar_field_independent_density,
++            polar_field_independent_density_storage,num_nodes,
++            static_cast<int>(polar_accumulator.extent(1)));
++        ordered_kokkos_deep_copy(
++            polar_field_independent_density,polar_working_density);
++    }
++
++    if(polar_enabled) {
++        // ---- P3 模块③: k 网格 + GTO 几何预计算 ----
++        // 依据: graph_longrange/kspace.py::compute_k_vectors_flat L11-127(半空间
++        // 枚举+滤波+k0 掩码), gto_utils.py::GTOBasis L69-178(径向/cl_scale/相位),
++        // features.py::_pbc_precompute_geometry L568-615(cos/sin/因子)。公式经
++        // numpy 预检对 geo3 参考 dump 逐位锁定: rcell=2π·inv(cellᵀ) 0.0; k 0.0;
++        // cos/sin 1.1e-16; basis 实部 0.0; l=1 项 1.1e-16(e3nn normalize=True 为
++        // 输入向量归一化 → f1·Y1 = c1·pref1·cl1·exp(-½σ²k²)·v, k=0 处解析为 0)。
++        if(node_positions.extent(0)!=static_cast<std::size_t>(3)*num_nodes
++            ||cell.extent(0)!=9)
++            throw std::runtime_error(
++                "polar_blocks requires node positions (3N) and a 3x3 cell.");
++        const auto cell_host=Kokkos::create_mirror_view_and_copy(
++            Kokkos::HostSpace(),cell);
++        double lattice[3][3];
++        for(int row=0;row<3;++row)
++            for(int column=0;column<3;++column)
++                lattice[row][column]=cell_host(3*row+column);
++        constexpr double two_pi=6.283185307179586476925286766559;
++        double reciprocal[3][3];
++        {
++            const double a=lattice[0][0],b=lattice[0][1],c=lattice[0][2];
++            const double d=lattice[1][0],e=lattice[1][1],f=lattice[1][2];
++            const double g=lattice[2][0],h=lattice[2][1],i=lattice[2][2];
++            const double det=a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g);
++            const double inv=1.0/det;
++            const double m00=(e*i-f*h)*inv,m01=(c*h-b*i)*inv,m02=(b*f-c*e)*inv;
++            const double m10=(f*g-d*i)*inv,m11=(a*i-c*g)*inv,m12=(c*d-a*f)*inv;
++            const double m20=(d*h-e*g)*inv,m21=(b*g-a*h)*inv,m22=(a*e-b*d)*inv;
++            // rcell = 2π·inv(cellᵀ) → rc[i][j] = 2π·inv_cell[j][i]
++            reciprocal[0][0]=two_pi*m00;reciprocal[0][1]=two_pi*m10;
++            reciprocal[0][2]=two_pi*m20;
++            reciprocal[1][0]=two_pi*m01;reciprocal[1][1]=two_pi*m11;
++            reciprocal[1][2]=two_pi*m21;
++            reciprocal[2][0]=two_pi*m02;reciprocal[2][1]=two_pi*m12;
++            reciprocal[2][2]=two_pi*m22;
++        }
++        const double volume=std::abs(
++            lattice[0][0]*(lattice[1][1]*lattice[2][2]
++                -lattice[1][2]*lattice[2][1])
++            -lattice[0][1]*(lattice[1][0]*lattice[2][2]
++                -lattice[1][2]*lattice[2][0])
++            +lattice[0][2]*(lattice[1][0]*lattice[2][1]
++                -lattice[1][1]*lattice[2][0]));
++        // n 上界(kspace.py L41-53): max_ns=ceil(cutoff / (rcell_i·ĉell_i))
++        int max_ns[3];
++        for(int axis=0;axis<3;++axis) {
++            const double norm=std::sqrt(lattice[axis][0]*lattice[axis][0]
++                +lattice[axis][1]*lattice[axis][1]
++                +lattice[axis][2]*lattice[axis][2]);
++            const double dot=(reciprocal[axis][0]*lattice[axis][0]
++                +reciprocal[axis][1]*lattice[axis][1]
++                +reciprocal[axis][2]*lattice[axis][2])/norm;
++            max_ns[axis]=static_cast<int>(
++                std::ceil(polar_kspace_cutoff/dot));
++        }
++        // 半空间枚举(torch.cartesian_prod 末维最快; origin 居首)
++        struct LatticePoint { int n1,n2,n3; };
++        std::vector<LatticePoint> lattice_points;
++        lattice_points.push_back({0,0,0});
++        for(int n3=1;n3<max_ns[2];++n3)
++            lattice_points.push_back({0,0,n3});
++        for(int n2=1;n2<max_ns[1];++n2)
++            for(int n3=-max_ns[2];n3<max_ns[2];++n3)
++                lattice_points.push_back({0,n2,n3});
++        for(int n1=1;n1<max_ns[0];++n1)
++            for(int n2=-max_ns[1];n2<max_ns[1];++n2)
++                for(int n3=-max_ns[2];n3<max_ns[2];++n3)
++                    lattice_points.push_back({n1,n2,n3});
++        std::vector<Precision> k_flat,k_norm2_host,k0_host;
++        for(const auto& n:lattice_points) {
++            const double kx=n.n1*reciprocal[0][0]+n.n2*reciprocal[1][0]
++                +n.n3*reciprocal[2][0];
++            const double ky=n.n1*reciprocal[0][1]+n.n2*reciprocal[1][1]
++                +n.n3*reciprocal[2][1];
++            const double kz=n.n1*reciprocal[0][2]+n.n2*reciprocal[1][2]
++                +n.n3*reciprocal[2][2];
++            const double norm2=kx*kx+ky*ky+kz*kz;
++            if(norm2>static_cast<double>(polar_kspace_cutoff)
++                *static_cast<double>(polar_kspace_cutoff)) continue;
++            k_flat.push_back(Precision(kx));
++            k_flat.push_back(Precision(ky));
++            k_flat.push_back(Precision(kz));
++            k_norm2_host.push_back(Precision(norm2));
++            k0_host.push_back(k_norm2_host.size()==1
++                ?Precision(1):Precision(0));
++        }
++        const int num_k=static_cast<int>(k_norm2_host.size());
++        polar_k_vectors=toKokkosView("polar k vectors",k_flat,num_k,3);
++        polar_k_norm2=toKokkosView("polar k norm2",k_norm2_host);
++        polar_k0_mask=toKokkosView("polar k0 mask",k0_host);
++        // cos/sin(k·r)(features.py L579-583; 单图=全矩阵)
++        Kokkos::realloc(Kokkos::WithoutInitializing,
++            polar_cosines,num_k,num_nodes);
++        Kokkos::realloc(Kokkos::WithoutInitializing,
++            polar_sines,num_k,num_nodes);
++        auto kvecs=polar_k_vectors;
++        auto kcos=polar_cosines;
++        auto ksin=polar_sines;
++        auto positions=node_positions;
++        Kokkos::parallel_for("polar k inner products",
++            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},{num_k,num_nodes}),
++            KOKKOS_LAMBDA(int k,int node) {
++                const Precision inner=kvecs(k,0)*Precision(positions(3*node))
++                    +kvecs(k,1)*Precision(positions(3*node+1))
++                    +kvecs(k,2)*Precision(positions(3*node+2));
++                kcos(k,node)=Kokkos::cos(inner);
++                ksin(k,node)=Kokkos::sin(inner);
++            });
++        // GTO 基函数(实/虚傅里叶系数; 表全部来自 ctor 解析)
++        Kokkos::realloc(Kokkos::WithoutInitializing,
++            polar_density_basis_re,num_k,4);
++        Kokkos::realloc(Kokkos::WithoutInitializing,
++            polar_density_basis_im,num_k,4);
++        Kokkos::realloc(Kokkos::WithoutInitializing,
++            polar_feature_basis_re,num_k,8);
++        Kokkos::realloc(Kokkos::WithoutInitializing,
++            polar_feature_basis_im,num_k,8);
++        {
++            auto dbre=polar_density_basis_re,dbim=polar_density_basis_im;
++            auto fbre=polar_feature_basis_re,fbim=polar_feature_basis_im;
++            auto d_cl=polar_tab_density_cl,d_s2=polar_tab_density_sigma2;
++            auto d_p0=polar_tab_density_pref0,d_p1=polar_tab_density_pref1;
++            auto f_cl=polar_tab_feature_cl,f_s2=polar_tab_feature_sigma2;
++            auto f_p0=polar_tab_feature_pref0,f_p1=polar_tab_feature_pref1;
++            auto kn2=polar_k_norm2;
++            auto k0m=polar_k0_mask;
++            auto kvec=polar_k_vectors;
++            const Precision y0=Precision(0.28209479177387814);
++            const Precision y1=Precision(0.48860251190291992);
++            const int num_sigmas=polar_num_feature_sigmas;
++            Kokkos::parallel_for("polar gto basis",num_k,
++                KOKKOS_LAMBDA(int k) {
++                    const Precision norm2=kn2(k);
++                    const Precision vx=kvec(k,1),vy=kvec(k,2),vz=kvec(k,0);
++                    const Precision exp_d=Kokkos::exp(
++                        Precision(-0.5)*norm2*d_s2(0));
++                    dbre(k,0)=d_p0(0)*d_cl(0)*y0*exp_d;
++                    dbim(k,0)=Precision(0);
++                    const Precision cd=y1*d_p1(0)*d_cl(1)*exp_d;
++                    dbre(k,1)=Precision(0);dbre(k,2)=Precision(0);
++                    dbre(k,3)=Precision(0);
++                    dbim(k,1)=-cd*vx;dbim(k,2)=-cd*vy;dbim(k,3)=-cd*vz;
++                    for(int s=0;s<num_sigmas;++s) {
++                        const Precision exp_f=Kokkos::exp(
++                            Precision(-0.5)*norm2*f_s2(s));
++                        const int base=4*s;
++                        fbre(k,base)=f_p0(s)*f_cl(2*s)*y0*exp_f;
++                        fbim(k,base)=Precision(0);
++                        const Precision cf=y1*f_p1(s)*f_cl(2*s+1)*exp_f;
++                        fbre(k,base+1)=Precision(0);fbre(k,base+2)=Precision(0);
++                        fbre(k,base+3)=Precision(0);
++                        fbim(k,base+1)=-cf*vx;fbim(k,base+2)=-cf*vy;
++                        fbim(k,base+3)=-cf*vz;
++                    }
++                });
++        }
++        // ---- P3 模块④: forward_dynamic(逐通道势特征) ----
++        // 依据: features.py L617-658(assemble→库仑核→投影→permute→减去自相互作用)
++        // + extensions.py L834-838(逐通道归一)与 L846-848(α|β 拼接)。
++        Kokkos::realloc(Kokkos::WithoutInitializing,
++            polar_potential_features,num_nodes,16);
++        {
++            constexpr double field_constant=1.0/(5.526349406e-3);
++            const double two_pi_cubed=two_pi*two_pi*two_pi;
++            const Precision rho_scale=Precision(two_pi_cubed/volume);
++            const Precision proj_scale=Precision(2.0/two_pi_cubed);
++            Kokkos::View<Precision*> rho_re("polar rho re",num_k);
++            Kokkos::View<Precision*> rho_im("polar rho im",num_k);
++            auto kcos2=polar_cosines;
++            auto ksin2=polar_sines;
++            auto dbre=polar_density_basis_re,dbim=polar_density_basis_im;
++            auto fbre=polar_feature_basis_re,fbim=polar_feature_basis_im;
++            auto kn2=polar_k_norm2,k0m=polar_k0_mask;
++            auto knorm=polar_field_feature_norms;
++            auto si_overlap=polar_si_overlap;
++            auto si_select=polar_si_select;
++            auto permutation=polar_output_permutation;
++            auto density_all=polar_working_density;
++            auto potential_features=polar_potential_features;
++            for(int channel=0;channel<2;++channel) {
++                // assemble: rho(k) = (2π)³/V · [Bᵣ·Σₙ C·q + Bᵢ·Σₙ S·q,
++                //                               Bᵢ·Σₙ C·q − Bᵣ·Σₙ S·q]
++                Kokkos::parallel_for("polar assemble fourier",num_k,
++                    KOKKOS_LAMBDA(int k) {
++                        Precision acc_cos[4],acc_sin[4];
++                        for(int m=0;m<4;++m) {
++                            acc_cos[m]=Precision(0);acc_sin[m]=Precision(0);
++                        }
++                        for(int node=0;node<num_nodes;++node) {
++                            const Precision c=kcos2(k,node);
++                            const Precision s=ksin2(k,node);
++                            for(int m=0;m<4;++m) {
++                                const Precision q=density_all(
++                                    node,4*channel+m);
++                                acc_cos[m]+=c*q;
++                                acc_sin[m]+=s*q;
++                            }
++                        }
++                        Precision re=Precision(0),im=Precision(0);
++                        for(int m=0;m<4;++m) {
++                            re+=dbre(k,m)*acc_cos[m]+dbim(k,m)*acc_sin[m];
++                            im+=dbim(k,m)*acc_cos[m]-dbre(k,m)*acc_sin[m];
++                        }
++                        rho_re(k)=rho_scale*re;
++                        rho_im(k)=rho_scale*im;
++                    });
++                // project: features[n,·](8) = permute(2Σₖ (A·C+B·S)/(2π)³),
++                // 再减自相互作用(逐列常数×选取分量)与逐通道归一。
++                Kokkos::parallel_for("polar project features",num_nodes,
++                    KOKKOS_LAMBDA(int node) {
++                        Precision feat[8];
++                        for(int m=0;m<8;++m) {
++                            Precision proj_cos=Precision(0);
++                            Precision proj_sin=Precision(0);
++                            for(int k=0;k<num_k;++k) {
++                                const Precision inv_k2=(k0m(k)>Precision(0))
++                                    ?Precision(0)
++                                    :Precision(field_constant)/kn2(k);
++                                const Precision pr=rho_re(k)*inv_k2;
++                                const Precision pi=rho_im(k)*inv_k2;
++                                const Precision kfp=(k0m(k)>Precision(0))
++                                    ?Precision(0.5):Precision(1);
++                                const Precision fa=(pr*fbre(k,m)
++                                    +pi*fbim(k,m))*kfp;
++                                const Precision fb=(pr*fbim(k,m)
++                                    -pi*fbre(k,m))*kfp;
++                                proj_cos+=fa*kcos2(k,node);
++                                proj_sin+=fb*ksin2(k,node);
++                            }
++                            feat[m]=proj_scale*(proj_cos+proj_sin);
++                        }
++                        for(int j=0;j<8;++j) {
++                            const int source=permutation(j);
++                            Precision value=feat[source]
++                                -si_overlap(j)*density_all(
++                                    node,4*channel+si_select(j));
++                            potential_features(node,8*channel+j)
++                                =value/knorm(j);
++                        }
++                    });
++            }
++        }
++
++        // ---- P3 模块⑤: SCF 循环(依据 extensions.py L777-866) ----
++        // 每步: 逐自旋通道描述符(α/β) → 归一拼接(16) → 更新块(势嵌入三分量 /
++        // uvu 点积 / source 嵌入 / MLP(LN+silu) / uvu tp / 双重 Gate 读出) →
++        // 密度 += out[:,:8] → 逐步 Fukui 重归一+l=0 校正(out[:,8:10])。
++        // 中间量访问器 = 最后一次迭代值(与 charges_hooks step1 对齐)。
++        {
++            constexpr double scf_field_constant=1.0/(5.526349406e-3);
++            const double scf_two_pi_cubed=two_pi*two_pi*two_pi;
++            const Precision scf_rho_scale=Precision(scf_two_pi_cubed/volume);
++            const Precision scf_proj_scale=Precision(2.0/scf_two_pi_cubed);
++            Kokkos::View<Precision*> step_rho_re("polar scf rho re",num_k);
++            Kokkos::View<Precision*> step_rho_im("polar scf rho im",num_k);
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_scf_step_densities,polar_recursion_steps,num_nodes,8);
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_field_feats_a,num_nodes,8);
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_field_feats_b,num_nodes,8);
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_step_potential_features,num_nodes,16);
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_pe_out,num_nodes,
++                polar_updates.front().potential_linear.output_dimension());
++            ensure_view(polar_scratch_a,polar_scratch_a_storage,num_nodes,
++                polar_updates.front().potential_linear.output_dimension());
++            ensure_view(polar_scratch_b,polar_scratch_b_storage,num_nodes,
++                polar_updates.front().potential_linear.output_dimension());
++            const int dp_width=static_cast<int>(
++                polar_updates.front().source_embedding.output_dimension());
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_dp_out,num_nodes,dp_width);
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_se_out,num_nodes,dp_width);
++            ensure_view(polar_nl_input,polar_nl_input_storage,num_nodes,
++                2*dp_width);
++            ensure_view(polar_nl_a,polar_nl_a_storage,num_nodes,
++                polar_updates.front().nl_hidden_width);
++            ensure_view(polar_nl_b,polar_nl_b_storage,num_nodes,
++                polar_updates.front().nl_hidden_width);
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_nl_out,num_nodes,
++                static_cast<int>(polar_updates.front().nl_w3.extent(0)));
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_tp_out,num_nodes,
++                polar_updates.front().readout_linear_1.input_dimension());
++            const int ro_width=static_cast<int>(
++                polar_updates.front().readout_linear_1.output_dimension());
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_ro_l1_out,num_nodes,ro_width);
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_ro_lmid_out,num_nodes,ro_width);
++            const int gate_scalars=polar_updates.front().gate_scalar_count;
++            const int gate_gates=polar_updates.front().gate_gate_count;
++            const int gate_gated=polar_updates.front().gate_gated_count;
++            const int gate_out_width=gate_scalars+3*gate_gated;
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_gate1_out,num_nodes,gate_out_width);
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_gate2_out,num_nodes,gate_out_width);
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_update_out,num_nodes,
++                polar_updates.front().readout_linear_2.output_dimension());
++
++            auto kcos2=polar_cosines;
++            auto ksin2=polar_sines;
++            auto dbre=polar_density_basis_re;
++            auto dbim=polar_density_basis_im;
++            auto fbre=polar_feature_basis_re;
++            auto fbim=polar_feature_basis_im;
++            auto kn2=polar_k_norm2;
++            auto k0m=polar_k0_mask;
++            auto density_all=polar_working_density;
++            auto feats_a=polar_field_feats_a;
++            auto feats_b=polar_field_feats_b;
++            auto step_potential=polar_step_potential_features;
++            auto knorm=polar_field_feature_norms;
++            auto permutation_view=polar_output_permutation;
++            auto si_overlap_view=polar_si_overlap;
++            auto si_select_view=polar_si_select;
++            auto features_mixed_view=polar_features_mixed;
++            auto pe_view=polar_pe_out;
++            auto scratch_a=polar_scratch_a;
++            auto scratch_b=polar_scratch_b;
++            auto dp_view=polar_dp_out;
++            auto se_view=polar_se_out;
++            auto nl_in_view=polar_nl_input;
++            auto nl_a_view=polar_nl_a;
++            auto nl_b_view=polar_nl_b;
++            auto nl_out_view=polar_nl_out;
++            auto tp_view=polar_tp_out;
++            auto ro1_view=polar_ro_l1_out;
++            auto gate1_view=polar_gate1_out;
++            auto ro2_view=polar_ro_lmid_out;
++            auto gate2_view=polar_gate2_out;
++            auto update_out_view=polar_update_out;
++            auto step_densities=polar_scf_step_densities;
++            auto attrs_view=attrs;
++            for(int step=0;step<polar_recursion_steps;++step) {
++                auto& update=polar_updates[step];
++                // 路径表主机副本(每步取一次;极小;std::vector 传参规避
++                // nvcc "泛型 lambda 内不允许 device lambda" 限制)
++                const auto to_host_vector=[&](const auto& view) {
++                    const auto mirror=Kokkos::create_mirror_view_and_copy(
++                        Kokkos::HostSpace(),view);
++                    std::vector<typename decltype(mirror)::value_type>
++                        values(mirror.size());
++                    for(std::size_t i2=0;i2<values.size();++i2)
++                        values[i2]=mirror.data()[i2];
++                    return values;
++                };
++                const std::vector<int> dot_meta=
++                    to_host_vector(update.uvu_dot_meta);
++                const std::vector<Precision> dot_path_weight=
++                    to_host_vector(update.uvu_dot_path_weight);
++                const std::vector<int> tp_meta=
++                    to_host_vector(update.uvu_tp_meta);
++                const std::vector<Precision> tp_path_weight=
++                    to_host_vector(update.uvu_tp_path_weight);
++                auto dot_weight=update.uvu_dot_weight;
++                auto dot_mask=update.uvu_dot_mask;
++                auto tp_weight=update.uvu_tp_weight;
++                auto tp_mask=update.uvu_tp_mask;
++                const auto launch_uvu=[&](const std::vector<int>& meta,
++                        const std::vector<Precision>& path_weight,
++                        Kokkos::View<Precision*> weight_view,
++                        Kokkos::View<Precision*> mask_view,
++                        Kokkos::View<Precision**,Kokkos::LayoutRight> x1,
++                        Kokkos::View<Precision**,Kokkos::LayoutRight> x2,
++                        Kokkos::View<Precision**,Kokkos::LayoutRight> output) {
++                    const int paths=static_cast<int>(meta.size())/8;
++                    Kokkos::parallel_for("polar uvu zero",
++                        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                            {num_nodes,
++                             static_cast<int>(output.extent(1))}),
++                        KOKKOS_LAMBDA(int node,int column) {
++                            output(node,column)=Precision(0);
++                        });
++                    for(int p=0;p<paths;++p) {
++                        const int in1_off=meta[p*8+0],in2_off=meta[p*8+1],
++                            out_off=meta[p*8+2],w_off=meta[p*8+3],
++                            mul1=meta[p*8+4],mul2=meta[p*8+5],
++                            mode=meta[p*8+6],d1=meta[p*8+7];
++                        const Precision pw=path_weight[p];
++                        const Precision inv_sqrt_d1=Precision(1)
++                            /Kokkos::sqrt(Precision(d1));
++                        if(mode==0) {
++                            Kokkos::parallel_for("polar uvu mode0",
++                                num_nodes,KOKKOS_LAMBDA(int node) {
++                                    for(int u=0;u<mul1;++u) {
++                                        Precision mixed=Precision(0);
++                                        for(int v=0;v<mul2;++v) {
++                                            Precision pair=Precision(0);
++                                            for(int c2=0;c2<d1;++c2)
++                                                pair+=x1(node,
++                                                        in1_off+u*d1+c2)
++                                                    *x2(node,
++                                                        in2_off+v*d1+c2);
++                                            mixed+=pair*inv_sqrt_d1
++                                                *weight_view(
++                                                    w_off+u*mul2+v);
++                                        }
++                                        output(node,out_off+u)+=pw*mixed;
++                                    }
++                                });
++                        } else {
++                            Kokkos::parallel_for("polar uvu mode1",
++                                num_nodes,KOKKOS_LAMBDA(int node) {
++                                    for(int u=0;u<mul1;++u) {
++                                        Precision mixed=Precision(0);
++                                        for(int v=0;v<mul2;++v)
++                                            mixed+=x2(node,in2_off+v)
++                                                *weight_view(
++                                                    w_off+u*mul2+v);
++                                        const Precision contribution=
++                                            pw*mixed*inv_sqrt_d1;
++                                        for(int c2=0;c2<d1;++c2)
++                                            output(node,
++                                                    out_off+u*d1+c2)+=
++                                                contribution*x1(node,
++                                                    in1_off+u*d1+c2);
++                                    }
++                                });
++                        }
++                    }
++                    Kokkos::parallel_for("polar uvu mask",
++                        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                            {num_nodes,
++                             static_cast<int>(output.extent(1))}),
++                        KOKKOS_LAMBDA(int node,int column) {
++                            output(node,column)*=mask_view(column);
++                        });
++                };
++                for(int channel=0;channel<2;++channel) {
++                    auto field_out=channel==0?feats_a:feats_b;
++                    Kokkos::parallel_for("polar scf assemble fourier",num_k,
++                        KOKKOS_LAMBDA(int k) {
++                            Precision acc_cos[4],acc_sin[4];
++                            for(int m=0;m<4;++m) {
++                                acc_cos[m]=Precision(0);
++                                acc_sin[m]=Precision(0);
++                            }
++                            for(int node=0;node<num_nodes;++node) {
++                                const Precision c=kcos2(k,node);
++                                const Precision s=ksin2(k,node);
++                                for(int m=0;m<4;++m) {
++                                    const Precision q=density_all(
++                                        node,4*channel+m);
++                                    acc_cos[m]+=c*q;
++                                    acc_sin[m]+=s*q;
++                                }
++                            }
++                            Precision re=Precision(0),im=Precision(0);
++                            for(int m=0;m<4;++m) {
++                                re+=dbre(k,m)*acc_cos[m]
++                                    +dbim(k,m)*acc_sin[m];
++                                im+=dbim(k,m)*acc_cos[m]
++                                    -dbre(k,m)*acc_sin[m];
++                            }
++                            step_rho_re(k)=scf_rho_scale*re;
++                            step_rho_im(k)=scf_rho_scale*im;
++                        });
++                    Kokkos::parallel_for("polar scf project features",
++                        num_nodes,KOKKOS_LAMBDA(int node) {
++                            Precision feat[8];
++                            for(int m=0;m<8;++m) {
++                                Precision proj_cos=Precision(0);
++                                Precision proj_sin=Precision(0);
++                                for(int k=0;k<num_k;++k) {
++                                    const Precision inv_k2=(k0m(k)
++                                            >Precision(0))
++                                        ?Precision(0)
++                                        :Precision(scf_field_constant)
++                                            /kn2(k);
++                                    const Precision pr=step_rho_re(k)
++                                        *inv_k2;
++                                    const Precision pi=step_rho_im(k)
++                                        *inv_k2;
++                                    const Precision kfp=(k0m(k)
++                                            >Precision(0))
++                                        ?Precision(0.5):Precision(1);
++                                    const Precision fa=(pr*fbre(k,m)
++                                        +pi*fbim(k,m))*kfp;
++                                    const Precision fb=(pr*fbim(k,m)
++                                        -pi*fbre(k,m))*kfp;
++                                    proj_cos+=fa*kcos2(k,node);
++                                    proj_sin+=fb*ksin2(k,node);
++                                }
++                                feat[m]=scf_proj_scale*(proj_cos+proj_sin);
++                            }
++                            for(int j=0;j<8;++j) {
++                                const int source=
++                                    permutation_view(j);
++                                field_out(node,j)=feat[source]
++                                    -si_overlap_view(j)*density_all(
++                                        node,4*channel
++                                            +si_select_view(j));
++                            }
++                        });
++                }
++                Kokkos::parallel_for("polar scf normalize potential features",
++                    num_nodes,KOKKOS_LAMBDA(int node) {
++                        for(int j=0;j<8;++j) {
++                            step_potential(node,j)=feats_a(node,j)/knorm(j);
++                            step_potential(node,8+j)=
++                                feats_b(node,j)/knorm(j);
++                        }
++                    });
++                // 更新块前向(field_blocks.py L563-594)
++                update.potential_linear.evaluate(step_potential,pe_view);
++                update.node_feats_linear.evaluate(
++                    features_mixed_view,scratch_a);
++                update.charge_embedding.evaluate(density_all,scratch_b);
++                Kokkos::parallel_for("polar pe sum",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                        {num_nodes,static_cast<int>(pe_view.extent(1))}),
++                    KOKKOS_LAMBDA(int node,int column) {
++                        pe_view(node,column)+=scratch_a(node,column)
++                            +scratch_b(node,column);
++                    });
++                launch_uvu(dot_meta,dot_path_weight,dot_weight,dot_mask,
++                    features_mixed_view,pe_view,dp_view);
++                update.source_embedding.evaluate(attrs_view,se_view);
++                Kokkos::parallel_for("polar nl concat",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                        {num_nodes,dp_width}),
++                    KOKKOS_LAMBDA(int node,int column) {
++                        nl_in_view(node,column)=dp_view(node,column);
++                        nl_in_view(node,dp_width+column)=
++                            se_view(node,column);
++                    });
++                // MLP: [linear, LN, silu]×3 + linear(radial FullyConnectedNet)
++                {
++                    auto w0=update.nl_w0;
++                    auto b0=update.nl_b0;
++                    Kokkos::parallel_for("polar nl dense0",
++                        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                            {num_nodes,
++                             static_cast<int>(w0.extent(0))}),
++                        KOKKOS_LAMBDA(int node,int o) {
++                            Precision acc=b0(o);
++                            for(int c2=0;c2<static_cast<int>(w0.extent(1));
++                                ++c2)
++                                acc+=w0(o,c2)*nl_in_view(node,c2);
++                            nl_a_view(node,o)=acc;
++                        });
++                }
++                const Precision ln_eps=update.ln_eps;
++                const auto launch_ln_silu=[&](
++                        Kokkos::View<Precision**,Kokkos::LayoutRight> src,
++                        Kokkos::View<Precision**,Kokkos::LayoutRight> dst,
++                        Kokkos::View<Precision*> gamma,
++                        Kokkos::View<Precision*> beta) {
++                    const int width=static_cast<int>(src.extent(1));
++                    Kokkos::parallel_for("polar layernorm silu",num_nodes,
++                        KOKKOS_LAMBDA(int node) {
++                            Precision mean=Precision(0);
++                            for(int c2=0;c2<width;++c2)
++                                mean+=src(node,c2);
++                            mean/=Precision(width);
++                            Precision var=Precision(0);
++                            for(int c2=0;c2<width;++c2) {
++                                const Precision delta=src(node,c2)-mean;
++                                var+=delta*delta;
++                            }
++                            var/=Precision(width);
++                            const Precision inv=Precision(1)
++                                /Kokkos::sqrt(var+ln_eps);
++                            for(int c2=0;c2<width;++c2) {
++                                const Precision normalized=(src(node,c2)
++                                    -mean)*inv*gamma(c2)+beta(c2);
++                                dst(node,c2)=normalized
++                                    /(Precision(1)+Kokkos::exp(
++                                        -normalized));
++                            }
++                        });
++                };
++                launch_ln_silu(nl_a_view,nl_b_view,
++                    update.ln0_weight,update.ln0_bias);
++                {
++                    auto w1=update.nl_w1;
++                    auto b1=update.nl_b1;
++                    Kokkos::parallel_for("polar nl dense1",
++                        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                            {num_nodes,
++                             static_cast<int>(w1.extent(0))}),
++                        KOKKOS_LAMBDA(int node,int o) {
++                            Precision acc=b1(o);
++                            for(int c2=0;c2<static_cast<int>(w1.extent(1));
++                                ++c2)
++                                acc+=w1(o,c2)*nl_b_view(node,c2);
++                            nl_a_view(node,o)=acc;
++                        });
++                }
++                launch_ln_silu(nl_a_view,nl_b_view,
++                    update.ln1_weight,update.ln1_bias);
++                {
++                    auto w2=update.nl_w2;
++                    auto b2=update.nl_b2;
++                    Kokkos::parallel_for("polar nl dense2",
++                        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                            {num_nodes,
++                             static_cast<int>(w2.extent(0))}),
++                        KOKKOS_LAMBDA(int node,int o) {
++                            Precision acc=b2(o);
++                            for(int c2=0;c2<static_cast<int>(w2.extent(1));
++                                ++c2)
++                                acc+=w2(o,c2)*nl_b_view(node,c2);
++                            nl_a_view(node,o)=acc;
++                        });
++                }
++                launch_ln_silu(nl_a_view,nl_b_view,
++                    update.ln2_weight,update.ln2_bias);
++                {
++                    auto w3=update.nl_w3;
++                    auto b3=update.nl_b3;
++                    Kokkos::parallel_for("polar nl dense3",
++                        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                            {num_nodes,
++                             static_cast<int>(w3.extent(0))}),
++                        KOKKOS_LAMBDA(int node,int o) {
++                            Precision acc=b3(o);
++                            for(int c2=0;c2<static_cast<int>(w3.extent(1));
++                                ++c2)
++                                acc+=w3(o,c2)*nl_b_view(node,c2);
++                            nl_out_view(node,o)=acc;
++                        });
++                }
++                launch_uvu(tp_meta,tp_path_weight,tp_weight,tp_mask,
++                    features_mixed_view,nl_out_view,tp_view);
++                // 读出: linear_1 → Gate → linear_mid → Gate → linear_2
++                update.readout_linear_1.evaluate(tp_view,ro1_view);
++                const Precision gate_scalar_cst=update.gate_scalar_cst;
++                const Precision gate_gate_cst=update.gate_gate_cst;
++                const int gate_scalars=update.gate_scalar_count;
++                const int gate_gates=update.gate_gate_count;
++                const int gate_gated=update.gate_gated_count;
++                const auto launch_readout_gate=[&](
++                        Kokkos::View<Precision**,Kokkos::LayoutRight> src,
++                        Kokkos::View<Precision**,Kokkos::LayoutRight> dst) {
++                    Kokkos::parallel_for("polar readout gate",num_nodes,
++                        KOKKOS_LAMBDA(int node) {
++                            for(int i2=0;i2<gate_scalars;++i2) {
++                                const Precision s=src(node,i2);
++                                dst(node,i2)=gate_scalar_cst*s
++                                    /(Precision(1)+Kokkos::exp(-s));
++                            }
++                            for(int i2=0;i2<gate_gates;++i2) {
++                                const Precision g=gate_gate_cst
++                                    /(Precision(1)+Kokkos::exp(
++                                        -src(node,gate_scalars+i2)));
++                                for(int c2=0;c2<3;++c2)
++                                    dst(node,gate_scalars+3*i2+c2)=g
++                                        *src(node,gate_scalars+gate_gates
++                                            +3*i2+c2);
++                            }
++                        });
++                    (void)gate_gated;
++                };
++                launch_readout_gate(ro1_view,gate1_view);
++                update.readout_linear_mid.evaluate(gate1_view,ro2_view);
++                launch_readout_gate(ro2_view,gate2_view);
++                update.readout_linear_2.evaluate(gate2_view,update_out_view);
++                // 密度更新(前 8 列;extensions.py L836-839)
++                Kokkos::parallel_for("polar density update",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                        {num_nodes,8}),
++                    KOKKOS_LAMBDA(int node,int column) {
++                        density_all(node,column)+=
++                            update_out_view(node,column);
++                    });
++                // 逐步 Fukui 重归一+l=0 校正(extensions.py L841-866)
++                const auto sources_host=
++                    Kokkos::create_mirror_view_and_copy(
++                        Kokkos::HostSpace(),update_out_view);
++                const auto density_host=
++                    Kokkos::create_mirror_view_and_copy(
++                        Kokkos::HostSpace(),density_all);
++                Precision source_sums[2]={Precision(0),Precision(0)};
++                Precision predicted_zero[2]={Precision(0),Precision(0)};
++                for(int node=0;node<num_nodes;++node) {
++                    source_sums[0]+=sources_host(node,8);
++                    source_sums[1]+=sources_host(node,9);
++                    predicted_zero[0]+=density_host(node,0);
++                    predicted_zero[1]+=density_host(node,4);
++                }
++                for(int channel=0;channel<2;++channel)
++                    if(source_sums[channel]==Precision(0))
++                        source_sums[channel]=Precision(1);
++                const Precision charge=Precision(total_charge);
++                const Precision spin_multiplicity=Precision(total_spin);
++                const Precision target_alpha=Precision(0.5)
++                    *(charge+(spin_multiplicity-Precision(1)));
++                const Precision target_beta=Precision(0.5)
++                    *(charge-(spin_multiplicity-Precision(1)));
++                const Precision factor_alpha=(target_alpha
++                    -predicted_zero[0])/source_sums[0];
++                const Precision factor_beta=(target_beta
++                    -predicted_zero[1])/source_sums[1];
++                Kokkos::parallel_for("polar scf fukui correction",num_nodes,
++                    KOKKOS_LAMBDA(int node) {
++                        density_all(node,0)+=update_out_view(node,8)
++                            *factor_alpha;
++                        density_all(node,4)+=update_out_view(node,9)
++                            *factor_beta;
++                    });
++                // 快照 = 逐步 Fukui 校正后的完整状态(参考口径 scf_steps step{i+1})
++                Kokkos::parallel_for("polar scf density snapshot",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                        {num_nodes,8}),
++                    KOKKOS_LAMBDA(int node,int column) {
++                        step_densities(step,node,column)=
++                            density_all(node,column);
++                    });
++            }
++            Kokkos::realloc(Kokkos::WithoutInitializing,
++                polar_scf_final_density,num_nodes,8);
++            auto final_density=polar_scf_final_density;
++            Kokkos::parallel_for("polar scf final density",
++                Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                    {num_nodes,8}),
++                KOKKOS_LAMBDA(int node,int column) {
++                    final_density(node,column)=density_all(node,column);
++                });
++        }
++    }
++}
++
++template class MaceNonlinearKokkosT<float>;
++template class MaceNonlinearKokkosT<double>;
+diff --git a/libsymmetrix/source/mace_polar_kokkos.cpp b/libsymmetrix/source/mace_polar_kokkos.cpp
+new file mode 100644
+index 0000000..8460105
+--- /dev/null
++++ b/libsymmetrix/source/mace_polar_kokkos.cpp
+@@ -0,0 +1,2 @@
++// mace_polar_kokkos.cpp — P3 极性场独立 TU(2026-10-15)。
++#include "mace_polar_impl.tpp"
+diff --git a/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp b/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp
+index c7972a2..74010a8 100644
+--- a/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp
++++ b/symmetrix/source/cpp/mace_nonlinear_kokkos.cpp
+@@ -456,8 +456,22 @@ void bind_mace_nonlinear_kokkos_evaluator(
+             [](Evaluator& self,int num_nodes,IntArray node_types,
+                     IntArray num_neigh,IntArray neigh_indices,
+                     IntArray neigh_types,DoubleArray xyz,
+-                    DoubleArray distances) {
++                    DoubleArray distances,
++                    double total_charge,double total_spin,
++                    py::object node_positions,py::object cell) {
+                 try {
++                    Kokkos::View<const double*> positions_view,cell_view;
++                    if(!node_positions.is_none()) {
++                        DoubleArray positions=node_positions
++                            .cast<DoubleArray>();
++                        positions_view=create_kokkos_view(
++                            "polar node positions",positions);
++                    }
++                    if(!cell.is_none()) {
++                        DoubleArray cell_array=cell.cast<DoubleArray>();
++                        cell_view=create_kokkos_view(
++                            "polar cell",cell_array);
++                    }
+                     self.compute_node_energies_forces(
+                         num_nodes,
+                         create_kokkos_view("nonlinear node types",node_types),
+@@ -465,12 +479,103 @@ void bind_mace_nonlinear_kokkos_evaluator(
+                         create_kokkos_view("nonlinear neigh indices",neigh_indices),
+                         create_kokkos_view("nonlinear neigh types",neigh_types),
+                         create_kokkos_view("nonlinear xyz",xyz),
+-                        create_kokkos_view("nonlinear distances",distances));
++                        create_kokkos_view("nonlinear distances",distances),
++                        0,total_charge,total_spin,positions_view,cell_view);
+                 } catch (...) {
+                     self.fence();
+                     throw;
+                 }
+-            });
++            },
++            py::arg("num_nodes"),py::arg("node_types"),py::arg("num_neigh"),
++            py::arg("neigh_indices"),py::arg("neigh_types"),py::arg("xyz"),
++            py::arg("distances"),py::arg("total_charge")=0.0,
++            py::arg("total_spin")=1.0,py::arg("node_positions")=py::none(),
++            py::arg("cell")=py::none())
++        .def("polar_spin_charge_density",[](const Evaluator& self) {
++            // PolarMACE 模块①中间量(行=节点,8 列平坦序 [sα|xyzα|sβ|xyzβ]);
++            // polar 模型未启用时返回空列表。仅供 P3 逐模块验收门对照。
++            return view2vector(self.polar_spin_charge_density);
++        })
++        .def("polar_fukui_sources",[](const Evaluator& self) {
++            // 模块②: fukui_source_map 原始输出(N×2,未归一)。
++            return view2vector(self.polar_fukui_sources);
++        })
++        .def("polar_field_independent_density",[](const Evaluator& self) {
++            // 模块②: Fukui 校正后的初始密度(N×8;= mace field_independent_spin_charge_density)。
++            return view2vector(self.polar_field_independent_density);
++        })
++        .def("polar_k_vectors",[](const Evaluator& self) {
++            // 模块③: k 网格(Nk×3,半空间枚举)。
++            return view2vector(self.polar_k_vectors);
++        })
++        .def("polar_k_norm2",[](const Evaluator& self) {
++            return view2vector(self.polar_k_norm2);
++        })
++        .def("polar_k0_mask",[](const Evaluator& self) {
++            return view2vector(self.polar_k0_mask);
++        })
++        .def("polar_cosines",[](const Evaluator& self) {
++            // 模块③: cos(k·r)(Nk×N)。
++            return view2vector(self.polar_cosines);
++        })
++        .def("polar_density_basis_re",[](const Evaluator& self) {
++            return view2vector(self.polar_density_basis_re);
++        })
++        .def("polar_density_basis_im",[](const Evaluator& self) {
++            return view2vector(self.polar_density_basis_im);
++        })
++        .def("polar_feature_basis_re",[](const Evaluator& self) {
++            return view2vector(self.polar_feature_basis_re);
++        })
++        .def("polar_feature_basis_im",[](const Evaluator& self) {
++            return view2vector(self.polar_feature_basis_im);
++        })
++        .def("polar_potential_features",[](const Evaluator& self) {
++            // 模块④: 初始密度的势特征 α|β(N×16;含逐通道归一)。
++            return view2vector(self.polar_potential_features);
++        })
++        .def("polar_features_mixed",[](const Evaluator& self) {
++            // 模块⑤: features_mixed(N×2048)。
++            return view2vector(self.polar_features_mixed);
++        })
++        .def("polar_pe_out",[](const Evaluator& self) {
++            return view2vector(self.polar_pe_out);
++        })
++        .def("polar_dp_out",[](const Evaluator& self) {
++            return view2vector(self.polar_dp_out);
++        })
++        .def("polar_se_out",[](const Evaluator& self) {
++            return view2vector(self.polar_se_out);
++        })
++        .def("polar_nl_out",[](const Evaluator& self) {
++            return view2vector(self.polar_nl_out);
++        })
++        .def("polar_tp_out",[](const Evaluator& self) {
++            return view2vector(self.polar_tp_out);
++        })
++        .def("polar_ro_l1_out",[](const Evaluator& self) {
++            return view2vector(self.polar_ro_l1_out);
++        })
++        .def("polar_gate1_out",[](const Evaluator& self) {
++            return view2vector(self.polar_gate1_out);
++        })
++        .def("polar_ro_lmid_out",[](const Evaluator& self) {
++            return view2vector(self.polar_ro_lmid_out);
++        })
++        .def("polar_gate2_out",[](const Evaluator& self) {
++            return view2vector(self.polar_gate2_out);
++        })
++        .def("polar_update_out",[](const Evaluator& self) {
++            // 模块⑤: 更新块输出(N×10 = 前8密度增量 | 后2 Fukui 源)。
++            return view2vector(self.polar_update_out);
++        })
++        .def("polar_scf_step_densities",[](const Evaluator& self) {
++            // 模块⑤: SCF 每步更新后密度(S×N×8;S=num_recursion_steps)。
++            return view2vector(self.polar_scf_step_densities);
++        })
++        .def("polar_scf_final_density",[](const Evaluator& self) {
++            return view2vector(self.polar_scf_final_density);
++        });
+ }
+ 
+ void bind_mace_nonlinear_kokkos(py::module_& module)
+diff --git a/symmetrix/source/symmetrix/calculator.py b/symmetrix/source/symmetrix/calculator.py
+index 518352c..f3b86bf 100755
+--- a/symmetrix/source/symmetrix/calculator.py
++++ b/symmetrix/source/symmetrix/calculator.py
+@@ -3391,6 +3391,26 @@ class Symmetrix(Calculator):
+             )
+         xyz_flat = np.ascontiguousarray(xyz, dtype=float).reshape(-1)
+         distances = np.ascontiguousarray(r, dtype=float)
++        # PolarMACE 的分子总电荷/自旋(mace info 口径: atoms.info["charge"]/
++        # ["spin"],total_spin 为 2S+1 多重度,默认 0/1;仅 polar 模型消费,
++        # 其余模型参数默认值无影响)。
++        total_charge = 0.0
++        total_spin = 1.0
++        node_positions = None
++        cell_array = None
++        if atoms is not None:
++            info = getattr(atoms, "info", {})
++            total_charge = float(info.get("charge", 0.0))
++            total_spin = float(info.get("spin", 1.0))
++            # PolarMACE 静电层需要节点坐标与晶胞(结构因子/倒格矢);
++            # 非 polar 模型忽略这两个可选参数。
++            node_positions = np.ascontiguousarray(
++                atoms.get_positions(), dtype=float).reshape(-1)
++            try:
++                cell_array = np.ascontiguousarray(
++                    np.asarray(atoms.cell, dtype=float)).reshape(-1)
++            except (TypeError, ValueError):
++                cell_array = None
+         self.evaluator.compute_node_energies_forces(
+             num_nodes,
+             node_types,
+@@ -3399,6 +3419,10 @@ class Symmetrix(Calculator):
+             neigh_types,
+             xyz_flat,
+             distances,
++            total_charge=total_charge,
++            total_spin=total_spin,
++            node_positions=node_positions,
++            cell=cell_array,
+         )
+         return 0
+ 
+diff --git a/symmetrix/source/symmetrix/extract_mace_nonlinear.py b/symmetrix/source/symmetrix/extract_mace_nonlinear.py
+index bf1a6df..cc358a1 100644
+--- a/symmetrix/source/symmetrix/extract_mace_nonlinear.py
++++ b/symmetrix/source/symmetrix/extract_mace_nonlinear.py
+@@ -23,6 +23,32 @@ def _tensor(value: torch.Tensor) -> dict[str, Any]:
+     }
+ 
+ 
++def _scalar_tensor(value: torch.Tensor) -> dict[str, Any]:
++    """Serialize a 1-element tensor as a 0-dim scalar (MACE_Nonlinear schema).
++
++    The native MACE_Nonlinear loader requires ``scale_shift.scale/shift`` with
++    ``shape == []`` (see test/test_mh1.py::test_mh1_extracts_and_evaluates_each_head).
++    """
++    flat = value.detach().cpu().numpy(force=True).reshape(-1)
++    if flat.size != 1:
++        raise RuntimeError("MACE_Nonlinear scale and shift must be scalar tensors")
++    return {"shape": [], "values": [flat[0].item()]}
++
++
++def _matrix_tensor(value: torch.Tensor) -> dict[str, Any]:
++    """Serialize per-element data as a 2-D [heads, num_elements] matrix.
++
++    The native MACE_Nonlinear loader requires ``atomic_energies`` to be 2-D
++    (MH1 checkpoints store [1, num_elements]; see test/test_mh1.py).  Some
++    checkpoints (e.g. MACE-POLAR-1) store the single-head vector flat, so
++    promote 1-D input to [1, N].
++    """
++    arr = value.detach().cpu().numpy(force=True)
++    if arr.ndim == 1:
++        arr = arr[None, :]
++    return {"shape": list(arr.shape), "values": arr.reshape(-1).tolist()}
++
++
+ def _instructions(module) -> list[dict[str, Any]]:
+     serialized = []
+     for instruction in module.instructions:
+@@ -50,16 +76,46 @@ def _linear(module) -> dict[str, Any]:
+         "irreps_out": str(module.irreps_out),
+         "instructions": _instructions(module),
+         "weight": _tensor(module.weight),
+-        "bias": _tensor(module.bias),
++        "bias": _tensor(_full_width_linear_bias(module)),
+         "output_mask": _tensor(module.output_mask),
+     }
+ 
+ 
++def _full_width_linear_bias(module) -> Any:
++    """e3nn o3.Linear(biases=True) 的 bias 仅覆盖标量(0e)输出块(_linear.py L177-186),
++    常量经 i_in==-1 的 bias 指令消费(_linear.py L412-424);引擎侧契约要求
++    bias.numel()==irreps_out.dimension()(e3nn.cpp L129-130)。部分覆盖时按 bias 指令的
++    i_out 块位置零填充展开为满维;bias 为空或已满维时原样(对现役 MH1 模型零改动)。
++    依据: docs/module7_patch_final.md E1(实测对象 le.linear_up_q/v、charges_maps
++    readout.linear_mid/linear_2)。"""
++    bias = module.bias
++    dimension = module.irreps_out.dim
++    if bias is None or bias.numel() == dimension:
++        return bias
++    expanded = bias.new_zeros(dimension)
++    cursor = 0
++    out_slices = list(module.irreps_out.slices())
++    for instruction in module.instructions:
++        if getattr(instruction, "i_in", None) != -1:
++            continue
++        width = int(instruction.path_shape[0])
++        start = out_slices[int(instruction.i_out)].start
++        expanded[start:start + width] = bias[cursor:cursor + width]
++        cursor += width
++    if cursor != bias.numel():
++        raise RuntimeError(
++            f"linear bias expansion mismatch: consumed {cursor} of "
++            f"{bias.numel()} values (irreps_out={module.irreps_out})"
++        )
++    return expanded
++
++
+ def _readout(readout) -> dict[str, Any]:
+     return {
+         "class": type(readout).__name__,
+         "linear": _linear(readout.linear) if hasattr(readout, "linear") else None,
+         "linear_1": _linear(readout.linear_1) if hasattr(readout, "linear_1") else None,
++        "linear_mid": _linear(readout.linear_mid) if hasattr(readout, "linear_mid") else None,
+         "linear_2": _linear(readout.linear_2) if hasattr(readout, "linear_2") else None,
+         "activation": "silu" if hasattr(readout, "non_linearity") else None,
+         "activation_constants": [
+@@ -74,10 +130,10 @@ def extract_mace_nonlinear_head_payload(model) -> dict[str, Any]:
+     """Serialize only quantities selected by ``remove_pt_head``."""
+ 
+     return {
+-        "atomic_energies": _tensor(model.atomic_energies_fn.atomic_energies),
++        "atomic_energies": _matrix_tensor(model.atomic_energies_fn.atomic_energies),
+         "scale_shift": {
+-            "scale": _tensor(model.scale_shift.scale),
+-            "shift": _tensor(model.scale_shift.shift),
++            "scale": _scalar_tensor(model.scale_shift.scale),
++            "shift": _scalar_tensor(model.scale_shift.shift),
+         },
+         "readouts": [_readout(readout) for readout in model.readouts],
+     }
+@@ -321,15 +377,24 @@ def extract_mace_nonlinear_data(
+             ],
+         }
+ 
+-    from mace.modules.blocks import LinearReadoutBlock, NonLinearReadoutBlock
++    from mace.modules.blocks import (
++        LinearReadoutBlock,
++        NonLinearBiasReadoutBlock,
++        NonLinearReadoutBlock,
++    )
+ 
+     for readout in model.readouts:
+-        if type(readout) not in (LinearReadoutBlock, NonLinearReadoutBlock):
++        if type(readout) not in (
++            LinearReadoutBlock,
++            NonLinearReadoutBlock,
++            NonLinearBiasReadoutBlock,
++        ):
+             raise RuntimeError(
+-                "Native nonlinear-MACE extraction only supports LinearReadoutBlock and "
+-                f"NonLinearReadoutBlock; found {type(readout).__name__}."
++                "Native nonlinear-MACE extraction only supports LinearReadoutBlock, "
++                "NonLinearReadoutBlock and NonLinearBiasReadoutBlock; found "
++                f"{type(readout).__name__}."
+             )
+-        if isinstance(readout, NonLinearReadoutBlock) and not all(
++        if isinstance(readout, (NonLinearReadoutBlock, NonLinearBiasReadoutBlock)) and not all(
+             activation.f is torch.nn.functional.silu
+             for activation in readout.non_linearity.acts
+         ):
+@@ -350,10 +415,10 @@ def extract_mace_nonlinear_data(
+         "r_cut": float(model.r_max),
+         "l_max": int(model.spherical_harmonics._lmax),
+         "num_interactions": len(model.interactions),
+-        "atomic_energies": _tensor(model.atomic_energies_fn.atomic_energies),
++        "atomic_energies": _matrix_tensor(model.atomic_energies_fn.atomic_energies),
+         "scale_shift": {
+-            "scale": _tensor(model.scale_shift.scale),
+-            "shift": _tensor(model.scale_shift.shift),
++            "scale": _scalar_tensor(model.scale_shift.scale),
++            "shift": _scalar_tensor(model.scale_shift.shift),
+         },
+         "node_embedding": _linear(model.node_embedding.linear),
+         "radial_embedding": {
+@@ -377,6 +442,10 @@ def extract_mace_nonlinear_data(
+         "readouts": [_readout(readout) for readout in model.readouts],
+         "has_zbl": bool(getattr(model, "pair_repulsion", False)),
+     }
++    from .extract_polar_blocks import extract_polar_blocks  # 懒导入避免环
++    polar_blocks = extract_polar_blocks(model)
++    if polar_blocks is not None:
++        output["polar_blocks"] = polar_blocks
+     execution_contract = maybe_make_execution_mh1_contract(output)
+     if execution_contract is not None:
+         output["execution_contracts"] = {MH1_CONTRACT_KEY: execution_contract}
+diff --git a/symmetrix/source/symmetrix/extract_polar_blocks.py b/symmetrix/source/symmetrix/extract_polar_blocks.py
+new file mode 100644
+index 0000000..5c3b528
+--- /dev/null
++++ b/symmetrix/source/symmetrix/extract_polar_blocks.py
+@@ -0,0 +1,318 @@
++"""Serialization of PolarMACE electrostatic ("polar") blocks into the MACE_Nonlinear JSON.
++
++依据 (all grounded in upstream sources):
++- mace.modules.field_blocks: MultiLayerFeatureMixer / EnvironmentDependentSpinSourceBlock /
++  PotentialEmbeddingBlock / AgnosticChargeBiasedLinearPotentialEmbedding / FieldUpdateBlock /
++  AgnosticEmbeddedOneBodyVariableUpdate / SparseUvuTensorProduct / PostScfReadout /
++  OneBodyMLPFieldReadout  —— 逐 class 按其 state_dict / attribute 结构序列化;
++- graph_longrange (v0.4.0): GTOElectrostaticFeatures / GTOElectrostaticEnergy / GTOBasis /
++  GTOSelfInteractionBlock / DisplacedGTOExternalFieldBlock —— 按模块属性/state_dict 序列化;
++- 原语词汇表与既有 backbone 序列化一致 (e3nn Linear / uvu TensorProduct / gate / MLP),
++  引擎侧已有同族实现 (E3Linear/E3ProductBasis/Gate/AffineMLP),故可直接消费。
++
++未识别到结构化序列化器的叶子模块:给出类名 + 原始 state_dict 张量 (raw),并记入
++``unserialized`` 清单 —— 诚实标记,待引擎按模块逐个实现后升级为结构化 schema。
++"""
++
++from __future__ import annotations
++
++from typing import Any
++
++import torch
++
++from .extract_mace_nonlinear import (
++    _instructions,
++    _linear,
++    _matrix_tensor,
++    _readout,
++    _tensor,
++)
++
++
++def _linear_or_none(mod) -> Any:
++    return _linear(mod) if mod is not None else None
++
++
++def _sparse_uvu(tp) -> dict[str, Any]:
++    """SparseUvuTensorProduct: e3nn TensorProduct 参数布局 (weight + output_mask)。
++
++    与 backbone ``_tensor_product`` 同构 (instructions/weight/output_mask);
++    连接模式固定 uvu (类内校验), 引擎既有 e3nn 张量积机制可直接消费。
++    """
++    out: dict[str, Any] = {
++        "kind": "sparse_uvu",
++        "irreps_in1": str(tp.irreps_in1),
++        "irreps_in2": str(tp.irreps_in2),
++        "irreps_out": str(tp.irreps_out),
++        "layout": getattr(tp, "layout", "mul_ir"),
++        "weight": _tensor(tp.weight),
++        "output_mask": _tensor(tp.output_mask),
++        "instructions": [],
++    }
++    for ins in tp.instructions:
++        out["instructions"].append({
++            "i_in1": int(ins.i_in1),
++            "i_in2": int(ins.i_in2),
++            "i_out": int(ins.i_out),
++            "connection_mode": ins.connection_mode,
++            "has_weight": bool(ins.has_weight),
++            "path_shape": list(ins.path_shape),
++            # G1(审计): 前向逐路径乘 path_weight(field_blocks.py L452/L460),
++            # 旧版漏存 → 引擎按 1.0 误算。来源 ins.path_weight(e3nn 指令)。
++            "path_weight": float(getattr(ins, "path_weight", 1.0)),
++        })
++    return out
++
++
++def _torch_mlp_net(net) -> dict[str, Any]:
++    """Generic torch Sequential (Linear / e3nn-Activation-like / SiLU / identity)."""
++    layers = []
++    for layer in net:
++        cname = type(layer).__name__
++        if cname == "Linear":
++            layers.append({
++                "type": "linear",
++                "weight": _tensor(layer.weight),
++                "bias": _tensor(layer.bias) if layer.bias is not None else None,
++            })
++        elif cname in ("SiLU", "ReLU", "Tanh"):
++            layers.append({"type": cname.lower()})
++        elif cname == "Activation":
++            w = getattr(layer, "weight", None)
++            layers.append({
++                "type": "activation",
++                "weight": _tensor(w) if w is not None else None,
++                "acts": [type(a).__name__.lower() for a in getattr(layer, "acts", [])],
++            })
++        elif cname in ("Identity", "NoNonLinearity"):
++            layers.append({"type": "identity"})
++        elif cname == "LayerNorm":
++            # 结构化(引擎需 eps + 仿射权重; 例如 charges_maps 的 RadialMLP 三层 LN)
++            layers.append({
++                "type": "layer_norm",
++                "eps": float(layer.eps),
++                "normalized_shape": list(layer.normalized_shape),
++                "weight": _tensor(layer.weight) if layer.elementwise_affine else None,
++                "bias": _tensor(layer.bias) if layer.elementwise_affine else None,
++            })
++        else:
++            # 未知层类: 记录类名 + 原始参数 (诚实标记, 待引擎/序列化器升级)
++            layers.append({
++                "type": cname,
++                "raw_state_dict": {k: _tensor(v) for k, v in layer.state_dict().items()},
++            })
++    return {"kind": "torch_mlp", "layers": layers}
++
++
++def _gto_basis(b) -> dict[str, Any]:
++    out: dict[str, Any] = {
++        "kind": "gto_basis",
++        "max_l": int(getattr(b, "max_l")),
++        "sigmas": [float(s) for s in getattr(b, "sigmas")],
++        "normalize": str(getattr(b, "normalize")),
++        "use_spline": bool(getattr(b, "use_spline", True)),
++        "kspace_cutoff": float(getattr(b, "kspace_cutoff")),
++    }
++    sd = b.state_dict()
++    for key in ("cl_scale", "expanded_l_indices", "real_phase_factors",
++                "imag_phase_factors", "permute_indices"):
++        if key in sd:
++            out[key] = _tensor(sd[key])
++    if hasattr(b, "radial_spline") and b.radial_spline is not None:
++        rs = b.radial_spline.state_dict()
++        out["radial_spline"] = {k: _tensor(v) for k, v in rs.items()}
++    return out
++
++
++def _self_interaction(si) -> dict[str, Any]:
++    out: dict[str, Any] = {"kind": type(si).__name__}
++    for k, v in si.state_dict().items():
++        out[k.replace(".", "_")] = _tensor(v)
++    return out
++
++
++def _gto_features(mod) -> dict[str, Any]:
++    out: dict[str, Any] = {
++        "kind": type(mod).__name__,
++        "density_basis": _gto_basis(mod.density_basis),
++        "feature_basis": _gto_basis(mod.feature_basis),
++        "include_self_interaction": bool(getattr(mod, "include_self_interaction", False)),
++        "kspace_cutoff": float(getattr(mod, "kspace_cutoff")),
++    }
++    sd = mod.state_dict()
++    if "output_permutation" in sd:
++        out["output_permutation"] = _tensor(sd["output_permutation"])
++    if hasattr(mod, "self_interaction_terms"):
++        out["self_interaction_terms"] = _self_interaction(mod.self_interaction_terms)
++    # 其余子模块 (realspace_features / non_periodic_correction_terms 等): 结构化+raw
++    handled = {"density_basis", "feature_basis", "self_interaction_terms"}
++    extra = {}
++    for name, child in mod.named_children():
++        if name in handled:
++            continue
++        extra[name] = {
++            "kind": type(child).__name__,
++            "raw_state_dict": {k: _tensor(v) for k, v in child.state_dict().items()},
++            "attrs": {a: v for a in ("density_max_l", "projection_max_l", "density_smearing_width",
++                                     "num_radial", "offset")
++                      if isinstance(v := getattr(child, a, None), (int, float))},
++        }
++    out["aux_blocks"] = extra
++    return out
++
++
++def _gto_energy(mod) -> dict[str, Any]:
++    out: dict[str, Any] = {
++        "kind": type(mod).__name__,
++        "density_basis": _gto_basis(mod.density_basis),
++        "include_self_interaction": bool(getattr(mod, "include_self_interaction", False)),
++        "include_pbc_corrections": bool(getattr(mod, "include_pbc_corrections", True)),
++        "kspace_cutoff": float(getattr(mod, "kspace_cutoff")),
++    }
++    if hasattr(mod, "self_interaction_terms"):
++        out["self_interaction_terms"] = _self_interaction(mod.self_interaction_terms)
++    extra = {}
++    for name, child in mod.named_children():
++        if name in ("density_basis", "self_interaction_terms"):
++            continue
++        extra[name] = {
++            "kind": type(child).__name__,
++            "raw_state_dict": {k: _tensor(v) for k, v in child.state_dict().items()},
++        }
++    out["aux_blocks"] = extra
++    return out
++
++
++def _potential_embedding(pe) -> dict[str, Any]:
++    return {
++        "kind": type(pe).__name__,
++        "potential_linear": _linear_or_none(getattr(pe, "potential_linear", None)),
++        "node_feats_linear": _linear_or_none(getattr(pe, "node_feats_linear", None)),
++        "charge_embedding": _linear_or_none(getattr(pe, "charge_embedding", None)),
++    }
++
++
++def _field_update_block(b) -> dict[str, Any]:
++    out: dict[str, Any] = {
++        "kind": type(b).__name__,
++        "field_norm_factor": float(getattr(b, "field_norm_factor", 0.0)),
++        "potential_embedding": _potential_embedding(b.potential_embedding),
++        "source_embedding": _linear_or_none(getattr(b, "source_embedding", None)),
++        "dot_products": _sparse_uvu(b.dot_products) if hasattr(b, "dot_products") else None,
++        "tp_out": _sparse_uvu(b.tp_out) if hasattr(b, "tp_out") else None,
++        "readout": _readout(b.readout) if hasattr(b, "readout") else None,
++        "nonlinearity": _torch_mlp_net(b.nonlinearity.net)
++        if hasattr(b, "nonlinearity") and hasattr(b.nonlinearity, "net") else None,
++    }
++    if hasattr(b, "readout") and hasattr(b.readout, "equivariant_nonlin"):
++        # G2(审计): e3nn.nn.Gate 前向消费 act 常数(标量分支 ×cst_silu、门分支 ×cst_sigmoid)
++        # 与 mul(ElementwiseTensorProduct, uuu) 指令;旧版仅 raw_state_dict(无 cst/指令)。
++        # act 语义在 readout ctor 固定(blocks.py L331-332: scalars=silu, gates=sigmoid)。
++        g = b.readout.equivariant_nonlin
++        gate: dict[str, Any] = {
++            "kind": type(g).__name__,
++            "raw_state_dict": {
++                k: _tensor(v) for k, v in g.state_dict().items()
++            },
++        }
++        for key, hint in (("act_scalars", "silu"), ("act_gates", "sigmoid")):
++            acts = getattr(g, key, None)
++            act_list = getattr(acts, "acts", None) if acts is not None else None
++            if act_list:
++                gate[key] = [
++                    {"name": hint, "cst": float(getattr(a, "cst", 1.0))}
++                    for a in act_list
++                ]
++        for attr in ("irreps_scalars", "irreps_gates", "irreps_gated",
++                     "irreps_in", "irreps_out"):
++            v = getattr(g, attr, None)
++            if v is not None:
++                gate[attr] = str(v)
++        mul = getattr(g, "mul", None)
++        if mul is not None:
++            mul_out: dict[str, Any] = {"kind": type(mul).__name__}
++            for attr in ("irreps_in1", "irreps_in2", "irreps_out"):
++                v = getattr(mul, attr, None)
++                if v is not None:
++                    mul_out[attr] = str(v)
++            for attr in ("weight", "output_mask"):
++                v = getattr(mul, attr, None)
++                if v is not None:
++                    mul_out[attr] = _tensor(v)
++            try:
++                mul_out["instructions"] = _instructions(mul)
++            except Exception:  # noqa: BLE001 - 诚实降级: 结构不可得时保留其余字段
++                pass
++            gate["mul"] = mul_out
++        out["readout_gate"] = gate
++    return out
++
++
++def _onebody_readout(m) -> dict[str, Any]:
++    out: dict[str, Any] = {
++        "kind": type(m).__name__,
++        "linear_up_q": _linear_or_none(getattr(m, "linear_up_q", None)),
++        "linear_up_v": _linear_or_none(getattr(m, "linear_up_v", None)),
++        "dot_products_q": _sparse_uvu(m.dot_products_q) if hasattr(m, "dot_products_q") else None,
++        "dot_products_v": _sparse_uvu(m.dot_products_v) if hasattr(m, "dot_products_v") else None,
++    }
++    if hasattr(m, "mlp") and hasattr(m.mlp, "net"):
++        out["mlp"] = _torch_mlp_net(m.mlp.net)
++    return out
++
++
++def extract_polar_blocks(model) -> dict[str, Any] | None:
++    """Dump the electrostatic block set (None when the model has no polar attrs)."""
++    if not any(hasattr(model, a) for a in
++               ("electric_potential_descriptor", "coulomb_energy",
++                "field_dependent_charges_maps", "local_electron_energy")):
++        return None
++    out: dict[str, Any] = {}
++    if hasattr(model, "lr_source_maps"):
++        out["lr_source_maps"] = [_linear(m.linear) for m in model.lr_source_maps]
++    if hasattr(model, "fukui_source_map"):
++        out["fukui_source_map"] = _readout(model.fukui_source_map)
++    if hasattr(model, "electric_potential_descriptor"):
++        out["electric_potential_descriptor"] = _gto_features(model.electric_potential_descriptor)
++    if hasattr(model, "coulomb_energy"):
++        out["coulomb_energy"] = _gto_energy(model.coulomb_energy)
++    if hasattr(model, "field_dependent_charges_maps"):
++        out["field_dependent_charges_maps"] = [
++            _field_update_block(b) for b in model.field_dependent_charges_maps
++        ]
++    if hasattr(model, "layer_feature_mixer"):
++        out["layer_feature_mixer"] = {
++            "kind": "MultiLayerFeatureMixer",
++            "linears": [_linear(m) for m in model.layer_feature_mixer.linears],
++        }
++    if hasattr(model, "local_electron_energy"):
++        out["local_electron_energy"] = _onebody_readout(model.local_electron_energy)
++    if hasattr(model, "external_field_contribution"):
++        member = next(iter(model.external_field_contribution.state_dict().values()), None)
++        out["external_field_contribution"] = {
++            "kind": "DisplacedGTOExternalFieldBlock",
++            "raw_state_dict": {
++                k: _tensor(v) for k, v in model.external_field_contribution.state_dict().items()
++            },
++        }
++    # G4(审计): 布局/切法语义登记(JSON 张量无法表达的运行时约定;锚点均带行号)。
++    out["semantics"] = {
++        "local_charges_layout": "[s\u03b1,x\u03b1,y\u03b1,z\u03b1,s\u03b2,x\u03b2,y\u03b2,z\u03b2] (extensions.py L734 view(N,2,4))",
++        "potential_features_layout": "cat(\u03b1[:, :8], \u03b2[:, :8]); \u5378\u5df2 /field_feature_norms (extensions.py L834-848)",
++        "charges_out_split": "\u524d8=\u5bc6\u5ea6\u589e\u91cf(view N,2,4), \u540e2=Fukui \u6e90 (extensions.py L833-834)",
++        "density_update": "density += sources; \u6bcf\u6b65\u91cd\u505a\u9010\u56fe\u5f52\u4e00+l=0 \u6821\u6b63 (extensions.py L836-866)",
++        "energy_assembly_order": "e0+inter_e \u2192 +le_total \u2192 +electro \u2192 (+external\u00b7dipole); \u5747\u5728 scale/shift \u540e (extensions.py L866-929/936)",
++        "le_inputs": "charges_0=\u521d Fukui \u6821\u6b63\u5bc6\u5ea6; charges_induced=SCF \u672b\u6001; field_feats=\u672b\u6b65\u52bf\u7279\u5f81 (\u8bc4\u4f30\u81ea\u8be5\u6b65\u8f93\u5165\u5bc6\u5ea6)",
++    }
++    out["configs"] = {
++        "add_local_electron_energy": bool(getattr(model, "add_local_electron_energy", False)),
++        "return_electrostatic_potentials": bool(
++            getattr(model, "return_electrostatic_potentials", False)),
++        # SCF 所需标量/常量(非 1 常数, 必须显式序列化; 依据 extensions.py 同名属性):
++        "num_recursion_steps": int(getattr(model, "num_recursion_steps", 0)),
++        "field_feature_norms": _tensor(model.field_feature_norms)
++        if hasattr(model, "field_feature_norms") else None,
++        "from_ell_max_field_update": int(
++            getattr(model, "from_ell_max_field_update", 0)),
++    }
++    return out
