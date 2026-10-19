@@ -1,0 +1,81 @@
+category,metric,configuration,value,unit,tolerance,status,source
+accuracy,module5_density_max_rel,4 molecules x 3 gated items,4.22e-8,relative,1e-6,PASS,logs/polar_module5_gate_v29opt.log
+accuracy,module5_density_max_abs,4 molecules x 3 gated items,6.689e-8,density units,5e-6,PASS,logs/polar_module5_gate_v29opt.log
+accuracy,module5_stage_max_rel,11 stage tensors,7.13e-8,relative,1e-6,PASS,logs/polar_module5_gate_v29opt.log
+accuracy,module5_pairing,engine state to fixture step,OK,status,exact,PASS,logs/polar_module5_gate_v29opt.log
+accuracy,module6_rho_rel_max,8 configs,1.26e-15,relative,1e-6,PASS,logs/polar_module6_gate_v29opt.log
+accuracy,module6_dE_rel_max,8 configs,8.43e-16,relative,1e-6,PASS,logs/polar_module6_gate_v29opt.log
+accuracy,module6_dE_abs_max,8 configs,5.551e-16,eV,5e-6,PASS,logs/polar_module6_gate_v29opt.log
+accuracy,module6_e2e_max,8 configs,1.491e-8,eV,informational,PASS,logs/polar_module6_gate_v29opt.log
+accuracy,module7_stage_abs_max,8 configs,2.230e-5,absolute scale,5e-6 or rel<=1e-6,PASS via relative,logs/polar_module7_gate_v29opt.log
+accuracy,module7_out_abs_max,8 configs,4.038e-7,absolute,1e-6,PASS,logs/polar_module7_gate_v29opt.log
+accuracy,module8_fd_max,12 configs,5.783e-4,absolute,1e-3,PASS,logs/polar_module8_gate_v29final.log
+accuracy,module8_parity_max,12 configs,7.191e-7,eV/A,1e-3,PASS,logs/polar_module8_gate_v29final.log
+accuracy,module8_sum_F_max,12 configs,1.776e-14,eV/A,translation invariance,PASS,logs/polar_module8_gate_v29final.log
+accuracy,endtoend_frames,32 frames,32,count,32,PASS,logs/polar_endtoend_v29final.log
+accuracy,endtoend_dE_rel_max,32 frames,1.1e-11,relative,1e-6,PASS,logs/polar_endtoend_v29final.log
+accuracy,endtoend_dE_abs_max,32 frames,1.034e-6,eV,5e-6,PASS,logs/polar_endtoend_v29final.log
+accuracy,endtoend_dF_max,32 frames,1.624e-7,eV/A,1e-4,PASS,logs/polar_endtoend_v29final.log
+accuracy,rbe_slope,log-log RMS_F vs p,-0.49885,slope,approximately -0.5,PASS,results/polar_rbe_gate_v29.json
+accuracy,rbe_repro_dE,same seed,0,eV,bitwise,PASS,results/polar_rbe_gate_v29.json
+accuracy,rbe_repro_dF,same seed,6.141e-16,eV/A,near zero,PASS,results/polar_rbe_gate_v29.json
+accuracy,rbe_rmsF_p50,128-atom NH3,4.099e-2,eV/A,1e-4,FAIL for production force gate,results/polar_rbe_gate_v29.json
+accuracy,rbe_rmsF_p200,128-atom NH3,2.143e-2,eV/A,1e-4,FAIL for production force gate,results/polar_rbe_gate_v29.json
+accuracy,rbe_rmsF_p800,128-atom NH3,1.028e-2,eV/A,1e-4,FAIL for production force gate,results/polar_rbe_gate_v29.json
+validation,lammps_dE_1rank,128-atom NH3,2.910e-11,eV,5e-5,PASS,results/polar_lammps_parity.json
+validation,lammps_dF_1rank,128-atom NH3,2.622e-14,eV/A,1e-4,PASS,results/polar_lammps_parity.json
+validation,lammps_dE_2rank_exact,128-atom NH3,2.910e-11,eV,5e-5,PASS,results/polar_lammps_parity_mpi2.json
+validation,lammps_dF_2rank_exact,128-atom NH3,1.687e-6,eV/A,1e-4,PASS,results/polar_lammps_parity_mpi2.json
+validation,lammps_dE_2rank_1hop,128-atom NH3,7.937e-5,eV,5e-5,FAIL,results/polar_time_mpi2_onehop.json
+validation,lammps_dF_2rank_1hop,128-atom NH3,4.116e-3,eV/A,1e-4,FAIL,results/polar_time_mpi2_onehop.json
+validation,nvt_md_steps,128 atoms,50,steps,50,PASS,logs/polar_lammps_md_v29final.log
+validation,nvt_md_etot_span,128 atoms 50 steps,0.21295,eV,monitored,PASS,logs/polar_lammps_md_v29final.log
+validation,mpi_md_etot_span,32 atoms 20 steps,0.013359,eV,monitored,PASS,logs/polar_lammps_md_mpi2_n32.log
+speed,v28_det_128,128 atoms,6966.79,ms/eval,median of 20,measured,mlip/bench/polar_perf_v28.json
+speed,v29_det_128,128 atoms,183.78,ms/eval,median of 20,measured,results/polar_perf_v29.json
+speed,speedup_det_128,v29 vs v28,37.91,x,,measured,computed from the two rows above
+speed,v28_rbe_p50,128 atoms,6995.58,ms/eval,median of 20,measured,mlip/bench/polar_perf_v28.json
+speed,v29_rbe_p50,128 atoms,177.60,ms/eval,median of 20,measured,results/polar_perf_v29.json
+speed,speedup_rbe_p50,v29 vs v28,39.39,x,,measured,computed
+speed,v28_rbe_p200,128 atoms,6962.87,ms/eval,median of 20,measured,mlip/bench/polar_perf_v28.json
+speed,v29_rbe_p200,128 atoms,186.30,ms/eval,median of 20,measured,results/polar_perf_v29.json
+speed,speedup_rbe_p200,v29 vs v28,37.38,x,,measured,computed
+speed,v28_rbe_p800,128 atoms,7019.89,ms/eval,median of 20,measured,mlip/bench/polar_perf_v28.json
+speed,v29_rbe_p800,128 atoms,219.05,ms/eval,median of 20,measured,results/polar_perf_v29.json
+speed,speedup_rbe_p800,v29 vs v28,32.05,x,,measured,computed
+speed,v28_det_1024,1024 atoms,7795.59,ms/eval,median of 20,measured,mlip/bench/polar_perf_v28.json
+speed,v29_det_1024,1024 atoms,1007.72,ms/eval,median of 20,measured,results/polar_perf_v29.json
+speed,speedup_det_1024,v29 vs v28,7.74,x,,measured,computed
+speed,backbone_polaroff_128,128 atoms,87.24,ms/eval,LAMMPS Loop time,measured,results/engine_compare.json
+speed,full_polar_128,128 atoms,183.50,ms/eval,LAMMPS Loop time,measured,results/engine_compare.json
+speed,polar_layer_increment_128,full minus backbone,96.26,ms/eval,,measured,computed
+speed,linear_materialized_128,MACE-OFF23 medium,6.6102,ms/eval,not same model,measured,results/streamed_compare.json
+speed,linear_generic_128,MACE-OFF23 medium,19.2914,ms/eval,not same model,measured,results/streamed_compare.json
+speed,linear_auto_generic_128,MACE-OFF23 medium,7.219,ms/eval,not same model,measured,results/engine_compare.json
+speed,mpi_1rank_128,optimal single rank,183.593,ms/eval,,measured,results/polar_time_mpi1.json
+speed,mpi_2rank_exact_128,2-hop ghost,5167.05,ms/eval,,28.1x slower,results/polar_time_mpi2.json
+speed,mpi_2rank_1hop_128,1-hop ghost,1809.30,ms/eval,,9.85x slower; FAIL gates,results/polar_time_mpi2_onehop.json
+speed,linear_h1_1rank,MACE-OFF23 medium,13.586,ms/eval,not same model,measured,results/linear_mpi.json
+speed,linear_h1_2rank,MACE-OFF23 medium,45.878,ms/eval,not same model,3.38x slower,results/linear_mpi.json
+speed,homog_N2_ms_step,216 molecules 432 atoms,476.668,ms/step,10-step run,measured,mlip/bench/lammps_parity/homog_timing/homog_timing.json
+speed,homog_N2_1ns,216 molecules 432 atoms,11.034,days,extrapolation,estimated,mlip/bench/lammps_parity/homog_timing/homog_timing.json
+speed,homog_CO2_ms_step,216 molecules 648 atoms,1749.14,ms/step,10-step run,measured,mlip/bench/lammps_parity/homog_timing/homog_timing.json
+speed,homog_CO2_1ns,216 molecules 648 atoms,40.489,days,extrapolation,estimated,mlip/bench/lammps_parity/homog_timing/homog_timing.json
+speed,homog_CH4_ms_step,216 molecules 1080 atoms,1095.37,ms/step,10-step run,measured,mlip/bench/lammps_parity/homog_timing/homog_timing.json
+speed,homog_CH4_1ns,216 molecules 1080 atoms,25.356,days,extrapolation,estimated,mlip/bench/lammps_parity/homog_timing/homog_timing.json
+speed,homog_H2O_ms_step,216 molecules 648 atoms,3649.87,ms/step,10-step run,measured,mlip/bench/lammps_parity/homog_timing/homog_timing.json
+speed,homog_H2O_1ns,216 molecules 648 atoms,84.488,days,extrapolation,estimated,mlip/bench/lammps_parity/homog_timing/homog_timing.json
+speed,homog_NH3_ms_step,216 molecules 864 atoms,2217.59,ms/step,10-step run,measured,mlip/bench/lammps_parity/homog_timing/homog_timing.json
+speed,homog_NH3_1ns,216 molecules 864 atoms,51.333,days,extrapolation,estimated,mlip/bench/lammps_parity/homog_timing/homog_timing.json
+speed,rbe33_det,N2 432 atoms 33.019 A,477.827,ms/step,10-step run,measured,mlip/bench/lammps_parity/rbe_md_timing/rbe_md_timing.json
+speed,rbe33_p50,N2 432 atoms 33.019 A,385.427,ms/step,10-step run,measured,mlip/bench/lammps_parity/rbe_md_timing/rbe_md_timing.json
+speed,rbe33_p200,N2 432 atoms 33.019 A,405.901,ms/step,10-step run,measured,mlip/bench/lammps_parity/rbe_md_timing/rbe_md_timing.json
+speed,rbe33_p800,N2 432 atoms 33.019 A,465.281,ms/step,10-step run,measured,mlip/bench/lammps_parity/rbe_md_timing/rbe_md_timing.json
+speed,n2_432_full,full PolarMACE,475.883,ms/step,10-step run,measured,mlip/bench/lammps_parity/backbone_timing/result.n2_full.json
+speed,n2_432_polaroff,backbone polar off,190.738,ms/step,10-step run,measured,mlip/bench/lammps_parity/backbone_timing/result.n2_polaroff.json
+speed,n2_432_polar_layer,full minus polar off,285.145,ms/step,,measured,computed
+speed,n2_432_polar_fraction,polar layer share,59.9,percent,,measured,computed
+pending,long_range_share_432,stage-profile estimate,20,percent,in flight,pending,bench/polar_profile_n2_33a.py
+pending,rbe33_force_error,fixed-config p50/200/800,NA,NA,not yet produced,pending,bench/polar_rbe_force_error_33a.py
+pending,pytorch_reference_speed,MACE-Polar reference,NA,NA,no log yet,pending,bench/polar_torch_reference_speed.py
+pending,leoff_timing,local-electron-off model,NA,NA,no timing yet,pending,models/mace-polar/polar_symmetrix_probe_leoff.json

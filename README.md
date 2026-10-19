@@ -31,6 +31,12 @@ Every stage is accepted against **dual-source fixture gates** (frozen Python
 reference dumps + live recomputation through the same PyTorch model), including
 intermediate-tensor comparisons at each block boundary.
 
+**Consolidated comparison (2026-10-19):**
+[docs/COMPARISON_REPORT_2026-10-19.md](docs/COMPARISON_REPORT_2026-10-19.md) —
+speed, accuracy gates, linear-vs-nonlinear, MPI/RBE, and MH-1 findings in one
+place. Key numeric rows are in
+[results/comparison_summary.csv](results/comparison_summary.csv).
+
 ## Performance (v29, A100-80GB, f64, energy + forces)
 
 | Configuration | v28 | v29 | Speedup |
