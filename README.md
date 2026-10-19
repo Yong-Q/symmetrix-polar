@@ -74,17 +74,22 @@ passing with per-layer feature exchange and multiple GPUs.
 
 | Configuration | 1-rank eval |
 |---|---:|
-| Linear MACE-OFF23 medium (`MACEKokkos`) | **7.2 ms** |
-| Linear MACE + `mpi_message_passing` | 13.6 ms |
-| Nonlinear backbone (polar off) | **87.2 ms** |
+| Linear MACE-OFF23 medium, materialized | **6.6 ms** |
+| Linear MACE-OFF23 medium, generic streamed | 19.3 ms |
+| Linear MACE-OFF23 medium, auto (resolved generic) | 7.2 ms |
+| Nonlinear backbone (polar off, 270 MB) | **87.2 ms** |
 | Full PolarMACE v29 | **183.5 ms** |
 
-The nonlinear engine is ~12× the linear engine on this workload; the polar
-layer adds another 2.1×. For MPI, upstream linear H1 message passing is 3.4×
-slower at 2 ranks on one shared GPU, while our exact ghost path is 28.1×
-slower—message passing is ~113× faster than ghost replication at 2 ranks.
-The linear MACE model is not the same potential; this is an engine-overhead
-comparison, not a model-accuracy comparison.
+This is **not** an apples-to-apples model comparison: MACE-OFF23 medium is a
+37 MB, 10-element, r_cut 5 Å linear-readout model, while the PolarMACE backbone
+is 270 MB, 83-element, r_cut 6 Å, 512-channel nonlinear-readout. Model
+size/architecture explains much of the 12×; PolarMACE additionally cannot use
+the MH-1/direct fast path and runs materialized. On the same linear model,
+materialized (6.6 ms) is actually faster than generic streamed (19.3 ms), so
+the path choice is not the main factor at this small size. The clean same-model
+isolation is nonlinear backbone 87.2 ms → full PolarMACE 183.5 ms (polar layer
+adds 2.1×). Both engines are Kokkos/CUDA; this is not a “Kokkos vs ours”
+comparison.
 
 ![Engine comparison](results/polar_engine_compare.png)
 

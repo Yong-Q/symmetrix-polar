@@ -1,0 +1,16 @@
+[
+ {
+  "requested": "auto",
+  "resolved": "Symmetrix streamed_edges requested='auto' resolved='generic'",
+  "rc": 0,
+  "ms_per_eval": 19.2914,
+  "error": null
+ },
+ {
+  "requested": "materialized",
+  "resolved": "Symmetrix streamed_edges requested='materialized' resolved='materialized'",
+  "rc": 0,
+  "ms_per_eval": 6.6102,
+  "error": null
+ }
+]
