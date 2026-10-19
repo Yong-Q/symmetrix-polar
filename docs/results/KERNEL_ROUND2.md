@@ -154,7 +154,12 @@ All required gates pass on the final build; see
 - Traces: `bench/kernel_round2_2026-10-19/analysis_exact/` and `trace_runs/`
 - Gates: `bench/kernel_round2_2026-10-19/gates/`
 - Figures: `docs/figures/13_*` … `16_*`
-- Final binary snapshot: `lmp_r5` sha256
-  `54d8fe3978aa07f559224cea048489b1e433981804c45566a52a94bc1baef855`;
-  the shared build measured 55.97 ms/eval at the check.
+- Pinned gated binary snapshot: `lmp_r5` sha256
+  `54d8fe3978aa07f559224cea048489b1e433981804c45566a52a94bc1baef855`
+  (56.12 ms/eval).
+- Shared build at the kernel agent's final check:
+  `820953cd983cd0ecd6107942bcbec0b39837ffa0a44bbac0cddd69dc3b59355c`
+  (57.1 ms/eval). The shared path was relinked by the MPI agent; every relink
+  includes the round-2 kernels and measured 55.97–57.14 ms/eval. For
+  reproducibility, use `lmp_r5`, not the mutable shared path.
 - Protocol: [`../testing/BENCHMARKS.md`](../testing/BENCHMARKS.md).
