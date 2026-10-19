@@ -566,12 +566,14 @@ double-counted ghost adjoint seeds.
 ### 5.5 Final clean build and independent speed ablation
 
 The Python extension and LAMMPS binary were rebuilt from the settled tree
-(`symmetrix.cpython-312-...so` sha256 `0c4afa1b...`; `lmp` sha256
-`aca5f191...`), then the full gate suite and a separate speed ablation ran with
+(`symmetrix.cpython-312-...so` sha256 `6045cffb...`; `lmp` sha256
+`7e9c6bec...`), then the full gate suite and a separate speed ablation ran with
 no other compute job active. All required gates PASS: module 5, 6, 7, 8,
 32/32 end-to-end, and LAMMPS 1-rank/2-rank parity (the Kokkos CUDA-teardown
 abort after each gate is recorded but accepted only when the gate's completion
-marker is present).
+marker is present). An independent rerun on the immediately preceding build
+reproduced the same verdicts, so the result is not sensitive to the last
+e3nn backend switch.
 
 | Configuration | v29 baseline | Final kernel round | Speedup |
 |---|---:|---:|---:|

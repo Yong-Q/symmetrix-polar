@@ -1297,12 +1297,14 @@ branches, 1-rank H1 mode retention, <code>comm_forward/comm_reverse</code> flags
 double-counted ghost adjoint seeds.</p>
 <h3 id="55-final-clean-build-and-independent-speed-ablation">5.5 Final clean build and independent speed ablation</h3>
 <p>The Python extension and LAMMPS binary were rebuilt from the settled tree
-(<code>symmetrix.cpython-312-...so</code> sha256 <code>0c4afa1b...</code>; <code>lmp</code> sha256
-<code>aca5f191...</code>), then the full gate suite and a separate speed ablation ran with
+(<code>symmetrix.cpython-312-...so</code> sha256 <code>6045cffb...</code>; <code>lmp</code> sha256
+<code>7e9c6bec...</code>), then the full gate suite and a separate speed ablation ran with
 no other compute job active. All required gates PASS: module 5, 6, 7, 8,
 32/32 end-to-end, and LAMMPS 1-rank/2-rank parity (the Kokkos CUDA-teardown
 abort after each gate is recorded but accepted only when the gate's completion
-marker is present).</p>
+marker is present). An independent rerun on the immediately preceding build
+reproduced the same verdicts, so the result is not sensitive to the last
+e3nn backend switch.</p>
 <table>
 <thead>
 <tr>
