@@ -34,10 +34,14 @@ intermediate-tensor comparisons at each block boundary.
 **Consolidated comparison (2026-10-19):**
 [docs/COMPARISON_REPORT_2026-10-19.md](docs/COMPARISON_REPORT_2026-10-19.md) —
 speed, accuracy gates, linear-vs-nonlinear, MPI/RBE, and MH-1 findings in one
-place. Key numeric rows are in
+place. Also available as a paginated
+[**PDF report**](docs/COMPARISON_REPORT_2026-10-19.pdf) with a cover, all
+figures, and page numbers, and as an
+[offline HTML page](docs/index.html). Key numeric rows are in
 [results/comparison_summary.csv](results/comparison_summary.csv).
 Reading guide: [docs/阅读说明.md](docs/阅读说明.md) · figures:
-[docs/figures/](docs/figures/).
+[docs/figures/](docs/figures/) · reproducible data and scripts:
+[docs/examples/](docs/examples/).
 
 ## Performance (v29, A100-80GB, f64, energy + forces)
 

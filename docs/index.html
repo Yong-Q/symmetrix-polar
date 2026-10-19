@@ -1,0 +1,1360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symmetrix-Polar: consolidated speed and accuracy comparison</title>
+<style>
+:root { --blue:#1f6feb; --ink:#24292f; --muted:#57606a; --line:#d0d7de; --bg:#f6f8fa; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0 24px 64px; background: #fff; color: var(--ink);
+  font: 16px/1.62 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
+        "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+main { max-width: 1040px; margin: 0 auto; }
+header.top {
+  max-width: 1040px; margin: 0 auto; padding: 22px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+header.top .brand { font-weight: 700; color: var(--blue); letter-spacing: .2px; }
+header.top nav { margin-top: 8px; font-size: 14px; }
+header.top nav a {
+  color: var(--blue); text-decoration: none; margin-right: 18px;
+  border-bottom: 1px solid transparent;
+}
+header.top nav a:hover { border-bottom-color: var(--blue); }
+h1 { font-size: 2.05em; line-height: 1.2; margin: 1.1em 0 .35em; color: #0b3d91; }
+h2 {
+  font-size: 1.5em; margin: 1.7em 0 .55em; padding-bottom: .25em;
+  border-bottom: 1px solid var(--line); color: #0b3d91;
+}
+h3 { font-size: 1.18em; margin: 1.35em 0 .4em; }
+a { color: var(--blue); }
+code {
+  font: .9em/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg); padding: .12em .38em; border-radius: 4px;
+}
+pre {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; overflow-x: auto;
+}
+pre code { background: none; padding: 0; }
+table {
+  border-collapse: collapse; width: 100%; margin: 1em 0 1.4em; font-size: 14px;
+}
+th, td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; }
+th { background: var(--bg); font-weight: 650; }
+tr:nth-child(even) td { background: #fbfcfd; }
+img { max-width: 100%; height: auto; display: block; margin: 1.1em auto; }
+blockquote {
+  margin: 1em 0; padding: .4em 1em; color: var(--muted);
+  border-left: 4px solid var(--line); background: #fbfcfd;
+}
+hr { border: 0; border-top: 1px solid var(--line); margin: 2em 0; }
+.note {
+  background: #fff8e6; border: 1px solid #f0d58c; border-radius: 8px;
+  padding: 10px 14px; margin: 1em 0; font-size: 14px;
+}
+footer {
+  max-width: 1040px; margin: 40px auto 0; padding-top: 14px;
+  border-top: 1px solid var(--line); color: var(--muted); font-size: 13px;
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Symmetrix-Polar</div>
+  <nav>
+    <a href="COMPARISON_REPORT_2026-10-19.pdf">PDF report</a>
+    <a href="COMPARISON_REPORT_2026-10-19.md">Markdown source</a>
+    <a href="阅读说明.md">Reading guide</a>
+    <a href="figures/">Figures</a>
+    <a href="examples/">Data and scripts</a>
+  </nav>
+</header>
+<main>
+<div class="note">This offline page is generated from
+<code>docs/COMPARISON_REPORT_2026-10-19.md</code>. The paginated
+<a href="COMPARISON_REPORT_2026-10-19.pdf">PDF edition</a> contains the same
+content with a cover and a figure gallery.</div>
+<h1 id="symmetrix-polar-consolidated-speed-and-accuracy-comparison">Symmetrix-Polar: Consolidated Speed and Accuracy Comparison</h1>
+<p><strong>Date:</strong> 2026-10-19 (v29 / v30 evidence cut-off, ~08:20 UTC)
+<strong>Scope:</strong> PolarMACE (MACE-Polar) support in the Symmetrix-XL C++/Kokkos engine.
+<strong>Basis:</strong> completed JSONs, gate logs, and reports only. No GPU benchmark was run for
+this document, and no engine/model code was modified.</p>
+<blockquote>
+<p><strong>Status legend:</strong> <strong>PASS</strong> = measured and accepted against its gate;
+<strong>FAIL</strong> = measured and rejected; <strong>pending</strong> = work is in flight and no
+completed artifact exists yet. No pending result is included as a performance claim.</p>
+</blockquote>
+<hr />
+<h2 id="0-summary">0. Summary</h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Single-rank v29 speed, 128 atoms, deterministic</td>
+<td><strong>183.78 ms/eval</strong> (v28: 6966.79 ms, <strong>37.91x</strong>)</td>
+</tr>
+<tr>
+<td>Single-rank v29 speed, 1024 atoms, deterministic</td>
+<td><strong>1007.72 ms/eval</strong> (v28: 7795.59 ms, <strong>7.74x</strong>)</td>
+</tr>
+<tr>
+<td>Same-model ablation, 128 atoms</td>
+<td>backbone-only <strong>87.24 ms</strong> -&gt; full PolarMACE <strong>183.50 ms</strong>; polar layer adds <strong>96.26 ms (2.10x)</strong></td>
+</tr>
+<tr>
+<td>Accuracy gates, modules 5-8</td>
+<td>all <strong>PASS</strong></td>
+</tr>
+<tr>
+<td>End-to-end engine vs PyTorch, 32 frames</td>
+<td><strong>32/32 PASS</strong>, max energy error 1.034e-6 eV, max force error 1.624e-7 eV/A</td>
+</tr>
+<tr>
+<td>LAMMPS single point, 1 rank / exact 2 rank</td>
+<td><strong>PASS / PASS</strong> (dE 2.91e-11 eV; max dF 2.62e-14 / 1.69e-6 eV/A)</td>
+</tr>
+<tr>
+<td>LAMMPS NVT MD, 50 steps</td>
+<td><strong>PASS</strong>, no lost atoms, Etot span 0.21295 eV</td>
+</tr>
+<tr>
+<td>RBE production use</td>
+<td><strong>rejected by the force gate</strong> (RMS_F 4.10e-2 to 1.03e-2 eV/A vs 1e-4 eV/A gate)</td>
+</tr>
+<tr>
+<td>1-hop MPI mode</td>
+<td><strong>rejected by the force/energy gates</strong> (max dF 4.116e-3 eV/A, dE 7.94e-5 eV)</td>
+</tr>
+<tr>
+<td>MPI speed on one shared A100</td>
+<td><strong>no speedup</strong>; exact 2-hop is 28.1x slower than 1 rank</td>
+</tr>
+<tr>
+<td>MH-1/direct/JIT fast path</td>
+<td><strong>architecturally blocked</strong>; the upstream linear engine cannot load <code>MACE_Nonlinear</code></td>
+</tr>
+<tr>
+<td>PyTorch MACE-Polar reference speed</td>
+<td><strong>pending</strong> (script added; no log yet)</td>
+</tr>
+</tbody>
+</table>
+<p>The v29 optimization removed two concrete bottlenecks: per-node-serial UVU tensor
+products and a ~0.7 s/eval device-environment probe on non-JIT models. All numerical
+gates are unchanged after the optimization.</p>
+<hr />
+<h2 id="1-scope-and-model">1. Scope and model</h2>
+<h3 id="11-what-is-being-compared">1.1 What is being compared</h3>
+<p>All "same-model" statements below compare the same PolarMACE checkpoint
+(<code>MACE-POLAR-1-M.model</code>) exported to the engine JSON
+<code>polar_symmetrix_probe.json</code>, evaluated in the same 128-atom NH3 box
+(14.736126 A cubic, periodic) with the same float64 energy+force path. The
+linear MACE-OFF23 comparison is explicitly <strong>not</strong> the same model and is labelled
+wherever it appears.</p>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Full PolarMACE</th>
+<th>Nonlinear backbone (polar off)</th>
+<th>Linear MACE-OFF23 medium</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>JSON <code>model_type</code></td>
+<td><code>MACE_Nonlinear</code></td>
+<td><code>MACE_Nonlinear</code></td>
+<td><code>MACE</code></td>
+</tr>
+<tr>
+<td>Engine</td>
+<td><code>MaceNonlinearKokkosT</code></td>
+<td><code>MaceNonlinearKokkosT</code></td>
+<td><code>MACEKokkos</code></td>
+</tr>
+<tr>
+<td>JSON size (bytes)</td>
+<td>316,958,257</td>
+<td>269,988,335</td>
+<td>37,330,647</td>
+</tr>
+<tr>
+<td>Elements</td>
+<td>83</td>
+<td>83</td>
+<td>10</td>
+</tr>
+<tr>
+<td><code>r_cut</code></td>
+<td>6.0 A</td>
+<td>6.0 A</td>
+<td>5.0 A</td>
+</tr>
+<tr>
+<td>Interactions / l_max</td>
+<td>2 / 3</td>
+<td>2 / 3</td>
+<td>standard MACE</td>
+</tr>
+<tr>
+<td>Channel pattern</td>
+<td>512 -&gt; 128, nonlinear bias readout</td>
+<td>512 -&gt; 128, nonlinear bias readout</td>
+<td>linear readout</td>
+</tr>
+<tr>
+<td>Polar layer</td>
+<td>full SCF + Ewald/RBE</td>
+<td>disabled</td>
+<td>inert placeholder</td>
+</tr>
+<tr>
+<td>Execution mode</td>
+<td>materialized (no direct/JIT)</td>
+<td>materialized</td>
+<td>materialized or generic streamed</td>
+</tr>
+<tr>
+<td>Typical use here</td>
+<td>production target</td>
+<td>same-model backbone ablation</td>
+<td>engine-path reference only</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Hardware/software:</strong> one NVIDIA A100-80GB per run, CUDA 12 sm80 backend,
+Kokkos 5.x, float64, energy+forces. Times are LAMMPS <code>Loop time</code> or Python
+<code>median_ms</code> over 20 evals, as noted. The GPU was shared during part of the
+campaign; the v29 final figures are the uncontended reruns. Absolute times are
+therefore contention-sensitive, while same-run ratios are stable.</p>
+<h3 id="12-linear-vs-nonlinear-engines">1.2 Linear vs nonlinear engines</h3>
+<p>"Linear" and "nonlinear" here are Symmetrix engine/model families, not
+linear-vs-nonlinear MLIPs:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>MACEKokkos</code> (linear engine)</th>
+<th><code>MaceNonlinearKokkosT</code> (nonlinear engine)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Accepted <code>model_type</code></td>
+<td><code>MACE</code>, <code>MACEField</code></td>
+<td><code>MACE_Nonlinear</code></td>
+</tr>
+<tr>
+<td>JSON format</td>
+<td>format-version 2 compact radial</td>
+<td>format-version 3 nonlinear</td>
+</tr>
+<tr>
+<td>Readout</td>
+<td>standard linear MACE readout</td>
+<td>nonlinear readout (<code>nonlinear</code>, <code>NonLinearBiasReadoutBlock</code> for PolarMACE)</td>
+</tr>
+<tr>
+<td>Polar blocks</td>
+<td><code>polar_blocks_enabled()</code> returns false</td>
+<td>full polar block set and SCF pipeline</td>
+</tr>
+<tr>
+<td>Direct gate</td>
+<td><code>supports_streamed_edges()</code> = <code>uses_compact_radial</code></td>
+<td><code>supports_streamed_edges()</code> = <code>mh1_fast_path</code></td>
+</tr>
+<tr>
+<td>H1 MPI</td>
+<td>first-interaction hidden node state</td>
+<td>materialized node-feature exchange only</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The upstream linear Kokkos engine cannot load MACE_Nonlinear at all.</strong>
+<code>MACEKokkos::load_from_json</code> rejects it at <code>mace_kokkos_model.cpp:165-167</code> with:</p>
+<pre><code class="language-text">MACE_Nonlinear JSON must be loaded through the nonlinear MACE Kokkos evaluator,
+not legacy MACEKokkos.
+</code></pre>
+<p>The naming "H1" is a collision: in the linear engine H1 is the first-interaction
+hidden state; it is not the MACE-MH-1 model family. No PolarMACE layer can be
+delegated to <code>MACEKokkos</code>, and the linear engine's <code>mpi_message_passing</code> path
+cannot be reused for PolarMACE.</p>
+<h3 id="13-mh-1-fast-path-status">1.3 MH-1 fast-path status</h3>
+<p>PolarMACE cannot use the current MACE-MH-1 direct/JIT fast path. The engine's
+family descriptor rejects it with:</p>
+<pre><code class="language-text">MH-1 node, edge, and hidden irreps are inconsistent.
+</code></pre>
+<p>This is architectural, not an export defect. The original checkpoint has the
+same architecture as the JSON. The four deviations from the admitted MH-1 family
+are:</p>
+<ol>
+<li>second interaction uses <code>128x0e+128x1o</code> edge features instead of the first
+   interaction's <code>512x0e+512x1o</code>;</li>
+<li>second interaction keeps a vector component in <code>hidden_irreps</code>
+   (<code>512x0e+512x1o</code> instead of scalar-only <code>512x0e</code>);</li>
+<li>second product returns <code>512x0e+512x1o</code> instead of scalar-only <code>512x0e</code>;</li>
+<li>second readout is <code>NonLinearBiasReadoutBlock</code> (with a learned <code>linear_mid</code>
+   stage) instead of <code>NonLinearReadoutBlock</code>.</li>
+</ol>
+<p>A v3 <code>MH1_UVU</code> contract is present in the JSON, but it covers only the
+per-interaction UVU tensor products and does not establish v4 node-program
+family compatibility. The v4 contract generator fails first at
+<code>products[1] output irreps are outside the MH-1 support matrix</code>. Re-exporting
+(Route A) cannot fix this without changing the learned function; relaxing only
+the gate (Route C) is numerically incorrect and is also not a speed win. See
+<code>docs/design/MH1_FASTPATH_FEASIBILITY.md</code> for the full rejection chain and the
+staged B1-B4 route assessment. No speedup from MH-1 is claimed anywhere in this
+report.</p>
+<hr />
+<h2 id="2-accuracy-and-correctness-gates">2. Accuracy and correctness gates</h2>
+<h3 id="21-module-gates-5-8-and-end-to-end">2.1 Module gates 5-8 and end-to-end</h3>
+<table>
+<thead>
+<tr>
+<th>Gate</th>
+<th>Metric</th>
+<th>Tolerance</th>
+<th style="text-align: right;">Measured</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Module 5, density (12 items)</td>
+<td>max relative density error</td>
+<td>rel &lt;= 1e-6</td>
+<td style="text-align: right;"><strong>4.22e-8</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Module 5, density (12 items)</td>
+<td>max absolute density error</td>
+<td>abs &lt;= 5e-6</td>
+<td style="text-align: right;"><strong>6.689e-8</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Module 5, stages (11 items)</td>
+<td>max relative stage error</td>
+<td>rel &lt;= 1e-6</td>
+<td style="text-align: right;"><strong>7.13e-8</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Module 5, pairing</td>
+<td>engine state -&gt; fixture step mapping</td>
+<td>exact</td>
+<td style="text-align: right;"><code>['step1','step2','step2']</code> for all 4 molecules</td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Module 6, Coulomb</td>
+<td>max rho-hat relative error</td>
+<td>rel &lt;= 1e-6</td>
+<td style="text-align: right;"><strong>1.26e-15</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Module 6, Coulomb</td>
+<td>max dE relative / absolute</td>
+<td>rel &lt;= 1e-6; abs &lt;= 5e-6 eV</td>
+<td style="text-align: right;"><strong>8.43e-16 / 5.551e-16 eV</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Module 6, Coulomb</td>
+<td>max end-to-end energy error</td>
+<td>informational</td>
+<td style="text-align: right;"><strong>1.491e-8 eV</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Module 7, local electron</td>
+<td>max stage absolute error</td>
+<td>abs &lt;= 5e-6 or rel &lt;= 1e-6</td>
+<td style="text-align: right;"><strong>2.230e-5 abs</strong> (passes on the relative criterion)</td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Module 7, local electron</td>
+<td>max output absolute error</td>
+<td>abs &lt;= 1e-6</td>
+<td style="text-align: right;"><strong>4.038e-7</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Module 8, forces</td>
+<td>max finite-difference error</td>
+<td>&lt;= 1e-3</td>
+<td style="text-align: right;"><strong>5.783e-4</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Module 8, forces</td>
+<td>max parity vs PyTorch</td>
+<td>&lt;= 1e-3</td>
+<td style="text-align: right;"><strong>7.191e-7</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Module 8, forces</td>
+<td>max sum-of-forces residual</td>
+<td>exact translation invariance</td>
+<td style="text-align: right;"><strong>1.776e-14</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>End-to-end, 32 frames</td>
+<td>frames within tolerance</td>
+<td>32/32</td>
+<td style="text-align: right;"><strong>32/32</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>End-to-end, energy</td>
+<td>max relative / absolute</td>
+<td>rel &lt;= 1e-6; abs &lt;= 5e-6 eV</td>
+<td style="text-align: right;"><strong>1.1e-11 / 1.034e-6 eV</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>End-to-end, forces</td>
+<td>max force error</td>
+<td>&lt;= 1e-4 eV/A</td>
+<td style="text-align: right;"><strong>1.624e-7 eV/A</strong> (mean max 9.456e-8)</td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>End-to-end, geometry</td>
+<td>max position drift</td>
+<td>0</td>
+<td style="text-align: right;"><strong>0.0 A</strong></td>
+<td>PASS</td>
+</tr>
+</tbody>
+</table>
+<p>Notes:
+- Module 5 evaluated 12 density items (4 molecules x 3 gated step comparisons)
+  plus 11 stage tensors. The separate "anchor" field-independent density
+  comparison (rel up to 9.57e-8) is recorded but not part of the module-5 gate.
+- Module 7 passes because its criterion is <code>abs &lt;= 5e-6 OR rel &lt;= 1e-6</code>; the
+  worst absolute stage item (co2-f1, 2.230e-5) is at reference scale 351.146
+  and passes on the relative criterion.
+- Module 8 also reports <code>|polar|max</code> between 3.0e-3 and 4.7e-2 eV/A across
+  configurations, confirming the polar force term is not negligible.</p>
+<h3 id="22-rbe-statistical-gate">2.2 RBE statistical gate</h3>
+<p>Source: <code>results/polar_rbe_gate_v29.json</code>, log <code>polar_rbe_gate_v29opt.log</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Tolerance / criterion</th>
+<th style="text-align: right;">Measured</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Slope of log RMS_F vs log p</td>
+<td>ideal -0.5</td>
+<td style="text-align: right;"><strong>-0.49885</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Same-seed reproducibility</td>
+<td>bitwise energy; dF ~ 0</td>
+<td style="text-align: right;"><strong>dE = 0; max dF = 6.141e-16 eV/A</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Different-seed response</td>
+<td>non-zero</td>
+<td style="text-align: right;"><strong>dE = 0.1003 eV; dF = 9.365e-2</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>RMS_F at p = 50</td>
+<td>decreasing</td>
+<td style="text-align: right;"><strong>4.0988e-2 eV/A</strong></td>
+<td>statistical PASS</td>
+</tr>
+<tr>
+<td>RMS_F at p = 200</td>
+<td>decreasing</td>
+<td style="text-align: right;"><strong>2.1426e-2 eV/A</strong></td>
+<td>statistical PASS</td>
+</tr>
+<tr>
+<td>RMS_F at p = 800</td>
+<td>decreasing</td>
+<td style="text-align: right;"><strong>1.0280e-2 eV/A</strong></td>
+<td>statistical PASS</td>
+</tr>
+<tr>
+<td>Mean dE at p = 50 / 200 / 800</td>
+<td>unbiased (n=10)</td>
+<td style="text-align: right;"><strong>-5.139e-2 / -2.344e-2 / +1.469e-3 eV</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>Max abs dE at p = 50 / 200 / 800</td>
+<td>monitored</td>
+<td style="text-align: right;"><strong>1.890e-1 / 1.426e-1 / 2.936e-2 eV</strong></td>
+<td>monitored</td>
+</tr>
+</tbody>
+</table>
+<p>The RBE estimator is unbiased and converges at the expected -1/sqrt(p) rate,
+but its force RMS at every measured p is <strong>two to three orders of magnitude
+above the 1e-4 eV/A production force gate</strong>. Under the project's
+gate-as-minimum rule (a speed mode is usable only if every accuracy gate still
+passes), RBE is accepted as a sampling/convergence gate but <strong>rejected for
+production force evaluation</strong>. See Section 3.6 for its 33 A timings.</p>
+<h3 id="23-lammps-pair-style-and-md-gates">2.3 LAMMPS pair-style and MD gates</h3>
+<p>Sources: <code>results/polar_lammps_parity.json</code>,
+<code>results/polar_lammps_parity_mpi2.json</code>, <code>results/polar_md.json</code>, logs
+<code>polar_lammps_parity_v29final.log</code>, <code>polar_lammps_md_v29final.log</code>,
+<code>polar_lammps_md_mpi2_n32.log</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Gate</th>
+<th>Metric</th>
+<th>Tolerance</th>
+<th style="text-align: right;">Measured</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LAMMPS single point, 1 rank</td>
+<td>dE vs engine</td>
+<td>abs &lt;= 5e-5 eV</td>
+<td style="text-align: right;"><strong>2.910e-11 eV</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>LAMMPS single point, 1 rank</td>
+<td>max dF vs engine</td>
+<td>&lt;= 1e-4 eV/A</td>
+<td style="text-align: right;"><strong>2.622e-14 eV/A</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>LAMMPS single point, 1 rank</td>
+<td>max position drift</td>
+<td>monitored</td>
+<td style="text-align: right;"><strong>4.974e-14 A</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>LAMMPS single point, exact 2 rank</td>
+<td>dE vs engine</td>
+<td>abs &lt;= 5e-5 eV</td>
+<td style="text-align: right;"><strong>2.910e-11 eV</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>LAMMPS single point, exact 2 rank</td>
+<td>max dF vs engine</td>
+<td>&lt;= 1e-4 eV/A</td>
+<td style="text-align: right;"><strong>1.687e-6 eV/A</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>LAMMPS single point, 1-hop 2 rank</td>
+<td>dE vs engine</td>
+<td>abs &lt;= 5e-5 eV</td>
+<td style="text-align: right;"><strong>7.937e-5 eV</strong></td>
+<td><strong>FAIL</strong></td>
+</tr>
+<tr>
+<td>LAMMPS single point, 1-hop 2 rank</td>
+<td>max dF vs engine</td>
+<td>&lt;= 1e-4 eV/A</td>
+<td style="text-align: right;"><strong>4.116e-3 eV/A</strong></td>
+<td><strong>FAIL</strong></td>
+</tr>
+<tr>
+<td>LAMMPS NVT MD, 128 atoms</td>
+<td>completion / lost atoms / finite</td>
+<td>50/50, none, finite</td>
+<td style="text-align: right;"><strong>50/50, none, finite</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>LAMMPS NVT MD, 128 atoms</td>
+<td>Etot span (relative to first step)</td>
+<td>monitored</td>
+<td style="text-align: right;"><strong>0.21295 eV</strong> (25 fs)</td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>LAMMPS NVT MD, 128 atoms</td>
+<td>temperature</td>
+<td>300 K target</td>
+<td style="text-align: right;">mean <strong>276.81 K</strong>, min 188.96, max 335.95</td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>LAMMPS NVT MD, 128 atoms</td>
+<td>pressure</td>
+<td>monitored</td>
+<td style="text-align: right;">657.5 - 3231.3 bar</td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>LAMMPS NVT MD, 128 atoms</td>
+<td>throughput</td>
+<td>monitored</td>
+<td style="text-align: right;"><strong>493.662 ms/step</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>MPI NVT MD, 32 atoms</td>
+<td>completion / lost atoms / Etot span</td>
+<td>20 steps, none</td>
+<td style="text-align: right;"><strong>20/20, none, 0.013359 eV</strong></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>MPI 4 rank, 128 atoms</td>
+<td>runnable on one GPU</td>
+<td>must fit device memory</td>
+<td style="text-align: right;">ghost workspace 4.5-6.9 GiB; <strong>OOM</strong></td>
+<td>FAIL (resource)</td>
+</tr>
+</tbody>
+</table>
+<p>The 1-hop mode is 2.86x faster than exact 2-hop (1809.3 vs 5167.05 ms) but fails
+both the energy and force gates; it is not a usable approximation.</p>
+<hr />
+<h2 id="3-speed">3. Speed</h2>
+<h3 id="31-single-rank-v28-vs-v29">3.1 Single-rank v28 vs v29</h3>
+<p>Source: <code>mlip/bench/polar_perf_v28.json</code> and
+<code>results/polar_perf_v29.json</code> (20 evals each, median, energy+forces,
+128-atom NH3 frame 0, 1024-atom 2x2x2 supercell).</p>
+<table>
+<thead>
+<tr>
+<th>Configuration</th>
+<th style="text-align: right;">v28 (ms/eval)</th>
+<th style="text-align: right;">v29 (ms/eval)</th>
+<th style="text-align: right;">Speedup</th>
+<th style="text-align: right;">Delta</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>128 atoms, deterministic</td>
+<td style="text-align: right;">6966.79</td>
+<td style="text-align: right;"><strong>183.78</strong></td>
+<td style="text-align: right;"><strong>37.91x</strong></td>
+<td style="text-align: right;">-6783.0 ms</td>
+</tr>
+<tr>
+<td>128 atoms, RBE p = 50</td>
+<td style="text-align: right;">6995.58</td>
+<td style="text-align: right;"><strong>177.60</strong></td>
+<td style="text-align: right;"><strong>39.39x</strong></td>
+<td style="text-align: right;">-6818.0 ms</td>
+</tr>
+<tr>
+<td>128 atoms, RBE p = 200</td>
+<td style="text-align: right;">6962.87</td>
+<td style="text-align: right;"><strong>186.30</strong></td>
+<td style="text-align: right;"><strong>37.38x</strong></td>
+<td style="text-align: right;">-6776.6 ms</td>
+</tr>
+<tr>
+<td>128 atoms, RBE p = 800</td>
+<td style="text-align: right;">7019.89</td>
+<td style="text-align: right;"><strong>219.05</strong></td>
+<td style="text-align: right;"><strong>32.05x</strong></td>
+<td style="text-align: right;">-6800.8 ms</td>
+</tr>
+<tr>
+<td>1024 atoms, deterministic</td>
+<td style="text-align: right;">7795.59</td>
+<td style="text-align: right;"><strong>1007.72</strong></td>
+<td style="text-align: right;"><strong>7.74x</strong></td>
+<td style="text-align: right;">-6787.9 ms</td>
+</tr>
+</tbody>
+</table>
+<p>Model load also dropped from ~48.0 s (v28) to ~12.4 s (v29) for the
+deterministic case (12.95 / 12.91 / 12.89 s for RBE p=50/200/800).</p>
+<p><strong>Data-quality note.</strong> The stage report quotes 6951.7 ms for the v28
+deterministic row. That is the <em>energy-only</em> median in
+<code>perf_breakdown_v28.log</code>; the benchmark JSON for the same 20-eval
+energy+force run is 6966.79 ms. This report uses the JSON value so all
+v28/v29 rows use the same measurement definition.</p>
+<h3 id="32-same-model-ablation-backbone-vs-full-polarmace">3.2 Same-model ablation: backbone vs full PolarMACE</h3>
+<p>Source: <code>results/engine_compare.json</code> (LAMMPS single-step <code>Loop time</code>,
+128-atom NH3 box, one A100).</p>
+<table>
+<thead>
+<tr>
+<th>Configuration</th>
+<th>Model</th>
+<th style="text-align: right;">ms/eval</th>
+<th style="text-align: right;">Relative to backbone</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nonlinear backbone only (polar blocks off)</td>
+<td><code>polar_symmetrix_probe_polaroff.json</code></td>
+<td style="text-align: right;"><strong>87.24</strong></td>
+<td style="text-align: right;">1.00x</td>
+</tr>
+<tr>
+<td>Full PolarMACE v29</td>
+<td><code>polar_symmetrix_probe.json</code></td>
+<td style="text-align: right;"><strong>183.50</strong></td>
+<td style="text-align: right;"><strong>2.10x</strong></td>
+</tr>
+<tr>
+<td>Polar layer increment (full - backbone)</td>
+<td>same model, polar on vs off</td>
+<td style="text-align: right;"><strong>96.26</strong></td>
+<td style="text-align: right;">52.5% of full</td>
+</tr>
+<tr>
+<td>leoff variant</td>
+<td><code>polar_symmetrix_probe_leoff.json</code></td>
+<td style="text-align: right;"><strong>pending</strong></td>
+<td style="text-align: right;">model exists (397,979,620 B); no timing JSON yet</td>
+</tr>
+</tbody>
+</table>
+<p>This is the clean same-model isolation: the nonlinear backbone is 87.2 ms and
+the polar layer adds 96.3 ms, i.e. the full model is 2.10x the backbone.
+The "leoff" variant (local-electron off) has a model file but no completed
+timing run, so it is marked pending rather than estimated.</p>
+<h3 id="33-linear-mace-off23-materialized-vs-generic-streamed">3.3 Linear MACE-OFF23 materialized vs generic streamed</h3>
+<p><strong>Not the same model as PolarMACE.</strong> This table isolates the <em>engine path</em> on
+one linear model (MACE-OFF23 medium: 37.33 MB, 10 elements, r_cut 5 A).</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th style="text-align: right;">ms/eval</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Materialized</td>
+<td style="text-align: right;"><strong>6.6102</strong></td>
+<td>explicit <code>streamed_edges materialized</code></td>
+</tr>
+<tr>
+<td>Generic streamed</td>
+<td style="text-align: right;"><strong>19.2914</strong></td>
+<td>requested <code>auto</code>, resolved <code>generic</code></td>
+</tr>
+<tr>
+<td>Auto -&gt; generic (separate engine-compare run)</td>
+<td style="text-align: right;"><strong>7.219</strong></td>
+<td>same resolution, 2.67x faster than the explicit generic run</td>
+</tr>
+</tbody>
+</table>
+<p>Observed run-to-run spread on the generic path is large at this small system
+(7.2 vs 19.3 ms). Materialized is consistently the fastest linear path here
+(6.61 ms), so "streamed vs materialized" is not the explanation for the
+linear-vs-PolarMACE gap. The correct reading of the old 7.2 ms vs 183.5 ms
+comparison is "linear 37 MB/r_cut 5 A model + MH-1-capable engine path"
+versus "270 MB backbone + nonlinear materialized path + polar layer"; it is
+<strong>not</strong> an apples-to-apples engine or accuracy comparison. Both engines are
+Kokkos/CUDA.</p>
+<h3 id="34-mpi-functional-but-slower-on-one-shared-gpu">3.4 MPI: functional, but slower on one shared GPU</h3>
+<p>Sources: <code>results/polar_time_mpi1.json</code>, <code>polar_time_mpi2.json</code>,
+<code>polar_time_mpi2_onehop.json</code>, <code>linear_mpi.json</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th style="text-align: right;">128-atom eval (ms)</th>
+<th style="text-align: right;">Relative to 1 rank</th>
+<th>Force gate</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 rank optimized</td>
+<td style="text-align: right;"><strong>183.59</strong></td>
+<td style="text-align: right;">1.00x</td>
+<td>PASS</td>
+<td>production path</td>
+</tr>
+<tr>
+<td>2 rank exact (2-hop ghost)</td>
+<td style="text-align: right;"><strong>5167.05</strong></td>
+<td style="text-align: right;"><strong>0.036x (28.1x slower)</strong></td>
+<td>max dF 1.687e-6 eV/A, PASS</td>
+<td>functionally correct</td>
+</tr>
+<tr>
+<td>2 rank 1-hop ghost</td>
+<td style="text-align: right;"><strong>1809.30</strong></td>
+<td style="text-align: right;"><strong>0.102x (9.85x slower)</strong></td>
+<td>max dF 4.116e-3 eV/A, FAIL</td>
+<td>rejected</td>
+</tr>
+<tr>
+<td>Upstream linear MACE H1 message passing, 1 rank</td>
+<td style="text-align: right;">13.586</td>
+<td style="text-align: right;">1.00x</td>
+<td>n/a (linear model)</td>
+<td>reference</td>
+</tr>
+<tr>
+<td>Upstream linear MACE H1 message passing, 2 rank</td>
+<td style="text-align: right;">45.878</td>
+<td style="text-align: right;"><strong>3.38x slower</strong></td>
+<td>n/a</td>
+<td>reference</td>
+</tr>
+</tbody>
+</table>
+<p>The exact 2-hop nonlinear path is ~113x slower than the upstream linear H1
+message-passing path (5167.05 vs 45.878 ms), but they are different models and
+different algorithms. On one shared A100, even the mature upstream linear MPI
+path is 3.38x slower at 2 ranks. True scaling requires a local graph with
+per-layer H1 feature exchange plus multiple GPUs.</p>
+<h3 id="35-homogeneous-216-molecule-per-step-timings-and-extrapolations">3.5 Homogeneous 216-molecule per-step timings and extrapolations</h3>
+<p>Source: <code>mlip/bench/lammps_parity/homog_timing/homog_timing.json</code>
+(216 molecules, molecular density 0.006 A^-3, 0.5 fs timestep, 10-step
+LAMMPS runs, full PolarMACE v29). The N2 box is 33.019 A.</p>
+<table>
+<thead>
+<tr>
+<th>Molecule</th>
+<th style="text-align: right;">Atoms</th>
+<th style="text-align: right;">Temperature (K)</th>
+<th style="text-align: right;">ms/step</th>
+<th style="text-align: right;">10 ps</th>
+<th style="text-align: right;">100 ps</th>
+<th style="text-align: right;">1 ns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>N2</td>
+<td style="text-align: right;">432</td>
+<td style="text-align: right;">151.43 (T/Tc=1.20)</td>
+<td style="text-align: right;"><strong>476.668</strong></td>
+<td style="text-align: right;">2.648 h</td>
+<td style="text-align: right;">26.482 h</td>
+<td style="text-align: right;">11.034 d</td>
+</tr>
+<tr>
+<td>CO2</td>
+<td style="text-align: right;">648</td>
+<td style="text-align: right;">364.95 (T/Tc=1.20)</td>
+<td style="text-align: right;"><strong>1749.14</strong></td>
+<td style="text-align: right;">9.717 h</td>
+<td style="text-align: right;">97.174 h</td>
+<td style="text-align: right;">40.489 d</td>
+</tr>
+<tr>
+<td>CH4</td>
+<td style="text-align: right;">1080</td>
+<td style="text-align: right;">317.00 (T*=2)</td>
+<td style="text-align: right;"><strong>1095.37</strong></td>
+<td style="text-align: right;">6.085 h</td>
+<td style="text-align: right;">60.854 h</td>
+<td style="text-align: right;">25.356 d</td>
+</tr>
+<tr>
+<td>H2O</td>
+<td style="text-align: right;">648</td>
+<td style="text-align: right;">776.52 (T/Tc=1.20)</td>
+<td style="text-align: right;"><strong>3649.87</strong></td>
+<td style="text-align: right;">20.277 h</td>
+<td style="text-align: right;">202.771 h</td>
+<td style="text-align: right;">84.488 d</td>
+</tr>
+<tr>
+<td>NH3</td>
+<td style="text-align: right;">864</td>
+<td style="text-align: right;">486.48 (T/Tc=1.20)</td>
+<td style="text-align: right;"><strong>2217.59</strong></td>
+<td style="text-align: right;">12.320 h</td>
+<td style="text-align: right;">123.199 h</td>
+<td style="text-align: right;">51.333 d</td>
+</tr>
+</tbody>
+</table>
+<p>Extrapolations assume a 0.5 fs timestep and 100% duty cycle (10 ps = 20,000
+steps; 100 ps = 200,000; 1 ns = 2,000,000). They are throughput estimates, not
+measured long runs. An earlier pilot log (<code>polar_homog_timing.log</code>) failed the
+N2 case; the completed JSON above is the valid run.</p>
+<h3 id="36-rbe-on-the-33-a-n2-box">3.6 RBE on the 33 A N2 box</h3>
+<p>Source: <code>mlip/bench/lammps_parity/rbe_md_timing/rbe_md_timing.json</code>
+(432 atoms, N2 x216, 33.019 A cubic box, 10-step LAMMPS runs, per-step time).</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th style="text-align: right;">ms/step</th>
+<th style="text-align: right;">Relative to deterministic</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Deterministic (full k-space)</td>
+<td style="text-align: right;"><strong>477.827</strong></td>
+<td style="text-align: right;">1.000x</td>
+</tr>
+<tr>
+<td>RBE p = 50</td>
+<td style="text-align: right;"><strong>385.427</strong></td>
+<td style="text-align: right;">0.807x (-19.3%)</td>
+</tr>
+<tr>
+<td>RBE p = 200</td>
+<td style="text-align: right;"><strong>405.901</strong></td>
+<td style="text-align: right;">0.849x (-15.1%)</td>
+</tr>
+<tr>
+<td>RBE p = 800</td>
+<td style="text-align: right;"><strong>465.281</strong></td>
+<td style="text-align: right;">0.974x (-2.6%)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Caveat (gate-as-minimum rule).</strong> These timings look attractive, especially
+p=50, but the same RBE approximation has force RMS errors of
+<strong>4.099e-2 / 2.143e-2 / 1.028e-2 eV/A</strong> at p=50/200/800 (Section 2.2), far
+above the <strong>1e-4 eV/A</strong> force gate. RBE therefore cannot be used for
+production force/MD work under the rule that a speed mode must pass every
+accuracy gate. A dedicated fixed-configuration force-error measurement on the
+33 A box (<code>polar_rbe_force_error_33a.py</code>) is <strong>in flight</strong>; its JSON did not
+exist at the evidence cut-off, so no 33 A-specific force-error numbers are
+claimed here.</p>
+<h3 id="37-pytorch-mace-polar-reference-speed">3.7 PyTorch MACE-Polar reference speed</h3>
+<p><strong>Pending.</strong> <code>bench/polar_torch_reference_speed.py</code> exists (added 2026-10-19
+08:14) but there is no <code>polar_torch_reference_speed.log</code> and no JSON output.
+No PyTorch-vs-engine speed ratio is claimed.</p>
+<h3 id="38-figures">3.8 Figures</h3>
+<p><img alt="v28 vs v29 speed" src="../results/polar_perf_v28_vs_v29.png" /></p>
+<p><img alt="Engine and model comparison" src="../results/polar_engine_compare.png" /></p>
+<p><img alt="MPI status" src="../results/polar_mpi_status.png" /></p>
+<p><img alt="RBE gate" src="../results/polar_rbe_gate_v29.png" /></p>
+<p>The reading package adds the higher-level diagnostic figures (relative paths
+from this <code>docs/</code> directory):</p>
+<p><img alt="Cost structure: backbone vs long-range vs polar kernels" src="figures/01_cost_structure.png" /></p>
+<p><img alt="RBE speed/accuracy trade-off and the force gate" src="figures/02_rbe_tradeoff.png" /></p>
+<p><img alt="All accuracy gates pass with large margin" src="figures/03_gate_margins.png" /></p>
+<p><img alt="Homogeneous MD per-step cost and 1 ns extrapolation" src="figures/04_homog_cost.png" /></p>
+<p><img alt="LAMMPS single-point parity and residual distribution" src="figures/07_lammps_parity.png" /></p>
+<p><img alt="NVT MD temperature and energy stability" src="figures/08_nvt_md.png" /></p>
+<p>See <a href="阅读说明.md">阅读说明</a> for the reading order, data provenance, and
+reproduction entry points.</p>
+<hr />
+<h2 id="4-findings">4. Findings</h2>
+<h3 id="41-cost-structure-backbone-plus-polar-non-k-kernels">4.1 Cost structure: backbone plus polar non-k kernels</h3>
+<p>Completed measurements give a consistent picture:</p>
+<ul>
+<li><strong>128 atoms, same model:</strong> backbone-only 87.24 ms -&gt; full 183.50 ms. The
+  polar layer adds 96.26 ms (52.5% of the full eval, 2.10x).</li>
+<li><strong>432 atoms, N2/33 A, same model:</strong> full 475.883 ms/step vs polar-off
+  190.738 ms/step. The polar layer adds <strong>285.145 ms (59.9%)</strong>; the backbone
+  accounts for 190.738 ms (40.1%).</li>
+<li><strong>Stage profile at 128 atoms</strong> (<code>polar_profile_8eval_v29.log</code>, representative
+  uncontended eval): backbone + stage 1 ~36.6 ms; polar forward pipeline
+  ~20 ms, of which the k-space Coulomb stage is ~14.0 ms; reverse/replay and
+  node forces ~53 ms. The k-space slice is therefore only ~7.6% of that eval,
+  while the nonlinear MLP/UVU/replay kernels dominate the polar cost.</li>
+</ul>
+<p><strong>Long-range share.</strong> The full polar layer is ~60% of the 432-atom step in the
+completed coarse ablation. The finer figure that the ongoing profiling round
+attributes to the k-space/long-range slice, <strong>~20% of the 432-atom step</strong>, is
+an in-flight estimate: the dedicated 432-atom stage profile
+(<code>polar_profile_n2_33a.py</code>) had produced no output at the evidence cut-off.
+Treat the ~20% as provisional until that JSON/report exists; the 60% full-polar
+ablation and the 40% backbone share are directly measured.</p>
+<p><strong>Bottleneck:</strong> the nonlinear backbone (roughly 40-48%) plus the polar non-k
+kernels (UVU/MLP reverse, replay, local-electron, node forces). Optimizing only
+the k-space Ewald/RBE stage cannot remove most of the cost.</p>
+<h3 id="42-mh-1-is-architecturally-blocked">4.2 MH-1 is architecturally blocked</h3>
+<p>The rejection is a family-shape check, not a missing export or a flag. The
+model's second interaction differs on edge channels, hidden irreps, product
+output, and readout class; the checkpoint matches the JSON exactly. Route A
+(re-export) is infeasible without retraining/distillation, and Route C
+(relaxing only the gate) would run unprepared conditioned-MLP tables and is
+numerically wrong. The staged route estimates are engineering estimates, not
+measurements:</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Scope</th>
+<th>Estimated speedup</th>
+<th>Effort</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>B1</td>
+<td>family analysis + pair conditioning + generic streamed, FP32 enablement</td>
+<td>~0.5-1.0x (not a speed guarantee)</td>
+<td>5-8 days</td>
+</tr>
+<tr>
+<td>B2</td>
+<td>B1 + v4 contract + JIT host/device artifacts, polar materialized</td>
+<td>target 1.5-3x backbone, ~1.2-1.5x full model</td>
+<td>+15-25 days</td>
+</tr>
+<tr>
+<td>B3</td>
+<td>full polar direct/JIT</td>
+<td>up to ~1.5-2x full model</td>
+<td>+10-20 days</td>
+</tr>
+<tr>
+<td>B4</td>
+<td>LAMMPS direct/JIT wiring</td>
+<td>required to change the measured LAMMPS timings</td>
+<td>+10-15+ days</td>
+</tr>
+</tbody>
+</table>
+<p>None of these estimates is included in the measured tables above.</p>
+<h3 id="43-rbe-and-1-hop-are-rejected-by-the-force-gate">4.3 RBE and 1-hop are rejected by the force gate</h3>
+<p>Both are genuine performance ideas, and both fail the minimum-accuracy rule:</p>
+<ul>
+<li>RBE: excellent statistical behavior (slope -0.49885, unbiased, bitwise
+  same-seed reproducibility) but RMS_F 1e-2 to 4e-2 eV/A, i.e. 100-400x the
+  1e-4 eV/A force gate.</li>
+<li>1-hop ghost: 2.86x faster than exact 2-hop, but dE 7.94e-5 eV (1.6x over the
+  5e-5 eV tolerance) and max dF 4.116e-3 eV/A (41x over the 1e-4 eV/A gate).</li>
+<li>Exact 2-hop is the only MPI mode that passes, and it is 28.1x slower than
+  1 rank on one GPU.</li>
+</ul>
+<h3 id="44-one-gpu-means-mpi-does-not-speed-up">4.4 One GPU means MPI does not speed up</h3>
+<p>All MPI timings above were taken on one shared A100. The exact 2-hop ghost
+graph has ~20x more edges than the 1-rank graph in the 14.7 A box, and the
+2-hop workspace exceeds a single card at 4 ranks (4.5-6.9 GiB per block).
+The upstream linear H1 message passing is also 3.38x slower at 2 ranks on the
+same GPU. MPI is a functional/correctness milestone, not a speedup, until
+per-layer feature exchange and multiple GPUs are available.</p>
+<hr />
+<h2 id="5-in-flight-optimization-round-no-results-claimed">5. In-flight optimization round (no results claimed)</h2>
+<p>Other agents are actively optimizing the polar and backbone kernels. The
+following workstreams were observed on disk at the evidence cut-off. None is
+included in any number above.</p>
+<table>
+<thead>
+<tr>
+<th>Workstream</th>
+<th>Evidence</th>
+<th>Current state</th>
+<th>Reporting</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Polar kernel optimization</td>
+<td>rebuild logs <code>symmetrix_rebuild_v29alloc*.log</code>, <code>..._v29lealloc.log</code>, <code>..._v29tune.log</code>; no new timing JSON</td>
+<td>in flight</td>
+<td><strong>pending</strong></td>
+</tr>
+<tr>
+<td>Backbone kernel optimization</td>
+<td><code>symmetrix_rebuild_v31bb1.log</code> (08:18)</td>
+<td>in flight</td>
+<td><strong>pending</strong></td>
+</tr>
+<tr>
+<td>ncu / kernel profile</td>
+<td><code>bench/kernel_profile_2026-10-19/</code>; <code>runs/full_v29/cupti_kernels.csv</code> has header only</td>
+<td>in flight</td>
+<td><strong>pending</strong></td>
+</tr>
+<tr>
+<td>MPI H1 message passing</td>
+<td><code>logs/p5_lammps_build_v31h1.log</code>; LAMMPS built successfully at 07:49, but no parity or timing JSON</td>
+<td>in flight; build success is not a result</td>
+<td><strong>pending</strong></td>
+</tr>
+<tr>
+<td>432-atom stage profile</td>
+<td><code>bench/polar_profile_n2_33a.out</code> is 0 bytes</td>
+<td>in flight</td>
+<td><strong>pending</strong></td>
+</tr>
+<tr>
+<td>33 A RBE force-error measurement</td>
+<td><code>bench/polar_rbe_force_error_33a.py</code> (08:15), no output JSON</td>
+<td>in flight</td>
+<td><strong>pending</strong></td>
+</tr>
+<tr>
+<td>PyTorch reference speed</td>
+<td><code>bench/polar_torch_reference_speed.py</code> (08:14), no log</td>
+<td>in flight</td>
+<td><strong>pending</strong></td>
+</tr>
+<tr>
+<td>leoff timing</td>
+<td>model file exists; no timing JSON</td>
+<td>not yet run</td>
+<td><strong>pending</strong></td>
+</tr>
+</tbody>
+</table>
+<p>No engine source, model file, or agent bench output was modified while
+preparing this report.</p>
+<hr />
+<h2 id="6-reproduction-commands">6. Reproduction commands</h2>
+<p>All commands run from the MLIP bench workspace, which is the source of the
+gates and logs:</p>
+<pre><code class="language-bash">export MLIP=/workspace/group/shared/bza/task3_sampling_database/mlip
+cd &quot;$MLIP&quot;
+
+export CUDA_VISIBLE_DEVICES=0
+export SYMMETRIX_BACKEND=cuda12-sm80
+export SYMMETRIX_BACKEND_DESCRIPTOR_PATH=&quot;$MLIP/models/mace-polar/backend_cuda12_sm80.json&quot;
+export LD_LIBRARY_PATH=/opt/matos-tools/cuda/12.9/lib64:/opt/matos-tools/conda/envs/matos-compute/lib
+PY=/workspace/caches/conda/envs/polar/bin/python
+
+# Accuracy gates
+$PY bench/polar_module5_gate.py
+$PY bench/polar_module6_gate.py
+$PY bench/polar_module7_gate.py
+$PY bench/polar_module8_gate.py
+$PY bench/polar_endtoend_parity.py
+$PY bench/polar_rbe_gate.py
+
+# LAMMPS pair style and MD (requires the patched LAMMPS build)
+$PY bench/polar_lammps_parity.py
+$PY bench/polar_lammps_md.py
+
+# Speed
+$PY bench/polar_perf_report.py
+$PY bench/polar_vs_linear_speed.py
+$PY bench/polar_backbone_lammps.py
+$PY bench/linear_streamed_compare.py
+$PY bench/linear_mpi_speed.py
+$PY bench/polar_homog_timing.py
+$PY bench/polar_rbe_md_timing.py
+
+# Pending / in-flight (no completed artifact at the cut-off)
+$PY bench/polar_rbe_force_error_33a.py
+$PY bench/polar_profile_n2_33a.py
+$PY bench/polar_torch_reference_speed.py
+</code></pre>
+<p>Notes:
+- Do not run these on a shared GPU without exclusive access; the v29 absolute
+  times are contention-sensitive.
+- The patched LAMMPS binary used by the gates is
+  <code>/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-lammps-aacd036df381800a/lmp</code>.
+- The engine patch is <code>patches/symmetrix-xl-polar-support.patch</code> (325,145 bytes).</p>
+<hr />
+<h2 id="7-artifact-index">7. Artifact index</h2>
+<h3 id="71-in-this-repository-links-are-relative-to-docs">7.1 In this repository (links are relative to <code>docs/</code>)</h3>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v29 performance JSON</td>
+<td><a href="../results/polar_perf_v29.json"><code>../results/polar_perf_v29.json</code></a></td>
+</tr>
+<tr>
+<td>v28 vs v29 figure</td>
+<td><a href="../results/polar_perf_v28_vs_v29.png"><code>../results/polar_perf_v28_vs_v29.png</code></a></td>
+</tr>
+<tr>
+<td>Engine / model ablation JSON</td>
+<td><a href="../results/engine_compare.json"><code>../results/engine_compare.json</code></a></td>
+</tr>
+<tr>
+<td>Engine comparison figure</td>
+<td><a href="../results/polar_engine_compare.png"><code>../results/polar_engine_compare.png</code></a></td>
+</tr>
+<tr>
+<td>Streamed vs materialized JSON</td>
+<td><a href="../results/streamed_compare.json"><code>../results/streamed_compare.json</code></a></td>
+</tr>
+<tr>
+<td>MPI 1-rank JSON</td>
+<td><a href="../results/polar_time_mpi1.json"><code>../results/polar_time_mpi1.json</code></a></td>
+</tr>
+<tr>
+<td>MPI exact 2-hop JSON</td>
+<td><a href="../results/polar_time_mpi2.json"><code>../results/polar_time_mpi2.json</code></a></td>
+</tr>
+<tr>
+<td>MPI 1-hop JSON</td>
+<td><a href="../results/polar_time_mpi2_onehop.json"><code>../results/polar_time_mpi2_onehop.json</code></a></td>
+</tr>
+<tr>
+<td>Linear H1 MPI JSON</td>
+<td><a href="../results/linear_mpi.json"><code>../results/linear_mpi.json</code></a></td>
+</tr>
+<tr>
+<td>MPI status figure</td>
+<td><a href="../results/polar_mpi_status.png"><code>../results/polar_mpi_status.png</code></a></td>
+</tr>
+<tr>
+<td>LAMMPS parity, 1 rank</td>
+<td><a href="../results/polar_lammps_parity.json"><code>../results/polar_lammps_parity.json</code></a></td>
+</tr>
+<tr>
+<td>LAMMPS parity, 2 rank</td>
+<td><a href="../results/polar_lammps_parity_mpi2.json"><code>../results/polar_lammps_parity_mpi2.json</code></a></td>
+</tr>
+<tr>
+<td>LAMMPS parity figure</td>
+<td><a href="../results/polar_lammps_parity.png"><code>../results/polar_lammps_parity.png</code></a></td>
+</tr>
+<tr>
+<td>LAMMPS NVT MD JSON</td>
+<td><a href="../results/polar_md.json"><code>../results/polar_md.json</code></a></td>
+</tr>
+<tr>
+<td>LAMMPS NVT MD figure</td>
+<td><a href="../results/polar_lammps_md.png"><code>../results/polar_lammps_md.png</code></a></td>
+</tr>
+<tr>
+<td>RBE gate JSON</td>
+<td><a href="../results/polar_rbe_gate_v29.json"><code>../results/polar_rbe_gate_v29.json</code></a></td>
+</tr>
+<tr>
+<td>RBE gate figure</td>
+<td><a href="../results/polar_rbe_gate_v29.png"><code>../results/polar_rbe_gate_v29.png</code></a></td>
+</tr>
+<tr>
+<td>MH-1 feasibility analysis</td>
+<td><a href="design/MH1_FASTPATH_FEASIBILITY.md"><code>design/MH1_FASTPATH_FEASIBILITY.md</code></a></td>
+</tr>
+<tr>
+<td>Key numeric rows (CSV)</td>
+<td><a href="../results/comparison_summary.csv"><code>../results/comparison_summary.csv</code></a></td>
+</tr>
+</tbody>
+</table>
+<h3 id="72-external-source-artifacts-workspace-paths">7.2 External source artifacts (workspace paths)</h3>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v28 benchmark JSON</td>
+<td><code>/workspace/group/shared/bza/task3_sampling_database/mlip/bench/polar_perf_v28.json</code></td>
+</tr>
+<tr>
+<td>v29 benchmark JSON (copy)</td>
+<td><code>/workspace/group/shared/bza/task3_sampling_database/mlip/bench/polar_perf.json</code></td>
+</tr>
+<tr>
+<td>Engine comparison JSON</td>
+<td><code>.../bench/lammps_parity/engine_compare/engine_compare.json</code></td>
+</tr>
+<tr>
+<td>Homogeneous timings</td>
+<td><code>.../bench/lammps_parity/homog_timing/homog_timing.json</code></td>
+</tr>
+<tr>
+<td>RBE 33 A timings</td>
+<td><code>.../bench/lammps_parity/rbe_md_timing/rbe_md_timing.json</code></td>
+</tr>
+<tr>
+<td>Backbone ablation (N2)</td>
+<td><code>.../bench/lammps_parity/backbone_timing/result.n2_full.json</code>, <code>result.n2_polaroff.json</code></td>
+</tr>
+<tr>
+<td>Gate logs</td>
+<td><code>.../mlip/logs/polar_module{5,6,7,8}_gate_v29*.log</code></td>
+</tr>
+<tr>
+<td>End-to-end log</td>
+<td><code>.../mlip/logs/polar_endtoend_v29final.log</code></td>
+</tr>
+<tr>
+<td>RBE gate log</td>
+<td><code>.../mlip/logs/polar_rbe_gate_v29opt.log</code></td>
+</tr>
+<tr>
+<td>LAMMPS parity/MD logs</td>
+<td><code>.../mlip/logs/polar_lammps_parity_v29final.log</code>, <code>polar_lammps_md_v29final.log</code>, <code>polar_lammps_md_mpi2_n32.log</code></td>
+</tr>
+<tr>
+<td>Stage profile log</td>
+<td><code>.../mlip/logs/polar_profile_8eval_v29.log</code></td>
+</tr>
+<tr>
+<td>Engine patch</td>
+<td><code>patches/symmetrix-xl-polar-support.patch</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-data-quality-notes-and-missing-artifacts">8. Data-quality notes and missing artifacts</h2>
+<p>These are deliberate caveats, not inferred results:</p>
+<ol>
+<li><strong><code>results/polar_perf_v28.json</code> is absent from this repository.</strong> The v28
+   benchmark JSON exists only at
+   <code>mlip/bench/polar_perf_v28.json</code>; the v28 numbers in Section 3.1 come from
+   there.</li>
+<li><strong>v28 deterministic row:</strong> the report's 6951.7 ms is an energy-only median;
+   the energy+force benchmark JSON is 6966.79 ms. Section 3.1 uses the JSON.</li>
+<li><strong>End-to-end relative error:</strong> the v29 final log shows 3.2e-12 to 1.1e-11
+   across the 32 frames. The "&lt;=4.2e-12" line in <code>REPORT_2026-10-19.md</code> matches
+   only the CO2 subset; the tables above use the full 32-frame range.</li>
+<li><strong><code>results/polar_md.json</code> vs final log:</strong> the JSON records 599.584 ms/step
+   (29.9792 s loop); the final v29 log records <strong>493.662 ms/step</strong>
+   (24.6831 s loop) with identical thermo. The difference is GPU contention;
+   Section 2.3 uses the final log and notes the JSON value here.</li>
+<li><strong>Linear generic timing spread:</strong> the engine-compare run measured 7.219 ms
+   with <code>auto -&gt; generic</code>; the explicit streamed compare measured 19.291 ms on
+   the same path. Both are reported; materialized (6.6102 ms) is the stable
+   linear reference.</li>
+<li><strong><code>n2_homog_pilot.log</code> is empty (0 bytes).</strong> The completed result is
+   <code>homog_timing.json</code>, not that pilot log.</li>
+<li><strong>432-atom long-range share:</strong> the ~20% k-space estimate is in flight; the
+   completed coarse ablation gives 59.9% for the <em>whole polar layer</em>. The
+   dedicated profile output was empty at the cut-off.</li>
+<li><strong>33 A RBE force-error JSON, PyTorch reference speed log, leoff timing,
+   ncu/kernel profile data, and MPI H1 validation/timing are all pending.</strong>
+   No numbers were invented for them.</li>
+<li><strong>4-rank OOM</strong> is reported from the v30 report; no separate JSON artifact
+   was produced.</li>
+<li>Absolute timings are contention-sensitive; ratios from the same run are the
+    reliable quantity.</li>
+</ol>
+<hr />
+<p><em>Prepared from completed project artifacts only. No GPU runs, no engine edits,
+no builds, and no writes to other agents' bench outputs.</em></p>
+</main>
+<footer>
+Symmetrix-Polar · consolidated speed and accuracy comparison · generated 2026-10-19.
+</footer>
+</body>
+</html>
