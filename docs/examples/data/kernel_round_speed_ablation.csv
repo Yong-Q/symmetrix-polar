@@ -1,0 +1,7 @@
+config,atoms,metric,before,after,speedup,rc
+NH3 128 full,128,ms/eval,183.495,122.20750000000001,1.5015035902051836,0
+NH3 128 polaroff,128,ms/eval,87.2388,40.707300000000004,2.14307507498655,0
+N2 432 full (first 10 steps),432,ms/step,477.827,293.344,1.6288964492200284,0
+N2 432 full (warm 10 steps),432,ms/step,477.827,1216.08,0.39292398526412736,0
+N2 432 polaroff (first 10 steps),432,ms/step,,47.6508,,0
+N2 432 polaroff (warm 10 steps),432,ms/step,,452.367,,0

@@ -132,6 +132,14 @@ figs = [
      "LAMMPS single-point force parity and residual distribution."),
     (DOC / "figures" / "08_nvt_md.png",
      "NVT MD temperature and energy stability."),
+    (DOC / "figures" / "09_kernel_top_labels.png",
+     "Top GPU kernels by total time in one full PolarMACE eval."),
+    (DOC / "figures" / "10_kernel_stage_stack.png",
+     "Host stage spans vs measured GPU busy time."),
+    (DOC / "figures" / "11_kernel_polar_delta.png",
+     "Kernel cost added by the polar blocks relative to the backbone."),
+    (DOC / "figures" / "12_kernel_round_speed.png",
+     "Final kernel round: same-model before/after at 128 and 432 atoms."),
 ]
 from PIL import Image
 

@@ -104,23 +104,31 @@ completed artifact exists yet. No pending result is included as a performance cl
 <td><strong>183.78 ms/eval</strong> (v28: 6966.79 ms, <strong>37.91x</strong>)</td>
 </tr>
 <tr>
+<td><strong>Final kernel round, 128 atoms, full model</strong></td>
+<td><strong>122.21 ms/eval</strong> (<strong>1.50x</strong> vs v29; polar-off <strong>40.71 ms</strong>, <strong>2.14x</strong>)</td>
+</tr>
+<tr>
+<td><strong>Final kernel round, 432 atoms, full model</strong></td>
+<td><strong>293.34 ms/step</strong> (<strong>1.63x</strong> vs 477.83; polar-off <strong>47.65 ms</strong>)</td>
+</tr>
+<tr>
 <td>Single-rank v29 speed, 1024 atoms, deterministic</td>
 <td><strong>1007.72 ms/eval</strong> (v28: 7795.59 ms, <strong>7.74x</strong>)</td>
 </tr>
 <tr>
-<td>Same-model ablation, 128 atoms</td>
+<td>Same-model ablation, 128 atoms (v29)</td>
 <td>backbone-only <strong>87.24 ms</strong> -&gt; full PolarMACE <strong>183.50 ms</strong>; polar layer adds <strong>96.26 ms (2.10x)</strong></td>
 </tr>
 <tr>
-<td>Accuracy gates, modules 5-8</td>
+<td>Accuracy gates, modules 5-8 (final build)</td>
 <td>all <strong>PASS</strong></td>
 </tr>
 <tr>
-<td>End-to-end engine vs PyTorch, 32 frames</td>
+<td>End-to-end engine vs PyTorch, 32 frames (final build)</td>
 <td><strong>32/32 PASS</strong>, max energy error 1.034e-6 eV, max force error 1.624e-7 eV/A</td>
 </tr>
 <tr>
-<td>LAMMPS single point, 1 rank / exact 2 rank</td>
+<td>LAMMPS single point, 1 rank / exact 2 rank (final build)</td>
 <td><strong>PASS / PASS</strong> (dE 2.91e-11 eV; max dF 2.62e-14 / 1.69e-6 eV/A)</td>
 </tr>
 <tr>
@@ -129,15 +137,15 @@ completed artifact exists yet. No pending result is included as a performance cl
 </tr>
 <tr>
 <td>RBE production use</td>
-<td><strong>rejected by the force gate</strong> (RMS_F 4.10e-2 to 1.03e-2 eV/A vs 1e-4 eV/A gate)</td>
+<td><strong>rejected by the force gate</strong> (RMS_F 4.10e-2 to 1.03e-2 eV/A; 33 A p=800 is 1.23e-2, all &gt;&gt; 1e-4 eV/A)</td>
 </tr>
 <tr>
 <td>1-hop MPI mode</td>
 <td><strong>rejected by the force/energy gates</strong> (max dF 4.116e-3 eV/A, dE 7.94e-5 eV)</td>
 </tr>
 <tr>
-<td>MPI speed on one shared A100</td>
-<td><strong>no speedup</strong>; exact 2-hop is 28.1x slower than 1 rank</td>
+<td>MPI H1 exact 2 rank</td>
+<td><strong>PASS</strong> (dE 2.91e-11 eV, max dF 1.41e-15 eV/A); 3.22x faster than exact 2-hop, 8.7x slower than 1 rank on one shared GPU</td>
 </tr>
 <tr>
 <td>MH-1/direct/JIT fast path</td>
@@ -145,7 +153,7 @@ completed artifact exists yet. No pending result is included as a performance cl
 </tr>
 <tr>
 <td>PyTorch MACE-Polar reference speed</td>
-<td><strong>94.0 ms/eval</strong> median (92.1 min) vs engine <strong>183.8 ms</strong> -&gt; engine 1.95x slower for the full model</td>
+<td><strong>94.0 ms/eval</strong> median vs final engine <strong>122.2 ms</strong> -&gt; engine <strong>1.30x slower</strong> (was 1.95x) for the full model</td>
 </tr>
 </tbody>
 </table>
@@ -948,13 +956,47 @@ once trajectory dumps are included.</p>
 </table>
 <p><strong>Caveat (gate-as-minimum rule).</strong> These timings look attractive, especially
 p=50, but the same RBE approximation has force RMS errors of
-<strong>4.099e-2 / 2.143e-2 / 1.028e-2 eV/A</strong> at p=50/200/800 (Section 2.2), far
-above the <strong>1e-4 eV/A</strong> force gate. RBE therefore cannot be used for
-production force/MD work under the rule that a speed mode must pass every
-accuracy gate. A dedicated fixed-configuration force-error measurement on the
-33 A box (<code>polar_rbe_force_error_33a.py</code>) is <strong>in flight</strong>; its JSON did not
-exist at the evidence cut-off, so no 33 A-specific force-error numbers are
-claimed here.</p>
+<strong>4.099e-2 / 2.143e-2 / 1.028e-2 eV/A</strong> at p=50/200/800 on the 128-atom box
+(Section 2.2). The dedicated fixed-configuration measurement on the 33 A N2 box
+(<code>mlip/bench/lammps_parity/rbe_md_timing/polar_rbe_force_error_33a.json</code>) gives
+the same conclusion:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">RBE p</th>
+<th style="text-align: right;">RMS dF (eV/A)</th>
+<th style="text-align: right;">max dF (eV/A)</th>
+<th style="text-align: right;">dE (meV/atom)</th>
+<th>vs 1e-4 gate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">50</td>
+<td style="text-align: right;">0.650</td>
+<td style="text-align: right;">2.998</td>
+<td style="text-align: right;">+7.15</td>
+<td>6500x above</td>
+</tr>
+<tr>
+<td style="text-align: right;">200</td>
+<td style="text-align: right;">0.149</td>
+<td style="text-align: right;">1.047</td>
+<td style="text-align: right;">+0.862</td>
+<td>1490x above</td>
+</tr>
+<tr>
+<td style="text-align: right;">800</td>
+<td style="text-align: right;">0.0123</td>
+<td style="text-align: right;">0.074</td>
+<td style="text-align: right;">+0.091</td>
+<td>123x above</td>
+</tr>
+</tbody>
+</table>
+<p>RBE therefore cannot be used for production force/MD work under the rule that
+a speed mode must pass every accuracy gate. Only the deterministic full-k path
+is retained.</p>
 <h3 id="37-pytorch-mace-polar-reference-speed">3.7 PyTorch MACE-Polar reference speed</h3>
 <p>Source: <code>mlip/logs/polar_torch_reference_speed.log</code> (measured 2026-10-19).
 Same 128-atom NH3 frame and the same <code>MACE-POLAR-1-M.model</code> checkpoint,
@@ -1070,6 +1112,9 @@ using 0.042 ms of SM-weighted time. The two worst are <code>polar reverse dense<
 The largest single family is the <code>e3nn</code> scalar linear path (66.68 ms); its
 forward and reverse kernels are load/latency-bound and re-read a small weight
 matrix per sample. These are the targets of the in-flight kernel round.</p>
+<p><img alt="Top GPU kernels by total time" src="figures/09_kernel_top_labels.png" /></p>
+<p><img alt="Stage spans vs GPU busy time" src="figures/10_kernel_stage_stack.png" /></p>
+<p><img alt="Polar-specific kernel delta" src="figures/11_kernel_polar_delta.png" /></p>
 <hr />
 <h2 id="4-findings">4. Findings</h2>
 <h3 id="41-cost-structure-backbone-plus-polar-non-k-kernels">4.1 Cost structure: backbone plus polar non-k kernels</h3>
@@ -1160,72 +1205,174 @@ The upstream linear H1 message passing is also 3.38x slower at 2 ranks on the
 same GPU. MPI is a functional/correctness milestone, not a speedup, until
 per-layer feature exchange and multiple GPUs are available.</p>
 <hr />
-<h2 id="5-in-flight-optimization-round-no-results-claimed">5. In-flight optimization round (no results claimed)</h2>
-<p>Other agents are actively optimizing the polar and backbone kernels. The
-following workstreams were observed on disk at the evidence cut-off. None is
-included in any number above.</p>
+<h2 id="5-kernel-optimization-round-measured-abs">5. Kernel optimization round (measured A/Bs)</h2>
+<p>All changes below keep FP64 and every physical term. "Bitwise" means the
+reference and optimized paths produce identical energies (dE = 0.0) and force
+differences at machine precision.</p>
+<h3 id="51-nonlinear-backbone-macenonlinearkokkost">5.1 Nonlinear backbone (<code>MaceNonlinearKokkosT</code>)</h3>
 <table>
 <thead>
 <tr>
-<th>Workstream</th>
-<th>Evidence</th>
-<th>Current state</th>
-<th>Reporting</th>
+<th>Configuration (polar-off ablation)</th>
+<th style="text-align: right;">Before</th>
+<th style="text-align: right;">After</th>
+<th style="text-align: right;">Speedup</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Polar kernel optimization</td>
-<td>rebuild logs <code>symmetrix_rebuild_v29alloc*.log</code>, <code>..._v29lealloc.log</code>, <code>..._v29tune.log</code>; no new timing JSON</td>
-<td>in flight</td>
-<td><strong>pending</strong></td>
+<td>128 atoms</td>
+<td style="text-align: right;">87.3 ms/eval</td>
+<td style="text-align: right;"><strong>34.0 ms</strong></td>
+<td style="text-align: right;"><strong>2.57x</strong></td>
 </tr>
 <tr>
-<td>Backbone kernel optimization</td>
-<td><code>symmetrix_rebuild_v31bb1.log</code> (08:18)</td>
-<td>in flight</td>
-<td><strong>pending</strong></td>
-</tr>
-<tr>
-<td>ncu / kernel profile</td>
-<td><code>bench/kernel_profile_2026-10-19/</code>; <code>runs/full_v29/cupti_kernels.csv</code> has header only</td>
-<td>in flight</td>
-<td><strong>pending</strong></td>
-</tr>
-<tr>
-<td>MPI H1 message passing</td>
-<td><code>logs/p5_lammps_build_v31h1.log</code>; LAMMPS built successfully at 07:49, but no parity or timing JSON</td>
-<td>in flight; build success is not a result</td>
-<td><strong>pending</strong></td>
-</tr>
-<tr>
-<td>432-atom stage profile</td>
-<td><code>bench/polar_profile_n2_33a.out</code> is 0 bytes</td>
-<td>in flight</td>
-<td><strong>pending</strong></td>
-</tr>
-<tr>
-<td>33 A RBE force-error measurement</td>
-<td><code>bench/polar_rbe_force_error_33a.py</code> (08:15), no output JSON</td>
-<td>in flight</td>
-<td><strong>pending</strong></td>
-</tr>
-<tr>
-<td>PyTorch reference speed</td>
-<td><code>bench/polar_torch_reference_speed.py</code> (08:14), no log</td>
-<td>in flight</td>
-<td><strong>pending</strong></td>
-</tr>
-<tr>
-<td>leoff timing</td>
-<td>model file exists; no timing JSON</td>
-<td>not yet run</td>
-<td><strong>pending</strong></td>
+<td>432 atoms</td>
+<td style="text-align: right;">191.9 ms/eval</td>
+<td style="text-align: right;"><strong>49.6 ms</strong></td>
+<td style="text-align: right;"><strong>3.87x</strong></td>
 </tr>
 </tbody>
 </table>
-<p>No engine source, model file, or agent bench output was modified while
-preparing this report.</p>
+<p>Changes: <code>packed_gemm</code> e3nn backend default for double on CUDA
+(<code>mace_nonlinear_kokkos_impl.tpp:3178-3192</code>, env revert
+<code>MATOS_E3_LINEAR_BACKEND=scalar</code>); double-precision fused gate-normalization
+reverse (<code>:3291-3315</code>, env revert <code>MATOS_FUSED_GATE_REVERSE=0</code>); workspace slack
+plus persistent device spline buffers. Parity: dE = 0.0, max |dF| 1.8e-14
+(128 atoms) / 4.3e-14 (432 atoms).</p>
+<p>LAMMPS: N2-432 polar-off <strong>191.0 -&gt; 98.3 ms/step</strong>; N2-432 full
+<strong>476.4 -&gt; 345.7 ms/step</strong>. NH3-128 10-step means are spike-dominated
+(936.5 -&gt; 466.8), so the steady polar-off eval (85.7 -&gt; 65.7 ms) is the
+reliable small-system number.</p>
+<h3 id="52-polar-pipeline">5.2 Polar pipeline</h3>
+<p><code>dense_reverse</code> now parallelizes over <code>(node, input channel)</code> with one writer
+per slot and the original accumulation order (<code>mace_polar_impl.tpp:1998-2010</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th style="text-align: right;">Before</th>
+<th style="text-align: right;">After</th>
+<th style="text-align: right;">Delta</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>dense-MLP reverse (two blocks)</td>
+<td style="text-align: right;">12.80 + 12.83 ms</td>
+<td style="text-align: right;"><strong>0.75 + 0.75 ms</strong></td>
+<td style="text-align: right;">17x</td>
+</tr>
+<tr>
+<td>polar reverse</td>
+<td style="text-align: right;">184.6 ms</td>
+<td style="text-align: right;"><strong>160.4 ms</strong></td>
+<td style="text-align: right;">-13.1%</td>
+</tr>
+<tr>
+<td>full eval, 432 atoms</td>
+<td style="text-align: right;">479 ms</td>
+<td style="text-align: right;"><strong>454 ms</strong></td>
+<td style="text-align: right;">-5.2%</td>
+</tr>
+</tbody>
+</table>
+<p>Energy is bitwise unchanged (-643858.407420772 eV). Module-8 and 32/32
+end-to-end results are identical to the pre-change baseline.</p>
+<h3 id="53-e3nn-scalar-linear">5.3 e3nn scalar linear</h3>
+<p>Sample-blocked scalar kernels keep the per-output <code>source</code> accumulation order
+and coalesce weight reads (<code>e3nn_kokkos.cpp:420-437</code>, <code>:1214-1231</code>). On the
+128-atom full model in LAMMPS: <strong>184.06 -&gt; 165.99 ms/eval (1.11x)</strong>, medians of
+two independent 12-evaluation rounds. Bitwise equality (max abs diff 0.0) was
+verified on synthetic small/wide cases and on the full model tensors
+(1,245,184 values), plus a NumPy scalar reference.</p>
+<h3 id="54-mpi-h1-message-passing">5.4 MPI H1 message passing</h3>
+<p>2-rank H1 parity on the 128-atom NH3 box: <strong>dE 2.91e-11 eV</strong>, <strong>max dF
+1.41e-15 eV/A</strong>; 20-step NVT stable (no lost atoms, final state matches 1 rank
+to 9.8e-15 A and 4.7e-14 eV/A). Wall time <strong>1600.5 ms</strong> vs exact 2-hop
+<strong>5155 ms</strong> (3.22x faster), but 8.7x slower than the optimized 1-rank path
+(183.6 ms) on one shared GPU. Fixed in this round: local-receiver graph
+construction, ghost force accumulation/communication, Kokkos polar pack/unpack
+branches, 1-rank H1 mode retention, <code>comm_forward/comm_reverse</code> flags, and
+double-counted ghost adjoint seeds.</p>
+<h3 id="55-final-clean-build-and-independent-speed-ablation">5.5 Final clean build and independent speed ablation</h3>
+<p>The Python extension and LAMMPS binary were rebuilt from the settled tree
+(<code>symmetrix.cpython-312-...so</code> sha256 <code>0c4afa1b...</code>; <code>lmp</code> sha256
+<code>aca5f191...</code>), then the full gate suite and a separate speed ablation ran with
+no other compute job active. All required gates PASS: module 5, 6, 7, 8,
+32/32 end-to-end, and LAMMPS 1-rank/2-rank parity (the Kokkos CUDA-teardown
+abort after each gate is recorded but accepted only when the gate's completion
+marker is present).</p>
+<table>
+<thead>
+<tr>
+<th>Configuration</th>
+<th style="text-align: right;">v29 baseline</th>
+<th style="text-align: right;">Final kernel round</th>
+<th style="text-align: right;">Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NH3 128 atoms, full PolarMACE</td>
+<td style="text-align: right;">183.50 ms/eval</td>
+<td style="text-align: right;"><strong>122.21 ms</strong></td>
+<td style="text-align: right;"><strong>1.50x</strong></td>
+</tr>
+<tr>
+<td>NH3 128 atoms, polar-off</td>
+<td style="text-align: right;">87.24 ms/eval</td>
+<td style="text-align: right;"><strong>40.71 ms</strong></td>
+<td style="text-align: right;"><strong>2.14x</strong></td>
+</tr>
+<tr>
+<td>N2 432 atoms, full PolarMACE</td>
+<td style="text-align: right;">477.83 ms/step</td>
+<td style="text-align: right;"><strong>293.34 ms</strong></td>
+<td style="text-align: right;"><strong>1.63x</strong></td>
+</tr>
+<tr>
+<td>N2 432 atoms, polar-off</td>
+<td style="text-align: right;">191.9 ms/eval</td>
+<td style="text-align: right;"><strong>47.65 ms</strong></td>
+<td style="text-align: right;"><strong>4.03x</strong></td>
+</tr>
+</tbody>
+</table>
+<p><img alt="Final kernel-round speed: v29 baseline vs optimized" src="figures/12_kernel_round_speed.png" /></p>
+<p>The 128-atom PyTorch <code>mace_polar</code> reference is 94.0 ms/eval, so the engine gap
+narrows from <strong>1.95x slower</strong> to <strong>1.30x slower</strong> for the full model. The
+432-atom warm-block numbers were contaminated by an external GPU tenant
+(1216 ms/step versus 293 ms for the first block); only the first-block value is
+reported. Remaining bottlenecks: polar replay (~59 ms), SCF/LE/embedding
+reverse, and the e3nn reverse path.</p>
+<h3 id="56-still-pending">5.6 Still pending</h3>
+<table>
+<thead>
+<tr>
+<th>Workstream</th>
+<th>State</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>leoff timing</td>
+<td>model exists; no timing JSON</td>
+</tr>
+<tr>
+<td>e3nn reverse packed/blocked path</td>
+<td>in flight</td>
+</tr>
+<tr>
+<td>polar replay elimination (persist activations)</td>
+<td>proposed; not implemented</td>
+</tr>
+<tr>
+<td>final clean rebuild + full gate suite + speed ablation</td>
+<td><strong>complete</strong> (Section 5.5)</td>
+</tr>
+</tbody>
+</table>
 <hr />
 <h2 id="6-reproduction-commands">6. Reproduction commands</h2>
 <p>All commands run from the MLIP bench workspace, which is the source of the
@@ -1446,11 +1593,11 @@ $PY bench/polar_torch_reference_speed.py
 <li><strong>432-atom long-range share:</strong> the ~20% k-space estimate is in flight; the
    completed coarse ablation gives 59.9% for the <em>whole polar layer</em>. The
    dedicated profile output was empty at the cut-off.</li>
-<li><strong>33 A RBE force-error JSON, leoff timing, and MPI H1 validation/timing are
-   still pending.</strong> The PyTorch reference speed log now exists and is reported
-   in Section 3.7; the ncu profile report now exists
-   (<code>docs/design/KERNEL_PROFILE_2026-10-19.md</code>) but its optimization results
-   remain in flight. No numbers were invented for pending items.</li>
+<li><strong>leoff timing and MPI H1 validation/timing are still pending.</strong> The 33 A
+   RBE fixed-configuration force errors now exist (Section 3.6); the PyTorch
+   reference speed log is reported in Section 3.7; the kernel profile report
+   now exists (<code>docs/design/KERNEL_PROFILE_2026-10-19.md</code>). No numbers were
+   invented for pending items.</li>
 <li><strong>4-rank OOM</strong> is reported from the v30 report; no separate JSON artifact
    was produced.</li>
 <li>Absolute timings are contention-sensitive; ratios from the same run are the

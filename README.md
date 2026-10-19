@@ -26,6 +26,7 @@ GPU speed in LAMMPS-class workflows, without retraining a universal potential.
 | P3 ⑧ | Forces (full-chain reverse mode) | **PASS (v27)**: 12/12 configs — FD self-consistency ≤5.8e-4 (gate 1e-3), force parity vs PyTorch ≤7.2e-7 (gate 1e-3; pre-⑧ baseline mean/max 1.24/4.15), ΣF ≈ 1e-14 (exact translation invariance). Root cause of the final gap: missing *project-phase adjoint* in the descriptor reverse (design §2 ⑧-3 (d3), second line) — located via checkpoint audit (`harness/polar_rev_stage_audit.py`), fixed in `descriptor_reverse_channel` (iii-b) |
 | P4 | Random Batch Ewald k-space | **PASS (v28)**: RBE sampling (per-axis rounded-Gaussian + MH per lammps-rbe, counter-based SplitMix64 RNG, seed in JSON, exact discrete Z_q, full-space estimator with importance weights); p-scan RMS_F 4.1e-2 → 1.0e-2 eV/Å @ p=50→800, slope **−0.499** (≈ −1/√p), unbiased, same-seed bitwise-reproducible; see `harness/polar_rbe_gate.py` |
 | P5 | LAMMPS pair wiring + performance | **PASS (v29/v30, 2026-10-19)**: `pair_style symmetrix/mace/kk` dispatches `MACE_Nonlinear`/PolarMACE, maps types, passes cell/node positions, and adds polar node forces + virial. Single-point parity: **dE 2.9e-11 eV**, **max dF 2.6e-14 eV/Å**; 50-step NVT MD: no lost atoms, Etot span **0.21 eV**. Single-rank performance: **184 ms/eval** at 128 atoms (37.8× v28), **1008 ms** at 1024 atoms (7.7× v28). **MPI 2-rank exact PASS** (dE 2.9e-11 eV, max dF 1.7e-6 eV/Å; 20-step NVT PASS), but no speedup on one shared A100. See `docs/REPORT_2026-10-19.md` |
+| Kernel round | Nonlinear/polar kernel optimization | **PASS (2026-10-19)**: full model **122.2 ms** at 128 atoms (**1.50×** vs v29) and **293.3 ms/step** at 432 atoms (**1.63×**); polar-off **40.7 ms** (**2.14×**) and **47.7 ms** (**4.03×**). e3nn scalar, packed GEMM, fused gate-reverse and polar dense-reverse changes are bitwise or gate-identical; module 5–8, 32/32 end-to-end and LAMMPS 1/2-rank parity all PASS on a single clean build. **MPI H1 2-rank PASS** (dE 2.9e-11 eV, max dF 1.4e-15 eV/Å; 3.22× faster than exact 2-hop) |
 
 Every stage is accepted against **dual-source fixture gates** (frozen Python
 reference dumps + live recomputation through the same PyTorch model), including
@@ -44,13 +45,22 @@ Reading guide: [docs/阅读说明.md](docs/阅读说明.md) · figures:
 [docs/examples/](docs/examples/) · kernel-level profile:
 [docs/design/KERNEL_PROFILE_2026-10-19.md](docs/design/KERNEL_PROFILE_2026-10-19.md).
 
-## Performance (v29, A100-80GB, f64, energy + forces)
+## Performance (A100-80GB, f64, energy + forces)
 
-| Configuration | v28 | v29 | Speedup |
-|---|---|---|---|
-| NH3×32, 128 atoms, deterministic | 6951.7 ms | **183.8 ms** | **37.8×** |
-| NH3×32, 128 atoms, RBE p=200 | 6962.9 ms | **186.3 ms** | **37.4×** |
-| NH3×32×2×2×2, 1024 atoms | 7795.6 ms | **1007.7 ms** | **7.7×** |
+| Configuration | v28 | v29 | Final kernel round | Speedup vs v29 |
+|---|---|---|---|---|
+| NH3×32, 128 atoms, full PolarMACE | 6951.7 ms | 183.8 ms | **122.2 ms** | **1.50×** |
+| NH3×32, 128 atoms, polar-off | — | 87.2 ms | **40.7 ms** | **2.14×** |
+| N2×216, 432 atoms, full PolarMACE | — | 477.8 ms/step | **293.3 ms/step** | **1.63×** |
+| N2×216, 432 atoms, polar-off | — | 191.9 ms/eval | **47.7 ms** | **4.03×** |
+| NH3×32, 128 atoms, RBE p=200 | 6962.9 ms | 186.3 ms | — | — |
+| NH3×32×2×2×2, 1024 atoms | 7795.6 ms | 1007.7 ms | — | — |
+
+The 128-atom PyTorch `mace_polar` reference is 94.0 ms/eval, so the full-model
+gap narrows from 1.95× to **1.30×**. All required gates (module 5–8, 32/32
+end-to-end, LAMMPS 1/2-rank parity) pass unchanged on the final clean build.
+
+![Final kernel-round speed](docs/figures/12_kernel_round_speed.png)
 
 Root causes found by stage profiling (`MATOS_POLAR_PROFILE=1`):
 

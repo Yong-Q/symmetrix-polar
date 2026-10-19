@@ -1,0 +1,74 @@
+[
+ {
+  "job": "module5",
+  "required": true,
+  "rc": 0,
+  "raw_rc": 0,
+  "teardown_abort_accepted": false,
+  "wall_s": 53.46303129196167,
+  "log": "/workspace/group/shared/bza/task3_sampling_database/mlip/bench/kernel_gate_2026-10-19/logs/module5.log"
+ },
+ {
+  "job": "module6",
+  "required": true,
+  "rc": 0,
+  "raw_rc": 134,
+  "teardown_abort_accepted": true,
+  "wall_s": 199.55725169181824,
+  "log": "/workspace/group/shared/bza/task3_sampling_database/mlip/bench/kernel_gate_2026-10-19/logs/module6.log"
+ },
+ {
+  "job": "module7",
+  "required": true,
+  "rc": 0,
+  "raw_rc": 134,
+  "teardown_abort_accepted": true,
+  "wall_s": 85.91618990898132,
+  "log": "/workspace/group/shared/bza/task3_sampling_database/mlip/bench/kernel_gate_2026-10-19/logs/module7.log"
+ },
+ {
+  "job": "module8",
+  "required": true,
+  "rc": 0,
+  "raw_rc": 134,
+  "teardown_abort_accepted": true,
+  "wall_s": 106.90280890464783,
+  "log": "/workspace/group/shared/bza/task3_sampling_database/mlip/bench/kernel_gate_2026-10-19/logs/module8.log"
+ },
+ {
+  "job": "endtoend",
+  "required": true,
+  "rc": 0,
+  "raw_rc": 134,
+  "teardown_abort_accepted": true,
+  "wall_s": 73.73241829872131,
+  "log": "/workspace/group/shared/bza/task3_sampling_database/mlip/bench/kernel_gate_2026-10-19/logs/endtoend.log"
+ },
+ {
+  "job": "lammps_parity_1rank",
+  "required": true,
+  "rc": 0,
+  "raw_rc": 134,
+  "teardown_abort_accepted": true,
+  "wall_s": 664.5131356716156,
+  "log": "/workspace/group/shared/bza/task3_sampling_database/mlip/bench/kernel_gate_2026-10-19/logs/lammps_parity_1rank.log"
+ },
+ {
+  "job": "lammps_parity_2rank",
+  "required": true,
+  "rc": 0,
+  "raw_rc": 134,
+  "teardown_abort_accepted": true,
+  "wall_s": 82.87564134597778,
+  "log": "/workspace/group/shared/bza/task3_sampling_database/mlip/bench/kernel_gate_2026-10-19/logs/lammps_parity_2rank.log"
+ },
+ {
+  "job": "h1_2rank_extra",
+  "required": false,
+  "rc": 143,
+  "raw_rc": 143,
+  "teardown_abort_accepted": false,
+  "wall_s": 391.79971265792847,
+  "log": "/workspace/group/shared/bza/task3_sampling_database/mlip/bench/kernel_gate_2026-10-19/logs/h1_2rank_extra.log"
+ }
+]
