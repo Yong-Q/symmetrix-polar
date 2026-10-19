@@ -1,9 +1,10 @@
 # Symmetrix-Polar: Consolidated Speed and Accuracy Comparison
 
-**Date:** 2026-10-19 (v29 / v30 evidence cut-off, ~08:20 UTC)
+**Date:** 2026-10-19 (v29 / v30 evidence cut-off, ~08:20 UTC; later measured
+rows are marked with their source logs)
 **Scope:** PolarMACE (MACE-Polar) support in the Symmetrix-XL C++/Kokkos engine.
-**Basis:** completed JSONs, gate logs, and reports only. No GPU benchmark was run for
-this document, and no engine/model code was modified.
+**Basis:** completed JSONs, gate logs, and reports only. No engine/model code
+was modified while preparing this document.
 
 > **Status legend:** **PASS** = measured and accepted against its gate;
 > **FAIL** = measured and rejected; **pending** = work is in flight and no
@@ -26,7 +27,7 @@ this document, and no engine/model code was modified.
 | 1-hop MPI mode | **rejected by the force/energy gates** (max dF 4.116e-3 eV/A, dE 7.94e-5 eV) |
 | MPI speed on one shared A100 | **no speedup**; exact 2-hop is 28.1x slower than 1 rank |
 | MH-1/direct/JIT fast path | **architecturally blocked**; the upstream linear engine cannot load `MACE_Nonlinear` |
-| PyTorch MACE-Polar reference speed | **pending** (script added; no log yet) |
+| PyTorch MACE-Polar reference speed | **94.0 ms/eval** median (92.1 min) vs engine **183.8 ms** -> engine 1.95x slower for the full model |
 
 The v29 optimization removed two concrete bottlenecks: per-node-serial UVU tensor
 products and a ~0.7 s/eval device-environment probe on non-JIT models. All numerical
@@ -308,6 +309,14 @@ steps; 100 ps = 200,000; 1 ns = 2,000,000). They are throughput estimates, not
 measured long runs. An earlier pilot log (`polar_homog_timing.log`) failed the
 N2 case; the completed JSON above is the valid run.
 
+**Measured 1 ps N2 pilot.** `mlip/runs/n2-homog-pilot/run-status.json` records
+500 warm-up + 2000 production steps (1.0 ps) at 0.5 fs: **537.99 ms/step**, no
+lost atoms, restart written. The final temperature is **185.48 K** against the
+151.43 K target, so the 500-step warm-up is not sufficient for production
+sampling; a longer/stronger equilibration is required before extending this
+run to 0.1 ns or 1 ns. The per-step cost is consistent with the 10-step timing
+once trajectory dumps are included.
+
 ### 3.6 RBE on the 33 A N2 box
 
 Source: `mlip/bench/lammps_parity/rbe_md_timing/rbe_md_timing.json`
@@ -332,9 +341,27 @@ claimed here.
 
 ### 3.7 PyTorch MACE-Polar reference speed
 
-**Pending.** `bench/polar_torch_reference_speed.py` exists (added 2026-10-19
-08:14) but there is no `polar_torch_reference_speed.log` and no JSON output.
-No PyTorch-vs-engine speed ratio is claimed.
+Source: `mlip/logs/polar_torch_reference_speed.log` (measured 2026-10-19).
+Same 128-atom NH3 frame and the same `MACE-POLAR-1-M.model` checkpoint,
+`mace_polar`, float64, one A100; 2 warm-ups then 10 full energy+force
+evaluations with the calculator cache cleared each time.
+
+| Metric | Value |
+|---|---:|
+| min | **92.1 ms/eval** |
+| median | **94.0 ms/eval** |
+| max | 1196.3 ms/eval (first-call outlier) |
+| energy | -49242.456415 eV |
+
+The engine's **183.78 ms/eval** is **1.95x slower** than the PyTorch
+reference for the full model. The engine's backbone-only ablation is
+**87.24 ms**, close to the full PyTorch time, so the gap is dominated by the
+polar kernels rather than by the nonlinear backbone. This is the ratio that
+the subsequent kernel work has to close; the v28-to-v29 speedup alone does not
+establish an engine-vs-PyTorch advantage.
+
+Caveat: one frame, one process, and the max includes a first-call outlier, so
+the median (not the mean) is the comparison quantity.
 
 ### 3.8 Figures
 
@@ -363,6 +390,31 @@ from this `docs/` directory):
 
 See [阅读说明](阅读说明.md) for the reading order, data provenance, and
 reproduction entry points.
+
+### 3.9 Kernel-level decomposition
+
+Source: `docs/design/KERNEL_PROFILE_2026-10-19.md` and the CUPTI/Kokkos traces
+under `mlip/bench/kernel_profile_2026-10-19/`. Hardware counters were blocked by
+the container/driver, so durations and launch shapes are measured; occupancy is
+a static estimate.
+
+| Family | GPU time (ms) | % of 183.5 ms eval | Launches |
+|---|---:|---:|---:|
+| polar pipeline (SCF/Coulomb/LE/UVU/dense) | 73.36 | 40.0% | 238 |
+| e3nn scalar linear forward + reverse | 66.68 | 36.3% | 302 |
+| backbone nonlinear (gates/gather/normalization) | 19.03 | 10.4% | 46 |
+| tensor product (MH-1 fused paths) | 10.91 | 5.9% | 18 |
+| MLP / dense | 3.44 | 1.9% | 65 |
+| cuBLAS / external | 1.40 | 0.8% | 51 |
+
+The eval is GPU-busy 96% of wall time, but **SM-weighted utilization is only
+52%** (95.7/183.5 ms). The dominant defect is launch shape, not launch count:
+39 kernels run on **1x1x1 grids** (128 threads) and consume **47.8 ms** while
+using 0.042 ms of SM-weighted time. The two worst are `polar reverse dense`
+(25.74 ms) and `reverse nonlinear normalization` (12.74 ms), each one block.
+The largest single family is the `e3nn` scalar linear path (66.68 ms); its
+forward and reverse kernels are load/latency-bound and re-read a small weight
+matrix per sample. These are the targets of the in-flight kernel round.
 
 ---
 
@@ -576,14 +628,17 @@ These are deliberate caveats, not inferred results:
    with `auto -> generic`; the explicit streamed compare measured 19.291 ms on
    the same path. Both are reported; materialized (6.6102 ms) is the stable
    linear reference.
-6. **`n2_homog_pilot.log` is empty (0 bytes).** The completed result is
-   `homog_timing.json`, not that pilot log.
+6. **`n2_homog_pilot.log` is empty (0 bytes).** That path was a stale launcher
+   log; the completed 1 ps pilot is `runs/n2-homog-pilot/run-status.json`
+   (2000 production steps, 537.99 ms/step; see Section 3.5).
 7. **432-atom long-range share:** the ~20% k-space estimate is in flight; the
    completed coarse ablation gives 59.9% for the *whole polar layer*. The
    dedicated profile output was empty at the cut-off.
-8. **33 A RBE force-error JSON, PyTorch reference speed log, leoff timing,
-   ncu/kernel profile data, and MPI H1 validation/timing are all pending.**
-   No numbers were invented for them.
+8. **33 A RBE force-error JSON, leoff timing, and MPI H1 validation/timing are
+   still pending.** The PyTorch reference speed log now exists and is reported
+   in Section 3.7; the ncu profile report now exists
+   (`docs/design/KERNEL_PROFILE_2026-10-19.md`) but its optimization results
+   remain in flight. No numbers were invented for pending items.
 9. **4-rank OOM** is reported from the v30 report; no separate JSON artifact
    was produced.
 10. Absolute timings are contention-sensitive; ratios from the same run are the
@@ -591,5 +646,7 @@ These are deliberate caveats, not inferred results:
 
 ---
 
-*Prepared from completed project artifacts only. No GPU runs, no engine edits,
-no builds, and no writes to other agents' bench outputs.*
+*Prepared from completed project artifacts only. Rows added after the 08:20 UTC
+cut-off (PyTorch reference speed, 1 ps N2 pilot) cite their source logs; no
+numbers were estimated from in-flight work, and no other agents' bench outputs
+were modified.*

@@ -41,7 +41,8 @@ figures, and page numbers, and as an
 [results/comparison_summary.csv](results/comparison_summary.csv).
 Reading guide: [docs/阅读说明.md](docs/阅读说明.md) · figures:
 [docs/figures/](docs/figures/) · reproducible data and scripts:
-[docs/examples/](docs/examples/).
+[docs/examples/](docs/examples/) · kernel-level profile:
+[docs/design/KERNEL_PROFILE_2026-10-19.md](docs/design/KERNEL_PROFILE_2026-10-19.md).
 
 ## Performance (v29, A100-80GB, f64, energy + forces)
 

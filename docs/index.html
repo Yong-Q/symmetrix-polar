@@ -79,10 +79,11 @@ footer {
 <a href="COMPARISON_REPORT_2026-10-19.pdf">PDF edition</a> contains the same
 content with a cover and a figure gallery.</div>
 <h1 id="symmetrix-polar-consolidated-speed-and-accuracy-comparison">Symmetrix-Polar: Consolidated Speed and Accuracy Comparison</h1>
-<p><strong>Date:</strong> 2026-10-19 (v29 / v30 evidence cut-off, ~08:20 UTC)
+<p><strong>Date:</strong> 2026-10-19 (v29 / v30 evidence cut-off, ~08:20 UTC; later measured
+rows are marked with their source logs)
 <strong>Scope:</strong> PolarMACE (MACE-Polar) support in the Symmetrix-XL C++/Kokkos engine.
-<strong>Basis:</strong> completed JSONs, gate logs, and reports only. No GPU benchmark was run for
-this document, and no engine/model code was modified.</p>
+<strong>Basis:</strong> completed JSONs, gate logs, and reports only. No engine/model code
+was modified while preparing this document.</p>
 <blockquote>
 <p><strong>Status legend:</strong> <strong>PASS</strong> = measured and accepted against its gate;
 <strong>FAIL</strong> = measured and rejected; <strong>pending</strong> = work is in flight and no
@@ -144,7 +145,7 @@ completed artifact exists yet. No pending result is included as a performance cl
 </tr>
 <tr>
 <td>PyTorch MACE-Polar reference speed</td>
-<td><strong>pending</strong> (script added; no log yet)</td>
+<td><strong>94.0 ms/eval</strong> median (92.1 min) vs engine <strong>183.8 ms</strong> -&gt; engine 1.95x slower for the full model</td>
 </tr>
 </tbody>
 </table>
@@ -904,6 +905,13 @@ LAMMPS runs, full PolarMACE v29). The N2 box is 33.019 A.</p>
 steps; 100 ps = 200,000; 1 ns = 2,000,000). They are throughput estimates, not
 measured long runs. An earlier pilot log (<code>polar_homog_timing.log</code>) failed the
 N2 case; the completed JSON above is the valid run.</p>
+<p><strong>Measured 1 ps N2 pilot.</strong> <code>mlip/runs/n2-homog-pilot/run-status.json</code> records
+500 warm-up + 2000 production steps (1.0 ps) at 0.5 fs: <strong>537.99 ms/step</strong>, no
+lost atoms, restart written. The final temperature is <strong>185.48 K</strong> against the
+151.43 K target, so the 500-step warm-up is not sufficient for production
+sampling; a longer/stronger equilibration is required before extending this
+run to 0.1 ns or 1 ns. The per-step cost is consistent with the 10-step timing
+once trajectory dumps are included.</p>
 <h3 id="36-rbe-on-the-33-a-n2-box">3.6 RBE on the 33 A N2 box</h3>
 <p>Source: <code>mlip/bench/lammps_parity/rbe_md_timing/rbe_md_timing.json</code>
 (432 atoms, N2 x216, 33.019 A cubic box, 10-step LAMMPS runs, per-step time).</p>
@@ -948,9 +956,44 @@ accuracy gate. A dedicated fixed-configuration force-error measurement on the
 exist at the evidence cut-off, so no 33 A-specific force-error numbers are
 claimed here.</p>
 <h3 id="37-pytorch-mace-polar-reference-speed">3.7 PyTorch MACE-Polar reference speed</h3>
-<p><strong>Pending.</strong> <code>bench/polar_torch_reference_speed.py</code> exists (added 2026-10-19
-08:14) but there is no <code>polar_torch_reference_speed.log</code> and no JSON output.
-No PyTorch-vs-engine speed ratio is claimed.</p>
+<p>Source: <code>mlip/logs/polar_torch_reference_speed.log</code> (measured 2026-10-19).
+Same 128-atom NH3 frame and the same <code>MACE-POLAR-1-M.model</code> checkpoint,
+<code>mace_polar</code>, float64, one A100; 2 warm-ups then 10 full energy+force
+evaluations with the calculator cache cleared each time.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th style="text-align: right;">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>min</td>
+<td style="text-align: right;"><strong>92.1 ms/eval</strong></td>
+</tr>
+<tr>
+<td>median</td>
+<td style="text-align: right;"><strong>94.0 ms/eval</strong></td>
+</tr>
+<tr>
+<td>max</td>
+<td style="text-align: right;">1196.3 ms/eval (first-call outlier)</td>
+</tr>
+<tr>
+<td>energy</td>
+<td style="text-align: right;">-49242.456415 eV</td>
+</tr>
+</tbody>
+</table>
+<p>The engine's <strong>183.78 ms/eval</strong> is <strong>1.95x slower</strong> than the PyTorch
+reference for the full model. The engine's backbone-only ablation is
+<strong>87.24 ms</strong>, close to the full PyTorch time, so the gap is dominated by the
+polar kernels rather than by the nonlinear backbone. This is the ratio that
+the subsequent kernel work has to close; the v28-to-v29 speedup alone does not
+establish an engine-vs-PyTorch advantage.</p>
+<p>Caveat: one frame, one process, and the max includes a first-call outlier, so
+the median (not the mean) is the comparison quantity.</p>
 <h3 id="38-figures">3.8 Figures</h3>
 <p><img alt="v28 vs v29 speed" src="../results/polar_perf_v28_vs_v29.png" /></p>
 <p><img alt="Engine and model comparison" src="../results/polar_engine_compare.png" /></p>
@@ -966,6 +1009,67 @@ from this <code>docs/</code> directory):</p>
 <p><img alt="NVT MD temperature and energy stability" src="figures/08_nvt_md.png" /></p>
 <p>See <a href="阅读说明.md">阅读说明</a> for the reading order, data provenance, and
 reproduction entry points.</p>
+<h3 id="39-kernel-level-decomposition">3.9 Kernel-level decomposition</h3>
+<p>Source: <code>docs/design/KERNEL_PROFILE_2026-10-19.md</code> and the CUPTI/Kokkos traces
+under <code>mlip/bench/kernel_profile_2026-10-19/</code>. Hardware counters were blocked by
+the container/driver, so durations and launch shapes are measured; occupancy is
+a static estimate.</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th style="text-align: right;">GPU time (ms)</th>
+<th style="text-align: right;">% of 183.5 ms eval</th>
+<th style="text-align: right;">Launches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>polar pipeline (SCF/Coulomb/LE/UVU/dense)</td>
+<td style="text-align: right;">73.36</td>
+<td style="text-align: right;">40.0%</td>
+<td style="text-align: right;">238</td>
+</tr>
+<tr>
+<td>e3nn scalar linear forward + reverse</td>
+<td style="text-align: right;">66.68</td>
+<td style="text-align: right;">36.3%</td>
+<td style="text-align: right;">302</td>
+</tr>
+<tr>
+<td>backbone nonlinear (gates/gather/normalization)</td>
+<td style="text-align: right;">19.03</td>
+<td style="text-align: right;">10.4%</td>
+<td style="text-align: right;">46</td>
+</tr>
+<tr>
+<td>tensor product (MH-1 fused paths)</td>
+<td style="text-align: right;">10.91</td>
+<td style="text-align: right;">5.9%</td>
+<td style="text-align: right;">18</td>
+</tr>
+<tr>
+<td>MLP / dense</td>
+<td style="text-align: right;">3.44</td>
+<td style="text-align: right;">1.9%</td>
+<td style="text-align: right;">65</td>
+</tr>
+<tr>
+<td>cuBLAS / external</td>
+<td style="text-align: right;">1.40</td>
+<td style="text-align: right;">0.8%</td>
+<td style="text-align: right;">51</td>
+</tr>
+</tbody>
+</table>
+<p>The eval is GPU-busy 96% of wall time, but <strong>SM-weighted utilization is only
+52%</strong> (95.7/183.5 ms). The dominant defect is launch shape, not launch count:
+39 kernels run on <strong>1x1x1 grids</strong> (128 threads) and consume <strong>47.8 ms</strong> while
+using 0.042 ms of SM-weighted time. The two worst are <code>polar reverse dense</code>
+(25.74 ms) and <code>reverse nonlinear normalization</code> (12.74 ms), each one block.
+The largest single family is the <code>e3nn</code> scalar linear path (66.68 ms); its
+forward and reverse kernels are load/latency-bound and re-read a small weight
+matrix per sample. These are the targets of the in-flight kernel round.</p>
 <hr />
 <h2 id="4-findings">4. Findings</h2>
 <h3 id="41-cost-structure-backbone-plus-polar-non-k-kernels">4.1 Cost structure: backbone plus polar non-k kernels</h3>
@@ -1336,22 +1440,27 @@ $PY bench/polar_torch_reference_speed.py
    with <code>auto -&gt; generic</code>; the explicit streamed compare measured 19.291 ms on
    the same path. Both are reported; materialized (6.6102 ms) is the stable
    linear reference.</li>
-<li><strong><code>n2_homog_pilot.log</code> is empty (0 bytes).</strong> The completed result is
-   <code>homog_timing.json</code>, not that pilot log.</li>
+<li><strong><code>n2_homog_pilot.log</code> is empty (0 bytes).</strong> That path was a stale launcher
+   log; the completed 1 ps pilot is <code>runs/n2-homog-pilot/run-status.json</code>
+   (2000 production steps, 537.99 ms/step; see Section 3.5).</li>
 <li><strong>432-atom long-range share:</strong> the ~20% k-space estimate is in flight; the
    completed coarse ablation gives 59.9% for the <em>whole polar layer</em>. The
    dedicated profile output was empty at the cut-off.</li>
-<li><strong>33 A RBE force-error JSON, PyTorch reference speed log, leoff timing,
-   ncu/kernel profile data, and MPI H1 validation/timing are all pending.</strong>
-   No numbers were invented for them.</li>
+<li><strong>33 A RBE force-error JSON, leoff timing, and MPI H1 validation/timing are
+   still pending.</strong> The PyTorch reference speed log now exists and is reported
+   in Section 3.7; the ncu profile report now exists
+   (<code>docs/design/KERNEL_PROFILE_2026-10-19.md</code>) but its optimization results
+   remain in flight. No numbers were invented for pending items.</li>
 <li><strong>4-rank OOM</strong> is reported from the v30 report; no separate JSON artifact
    was produced.</li>
 <li>Absolute timings are contention-sensitive; ratios from the same run are the
     reliable quantity.</li>
 </ol>
 <hr />
-<p><em>Prepared from completed project artifacts only. No GPU runs, no engine edits,
-no builds, and no writes to other agents' bench outputs.</em></p>
+<p><em>Prepared from completed project artifacts only. Rows added after the 08:20 UTC
+cut-off (PyTorch reference speed, 1 ps N2 pilot) cite their source logs; no
+numbers were estimated from in-flight work, and no other agents' bench outputs
+were modified.</em></p>
 </main>
 <footer>
 Symmetrix-Polar · consolidated speed and accuracy comparison · generated 2026-10-19.
