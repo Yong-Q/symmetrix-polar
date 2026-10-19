@@ -1,5 +1,12 @@
 # Results — Kernel Round 2 (2026-10-19)
 
+**中文摘要：** 128 原子全模型 122.46 → 56.50 ms/eval（2.17×；相对 v29
+3.25×；相对 v28 123×），polar-off 40.58 → 27.66 ms，432 原子 294.39 →
+126.59 ms/step；全部数值门通过。最大发现是旧 object 导致“已验收”二进制仍在
+跑 26 ms 的 dense reverse 和未融合 normalization，强制重建后这两项单独省
+~39 ms。剩余大头是 tensor product（10.81 ms）、cuBLAS（3.80 ms）、UVU
+reverse（6.76 ms）和低覆盖 affine/convolution（4.33 ms）。
+
 This is the accepted round-2 result. Every number is from
 `bench/kernel_round2_2026-10-19/summary.json`; the gate details are in
 [`../testing/GATES.md`](../testing/GATES.md).

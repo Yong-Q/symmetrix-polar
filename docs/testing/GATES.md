@@ -1,5 +1,9 @@
 # Testing Module — Numerical Gate Catalog
 
+**中文摘要：** 每个数值门都列清楚“保护什么、用什么输入、指标怎么定义、
+容差多少、跑什么命令、结果是多少”。优化只有在最终干净构建上通过全套门才算
+验收；gate 是硬标准，不是“参考”。
+
 Every optimization in this project is admitted only after the complete gate
 suite passes on a **clean build of the final tree**. This document lists each
 gate with its purpose, input, metric definition, tolerance, command, and the

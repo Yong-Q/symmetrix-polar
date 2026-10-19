@@ -1,5 +1,9 @@
 # Theory, Performance Model, and Test Methodology
 
+**中文摘要：** 本文档把 PolarMACE 的能量模型、张量代数、性能模型、MPI H1
+设计、逐项数值门和测速协议拆成独立模块；每个公式都说明物理含义，每个测试
+都列出输入、指标、容差、命令和结果，读的人不需要猜口径。
+
 This is the **master index** for the scientific and engineering documentation of
 Symmetrix-Polar. It is organized as independent modules so that a reader can go
 straight to the part they need. Every quantitative claim in the result modules

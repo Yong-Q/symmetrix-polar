@@ -1,5 +1,10 @@
 # Testing Module — Speed Protocol and Profiling
 
+**中文摘要：** 测速必须同模型、同精度、同构建、交替 A/B、GPU 加锁、取中位数；
+CUPTI/Kokkos 只测 kernel 时长和 launch 形状，occupancy 是静态估计。round 2
+发现“已验收二进制”链接了旧 object，实际在跑老 kernel；因此每轮必须记录源码
+状态、trace kernel 名和最终二进制 hash。
+
 This module defines how a speed number is produced, so that two numbers in the
 repository can be compared without guessing. It also records the profiling
 limitations of the container.

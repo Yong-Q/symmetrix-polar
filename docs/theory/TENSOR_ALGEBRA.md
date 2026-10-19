@@ -1,5 +1,10 @@
 # Module 2 — Tensor Algebra: e3nn Linear, Tensor Product, UVU
 
+**中文摘要：** e3nn linear 是逐样本矩阵乘，tensor product 是带 CG 系数的
+不可约表示耦合，UVU 是引擎预先分解的等变收缩实现。老 UVU 是“一节点一线程”，
+只有 128 个线程、一个 block；round 2 改成 `(node, u)` 二维并行 + shared-memory
+权重 tile，并保持每个输出的累加顺序，因此数值上 bitwise 不变。
+
 This module explains the kernels that dominate the GPU time. The formulas are
 the mathematical contract; the implementation notes explain why the old kernel
 shapes were slow and what changed in the kernel rounds.

@@ -1,5 +1,10 @@
 # Module 4 — MPI, Ghost Atoms, and the H1 Feature Exchange
 
+**中文摘要：** H1 交换是“第一层隐藏态换 ghost”，数学上精确；但当前 1-rank
+H1 模式因为把通信截断设到 8 Å（大于 7.37 Å 半盒）而造出 1042 个周期 ghost，
+模型实际跑在 1170 个节点上，造成 4.87× 开销。单卡多 rank 共享同一组 SM，
+不会增加算力；真正的 scaling 需要一 rank 一卡。
+
 This module explains the multi-rank design, the exactness condition, and the
 measured one-GPU behaviour. It also records the 1042-ghost diagnosis that
 dominates the current H1 overhead.

@@ -1,5 +1,11 @@
 # Results — MPI H1 Status and Diagnosis (2026-10-19)
 
+**中文摘要：** H1 2-rank 数值精确（dE 2.9e-11 eV、max dF 1.4e-15 eV/Å），
+但同构建下比 1-rank 慢 8.7×；拆开看，H1 2-rank/H1 1-rank 只有 1.79×
+（优于上游线性 MACE 的 3.38×），主要缺陷是 1-rank H1 造出 1042 个周期 ghost
+（1170 节点 vs 128，4.87×）。第一版修复 gate 失败（dE 756.6 eV），正在返工；
+在重新通过 parity 前不报新的 MPI 速度。
+
 This module records the MPI state **as measured**, including a failed fix
 attempt. It is deliberately separate from the accepted single-rank results.
 No MPI speedup is claimed on one GPU.

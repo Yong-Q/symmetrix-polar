@@ -1,5 +1,10 @@
 # Module 3 — Performance Model and Occupancy
 
+**中文摘要：** “GPU busy”只说明有 kernel 在跑，“SM 覆盖”才说明用了多少
+计算单元；两者必须分开报。Amdahl 解释为什么单个 kernel 快 12×、整模型只快
+1.5×。所有 occupancy 数字都是静态估计（本容器没有 ncu 硬件计数器权限），
+不能当成实测 achieved occupancy。
+
 This module defines exactly what “speedup”, “GPU busy”, and “SM coverage” mean
 in this project. It is the shared vocabulary for every result table.
 

@@ -1,5 +1,10 @@
 # Module 1 — Energy Model (PolarMACE)
 
+**中文摘要：** PolarMACE 的总能量 = 短程 MACE 消息传递 + 学习型 GTO 电荷
+密度的倒空间 Ewald 长程项；长程层是 SCF 不动点，力和反向都要对整条链求伴随。
+RBE 是可行的随机估计量，但力误差比 1e-4 eV/Å 的硬门大 100–400 倍，因此不用于
+生产。
+
 This module defines the energy that every kernel is computing. It is the
 contract behind the numerical gates: if a kernel change alters any term below,
 it is not a valid optimization.
