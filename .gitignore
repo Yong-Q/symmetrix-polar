@@ -1,0 +1,4 @@
+# Large, reproducible run artifacts stay in the workspace, not in git.
+bench/
+__pycache__/
+*.pyc

@@ -12,6 +12,17 @@ MD = DOC / "COMPARISON_REPORT_2026-10-19.md"
 OUT = DOC / "COMPARISON_REPORT_2026-10-19.pdf"
 
 text = MD.read_text()
+# The built-in Helvetica font is Latin-1 only. Normalize common Unicode
+# punctuation and drop anything outside Latin-1 so a single curly quote or
+# Chinese character cannot abort the whole PDF render.
+for _src, _dst in {
+    "\u201c": '"', "\u201d": '"', "\u2018": "'", "\u2019": "'",
+    "\u2013": "-", "\u2014": "-", "\u2026": "...",
+    "\u2192": "->", "\u2264": "<=", "\u2265": ">=",
+    "\u00d7": "x", "\u00b1": "+/-", "\u03c1": "rho",
+    "\u03a3": "Sigma", "\u03c3": "sigma", "\u03bc": "mu",
+}.items():
+    text = text.replace(_src, _dst)
 # Resolve relative image paths to absolute paths for the HTML->PDF renderer.
 text = re.sub(r"\]\((figures/[^)]+)\)", lambda m: f"]({DOC / m.group(1)})", text)
 text = re.sub(r"\]\((\.\./results/[^)]+)\)", lambda m: f"]({PROJ / m.group(1)[3:]})", text)
@@ -97,6 +108,8 @@ pdf.multi_cell(0, 6,
 # Report body.
 pdf.add_page()
 pdf.set_text_color(36, 41, 47)
+# Last-resort Latin-1 guard: the built-in font cannot encode arbitrary Unicode.
+html = html.encode("latin-1", "replace").decode("latin-1")
 pdf.write_html(html)
 
 # Figure appendix, so the key figures are guaranteed to appear even if the
@@ -139,7 +152,31 @@ figs = [
     (DOC / "figures" / "11_kernel_polar_delta.png",
      "Kernel cost added by the polar blocks relative to the backbone."),
     (DOC / "figures" / "12_kernel_round_speed.png",
-     "Final kernel round: same-model before/after at 128 and 432 atoms."),
+     "Kernel round 1: same-model before/after at 128 and 432 atoms."),
+    (DOC / "figures" / "13_kernel_round2_speed.png",
+     "Kernel round 2: 122.46 -> 56.50 ms/eval, polar-off 40.58 -> 27.66 ms."),
+    (DOC / "figures" / "14_kernel_round2_waterfall.png",
+     "Where the 65.96 ms went in round 2, including the stale-object activation."),
+    (DOC / "figures" / "15_kernel_round2_families.png",
+     "Kernel-family before/after: polar 73.9 -> 20.9 ms, backbone 19.4 -> 6.4 ms."),
+    (DOC / "figures" / "16_kernel_round2_coverage.png",
+     "Remaining top kernels after round 2; red marks SM coverage below 50%."),
+    (DOC / "figures" / "17_mpi_h1_diagnosis.png",
+     "MPI H1 diagnosis: 1042 periodic ghosts make H1 1-rank 4.87x the production path."),
+    (DOC / "figures" / "18_mpi_h1_schematic.png",
+     "H1 forward feature exchange and reverse adjoint exchange between two ranks."),
+    (DOC / "figures" / "eq_ewald.png",
+     "Formula: GTO-Ewald reciprocal-space long-range energy."),
+    (DOC / "figures" / "eq_scf.png",
+     "Formula: self-consistent charge/spin density fixed point."),
+    (DOC / "figures" / "eq_tensor.png",
+     "Formula: e3nn tensor product with Clebsch-Gordan coefficients."),
+    (DOC / "figures" / "eq_occupancy.png",
+     "Formula: static SM coverage and SM-weighted busy time."),
+    (DOC / "figures" / "eq_amdahl.png",
+     "Formula: Amdahl speedup and the ceiling for a partially optimized kernel."),
+    (DOC / "figures" / "eq_comm.png",
+     "Formula: H1 communication volume and the multi-rank wall-time model."),
 ]
 from PIL import Image
 

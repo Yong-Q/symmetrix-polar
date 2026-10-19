@@ -26,7 +26,8 @@ GPU speed in LAMMPS-class workflows, without retraining a universal potential.
 | P3 ⑧ | Forces (full-chain reverse mode) | **PASS (v27)**: 12/12 configs — FD self-consistency ≤5.8e-4 (gate 1e-3), force parity vs PyTorch ≤7.2e-7 (gate 1e-3; pre-⑧ baseline mean/max 1.24/4.15), ΣF ≈ 1e-14 (exact translation invariance). Root cause of the final gap: missing *project-phase adjoint* in the descriptor reverse (design §2 ⑧-3 (d3), second line) — located via checkpoint audit (`harness/polar_rev_stage_audit.py`), fixed in `descriptor_reverse_channel` (iii-b) |
 | P4 | Random Batch Ewald k-space | **PASS (v28)**: RBE sampling (per-axis rounded-Gaussian + MH per lammps-rbe, counter-based SplitMix64 RNG, seed in JSON, exact discrete Z_q, full-space estimator with importance weights); p-scan RMS_F 4.1e-2 → 1.0e-2 eV/Å @ p=50→800, slope **−0.499** (≈ −1/√p), unbiased, same-seed bitwise-reproducible; see `harness/polar_rbe_gate.py` |
 | P5 | LAMMPS pair wiring + performance | **PASS (v29/v30, 2026-10-19)**: `pair_style symmetrix/mace/kk` dispatches `MACE_Nonlinear`/PolarMACE, maps types, passes cell/node positions, and adds polar node forces + virial. Single-point parity: **dE 2.9e-11 eV**, **max dF 2.6e-14 eV/Å**; 50-step NVT MD: no lost atoms, Etot span **0.21 eV**. Single-rank performance: **184 ms/eval** at 128 atoms (37.8× v28), **1008 ms** at 1024 atoms (7.7× v28). **MPI 2-rank exact PASS** (dE 2.9e-11 eV, max dF 1.7e-6 eV/Å; 20-step NVT PASS), but no speedup on one shared A100. See `docs/REPORT_2026-10-19.md` |
-| Kernel round | Nonlinear/polar kernel optimization | **PASS (2026-10-19)**: full model **122.2 ms** at 128 atoms (**1.50×** vs v29) and **293.3 ms/step** at 432 atoms (**1.63×**); polar-off **40.7 ms** (**2.14×**) and **47.7 ms** (**4.03×**). e3nn scalar, packed GEMM, fused gate-reverse and polar dense-reverse changes are bitwise or gate-identical; module 5–8, 32/32 end-to-end and LAMMPS 1/2-rank parity all PASS on a single clean build. **MPI H1 2-rank PASS** (dE 2.9e-11 eV, max dF 1.4e-15 eV/Å; 3.22× faster than exact 2-hop) |
+| Kernel round 1 | e3nn linear + polar dense reverse | **PASS (2026-10-19)**: full model **122.2 ms** at 128 atoms (**1.50×** vs v29) and **293.3 ms/step** at 432 atoms (**1.63×**); polar-off **40.7 ms** (**2.14×**) and **47.7 ms** (**4.03×**). e3nn scalar, packed GEMM, fused gate-reverse and polar dense-reverse changes are bitwise or gate-identical; module 5–8, 32/32 end-to-end and LAMMPS 1/2-rank parity all PASS on a single clean build. **MPI H1 2-rank PASS** (dE 2.9e-11 eV, max dF 1.4e-15 eV/Å) on the pre-fix binary; see the MPI status below |
+| Kernel round 2 | UVU / project kernels + stale-object activation | **PASS (2026-10-19)**: full model **56.5 ms** at 128 atoms (**3.25×** vs v29, **2.17×** vs round 1); polar-off **27.7 ms** (1.47× vs round 1); 432 atoms **126.6 ms/step** (2.33× vs round 1). Every kernel edit is bitwise-neutral on the 128-atom PE and all 128×3 force components; module 5–8, 32/32 end-to-end and LAMMPS 1-rank parity PASS on the final build. The accepted binary was found to be linked from stale objects; see `docs/results/KERNEL_ROUND2.md` |
 
 Every stage is accepted against **dual-source fixture gates** (frozen Python
 reference dumps + live recomputation through the same PyTorch model), including
@@ -43,55 +44,87 @@ figures, and page numbers, and as an
 Reading guide: [docs/阅读说明.md](docs/阅读说明.md) · figures:
 [docs/figures/](docs/figures/) · reproducible data and scripts:
 [docs/examples/](docs/examples/) · kernel-level profile:
-[docs/design/KERNEL_PROFILE_2026-10-19.md](docs/design/KERNEL_PROFILE_2026-10-19.md).
+[docs/design/KERNEL_PROFILE_2026-10-19.md](docs/design/KERNEL_PROFILE_2026-10-19.md) ·
+**theory, performance model, and test methodology**:
+[docs/THEORY_AND_METHODS.md](docs/THEORY_AND_METHODS.md) (modular formulas,
+gate catalog, and reproduction protocol).
 
 ## Performance (A100-80GB, f64, energy + forces)
 
-| Configuration | v28 | v29 | Final kernel round | Speedup vs v29 |
-|---|---|---|---|---|
-| NH3×32, 128 atoms, full PolarMACE | 6951.7 ms | 183.8 ms | **122.2 ms** | **1.50×** |
-| NH3×32, 128 atoms, polar-off | — | 87.2 ms | **40.7 ms** | **2.14×** |
-| N2×216, 432 atoms, full PolarMACE | — | 477.8 ms/step | **293.3 ms/step** | **1.63×** |
-| N2×216, 432 atoms, polar-off | — | 191.9 ms/eval | **47.7 ms** | **4.03×** |
-| NH3×32, 128 atoms, RBE p=200 | 6962.9 ms | 186.3 ms | — | — |
-| NH3×32×2×2×2, 1024 atoms | 7795.6 ms | 1007.7 ms | — | — |
+| Configuration | v28 | v29 | Round 1 | Round 2 | Speedup vs v29 |
+|---|---|---|---:|---:|---:|
+| NH3×32, 128 atoms, full PolarMACE | 6951.7 ms | 183.8 ms | 122.2 ms | **56.5 ms** | **3.25×** |
+| NH3×32, 128 atoms, polar-off | — | 87.2 ms | 40.7 ms | **27.7 ms** | 3.15× |
+| N2×216, 432 atoms, full PolarMACE | — | 477.8 ms/step | 293.3 ms/step | **126.6 ms/step** | 3.77× |
+| N2×216, 432 atoms, polar-off | — | 191.9 ms/eval | 47.7 ms | — (not re-measured) | — |
+| NH3×32, 128 atoms, RBE p=200 | 6962.9 ms | 186.3 ms | — | — | — |
+| NH3×32×2×2×2, 1024 atoms | 7795.6 ms | 1007.7 ms | — | — | — |
 
-The 128-atom PyTorch `mace_polar` reference is 94.0 ms/eval, so the full-model
-gap narrows from 1.95× to **1.30×**. All required gates (module 5–8, 32/32
-end-to-end, LAMMPS 1/2-rank parity) pass unchanged on the final clean build.
+The 128-atom PyTorch `mace_polar` reference is 94.0 ms/eval. After round 1 the
+engine was 1.30× slower; after round 2 it is **1.66× faster** than the PyTorch
+reference. All required gates (module 5–8, 32/32 end-to-end, LAMMPS parity)
+pass on the final build; the stale-object finding and the exact per-kernel
+table are in [docs/results/KERNEL_ROUND2.md](docs/results/KERNEL_ROUND2.md).
 
-![Final kernel-round speed](docs/figures/12_kernel_round_speed.png)
+![Kernel round-2 speed](docs/figures/13_kernel_round2_speed.png)
 
-Root causes found by stage profiling (`MATOS_POLAR_PROFILE=1`):
+Root causes found by stage profiling (`MATOS_POLAR_PROFILE=1`) and A/B:
 
-1. **UVU tensor products were per-node serial**: the forward, reverse, and SCF
-   replay kernels each used one GPU thread per node with an internal 512×512
-   loop. Rewritten as `(node, u)` 2-D kernels (four sites: forward SCF, forward
-   local-electron, reverse, replay), removing atomics in the reverse path.
-2. **Python launch-tuning probe on non-JIT models**: `_apply_kernel_launch_tuning`
-   queried the full device environment before checking whether a tunable JIT
-   implementation existed, costing ~0.7 s/eval for materialized models. The
-   implementation-identity check now runs first.
+1. **Stale objects in the accepted binary**: `polar reverse dense` still ran
+   the old 1-D 26 ms kernel and the reverse gate normalization ran unfused
+   (13 ms), although the source already contained the 2-D and fused paths.
+   A forced rebuild saved ~39 ms/eval. This is why every round now records the
+   source state, the trace kernel names, and the final binary hash.
+2. **UVU tensor products were per-node serial**: forward, reverse, replay, and
+   local-electron used one GPU thread per node with an internal loop. They are
+   now 2-D/TeamPolicy kernels with a shared-memory weight tile; the x1/x2
+   reverse pair uses the same operands.
+3. **Project kernels were 1×1×1 / 2×1×1**: `polar project features`,
+   `scf project features`, and `rev replay project` now use an MDRange over
+   `(node, j)`; 5.0 ms saved.
+4. **Python launch-tuning probe on non-JIT models**: the implementation check
+   now runs before the device-environment probe, removing ~0.7 s/eval for
+   materialized models.
 
-All numerical gates are unchanged after the optimization (module ⑤–⑧ PASS;
-end-to-end 32/32 with energy rel ≤4.2e-12 and forces ≤1.6e-7 eV/Å; RBE gate
-still slope −0.499 and bitwise seed-reproducible).
+All numerical gates are unchanged after round 2 (module ⑤–⑧ PASS; end-to-end
+32/32 with energy rel ≤1.1e-11 and forces ≤1.6e-7 eV/Å; LAMMPS parity
+dE 2.9e-11 eV, dF 2.6e-14 eV/Å). RBE is still rejected by the force gate.
 
 ![v28 vs v29 performance](results/polar_perf_v28_vs_v29.png)
 
-### MPI status (v30)
+### MPI status (H1 diagnosis, 2026-10-19)
 
 Multi-rank support is functionally complete for two ranks: the engine uses an
 optional `MPI_Allreduce` callback for every global polar quantity, and the pair
-style runs a local+ghost graph with `no_mpi_message_passing`. Exact 2-rank
-single-point parity passes (dE 2.9e-11 eV, max dF 1.7e-6 eV/Å) and a 20-step
-NVT run is stable. It is **not yet a speedup on one GPU**: the 2-hop ghost graph
-in a 14.7 Å box has ~20× more edges than the 1-rank graph, and both ranks share
-the same A100. A one-hop fast mode is 2.9× faster than exact 2-rank but fails
-the force gate (max dF 4.1e-3 eV/Å). True scaling needs local-graph message
-passing with per-layer feature exchange and multiple GPUs.
+style runs a local+ghost graph. Exact 2-rank single-point parity passes
+(dE 2.9e-11 eV, max dF 1.7e-6 eV/Å) and a 20-step NVT run is stable. It is
+**not a speedup on one GPU**, and the H1 path has a concrete, measured defect:
 
-![MPI status](results/polar_mpi_status.png)
+- **H1 1-rank diagnostic:** 128 local atoms but **1042 periodic ghosts**
+  (`Nghost: 1042`), i.e. the model runs on 1170 nodes instead of 128 (9.14×).
+  Cause: the H1 mode extends the LAMMPS comm cutoff to `r_cut + skin = 8 Å`,
+  which exceeds the 14.7 Å box half-length (7.37 Å), creating periodic images
+  even without MPI. Observed H1 1-rank: **894.6 ms** vs 183.6 ms production
+  (4.87×).
+- **H1 2-rank:** 1600.5 ms vs exact 2-hop 5155.5 ms (3.22× faster) but 8.7×
+  slower than the same-build production 1-rank. Relative to our own H1 1-rank,
+  the 2-rank scaling is **1.79×**, better than the upstream linear MACE's
+  **3.38×**; the headline is dominated by the 1-rank H1 baseline, not the
+  exchange.
+- **Fix status:** the first attempt (skip cutoff/ghost graph on 1 rank +
+  device-side staging) **failed the gate** (dE 756.6 eV, 2-rank abort) and is
+  not accepted. The rework is in progress; no MPI speed number is claimed until
+  the H1 2-rank parity gate passes again.
+- **One GPU is a hardware floor:** both ranks share the same 108 SMs. The
+  upstream linear MACE is also 3.38× slower at 2 ranks on one A100. True scaling
+  needs one rank per GPU (queue3 2/4-GPU), with 432/1024-atom systems where the
+  ghost ratio is smaller.
+
+Details, formulas, and the failed-attempt table:
+[docs/results/MPI_H1.md](docs/results/MPI_H1.md) and
+[docs/theory/MPI_H1.md](docs/theory/MPI_H1.md).
+
+![H1 diagnosis](docs/figures/17_mpi_h1_diagnosis.png)
 
 ### Engine comparison (v30, same 128-atom box, one A100)
 

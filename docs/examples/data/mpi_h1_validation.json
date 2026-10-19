@@ -1,0 +1,69 @@
+{
+  "task": "PolarMACE H1 multi-rank message-passing validation",
+  "system": {
+    "molecule": "NH3",
+    "molecules": 32,
+    "atoms": 128,
+    "box_A": 14.736125994561544,
+    "model": "/workspace/group/shared/bza/task3_sampling_database/mlip/models/mace-polar/polar_symmetrix_probe.json"
+  },
+  "binary": {
+    "path": "h1_validation/lmp_h1_final",
+    "sha256_prefix": "fcffa922c2471e81fe42ae86",
+    "build_log": "build-lammps-aacd036df381800a/build-pairstyle-final.log",
+    "note": "pair-style-only relink against the pre-optimization engine objects; engine sources were being edited concurrently by another agent"
+  },
+  "gate": {
+    "energy_abs_tol_eV": 5e-05,
+    "force_max_tol_eV_per_A": 1e-4,
+    "reference_energy_eV": -49242.456415314926
+  },
+  "results": {
+    "h1_1rank_run0": {
+      "dE_eV": 2.9103830456733704e-11,
+      "max_dF_eV_per_A": 1.0041842978268712e-14,
+      "mean_dF_eV_per_A": 3.912710661497339e-16,
+      "pass": true
+    },
+    "h1_2rank_run0": {
+      "dE_eV": 2.9103830456733704e-11,
+      "max_dF_eV_per_A": 1.4130832128153975e-15,
+      "mean_dF_eV_per_A": 4.2525342382652205e-16,
+      "pass": true
+    },
+    "exact_1rank_run0_regression": {
+      "dE_eV": 2.9103830456733704e-11,
+      "max_dF_eV_per_A": 1.0091432627896547e-14,
+      "pass": true
+    },
+    "exact_2rank_run0_control": {
+      "dE_eV": 2.9103830456733704e-11,
+      "max_dF_eV_per_A": 1.6874754352676705e-06,
+      "pass": true
+    },
+    "nvt_2rank_20steps": {
+      "atoms_final": 128,
+      "lost_atoms": false,
+      "loop_time_s": 77.0035,
+      "ms_per_step": 3850.2,
+      "final_vs_1rank_max_pos_drift_A": 9.769962616701378e-15,
+      "final_vs_1rank_max_dF_eV_per_A": 4.7493472220968946e-14
+    }
+  },
+  "timing_run1": {
+    "h1_2rank_ms": [1600.53, 1601.25],
+    "h1_1rank_ms": [894.617, 990.608],
+    "exact_2hop_2rank_ms": 5155.49,
+    "exact_2hop_2rank_recorded_ms": 5167.05,
+    "optimized_1rank_recorded_ms": 183.593,
+    "speedup_h1_2rank_vs_exact_2hop": 3.22
+  },
+  "bugs_fixed": [
+    "pair graph used ghost receivers instead of ghost sources; local receivers now see every neighbour within r_cut (pair_symmetrix_mace_kokkos.cpp:2609,2652)",
+    "ghost source forces were discarded; now accumulated into ghost rows and delivered by LAMMPS newton reverse_comm (pair_symmetrix_mace_kokkos.cpp:2733)",
+    "Kokkos pack/unpack functions had no polar branch; CommKokkos dispatches device pairs there, and the linear-MACE path dereferenced a null mace (pair_symmetrix_mace_kokkos.cpp:922,1016,1111,1219)",
+    "explicit H1 mode was overwritten to no_domain_decomposition on 1 rank (pair_symmetrix_mace_kokkos.cpp:464)",
+    "comm_forward/comm_reverse were reset to zero after the H1 setup (pair_symmetrix_mace_kokkos.cpp:540)",
+    "ghost readout/polar adjoint seeds were reverse-communicated and double counted; added an owned-node seed mask (mace_nonlinear_kokkos_impl.tpp:5678, mace_nonlinear_kokkos.hpp:360)"
+  ]
+}

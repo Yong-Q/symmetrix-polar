@@ -1,0 +1,212 @@
+{
+ "protocol": {
+  "system": "128-atom NH3 (nh3_128.data), full PolarMACE probe model",
+  "warmup": 1,
+  "measured": 12,
+  "rounds": 2,
+  "interleaved": true,
+  "statistic": "median of per-run medians of LAMMPS Loop time (ms/eval)",
+  "python_module": "/workspace/group/shared/bza/symmetrix-polar/bench/kernel_round2_2026-10-19/pyfinal_r2",
+  "baseline_lmp": "lmp_baseline sha 7e9c6beca113722205954e8dceb3a394b75a6e3997d4408df4d57402de340a09"
+ },
+ "speed": {
+  "baseline_ms": 122.46225000000001,
+  "final_ms": 56.5009,
+  "speedup": 2.1674389257516253,
+  "saved_ms": 65.96135000000001,
+  "baseline_round_medians_ms": [
+   123.20150000000001,
+   121.723
+  ],
+  "final_round_medians_ms": [
+   56.1005,
+   56.9013
+  ],
+  "polaroff_before_ms": 40.576825,
+  "polaroff_after_ms": 27.664675,
+  "polaroff_speedup": 1.4667378163669011,
+  "n2_432_before_ms_per_step": 294.393,
+  "n2_432_after_ms_per_step": 126.59400000000001,
+  "n2_432_speedup": 2.325489359685293,
+  "n2_432_note": "first 10-step loop (same metric as the prior 293.34 ms/step report); the second loop is pathologically slower in both binaries"
+ },
+ "kernel_totals_ms_per_eval": {
+  "baseline_gpu_busy": 116.6644,
+  "final_gpu_busy": 49.971812,
+  "baseline_eval_window": 142.814887,
+  "final_eval_window": 74.97186
+ },
+ "kernels_ms_per_eval": {
+  "polar reverse dense": {
+   "before_ms": 26.003231,
+   "after_ms": 0.41475
+  },
+  "reverse nonlinear normalization": {
+   "before_ms": 13.034226,
+   "after_ms": 0.0
+  },
+  "polar reverse uvu mode0 x2": {
+   "before_ms": 10.898012,
+   "after_ms": 3.552045
+  },
+  "polar reverse uvu mode0 x1": {
+   "before_ms": 5.451933,
+   "after_ms": 3.206575
+  },
+  "polar uvu mode0": {
+   "before_ms": 5.763229,
+   "after_ms": 1.201369
+  },
+  "polar rev replay uvu mode0": {
+   "before_ms": 5.765851,
+   "after_ms": 1.20028
+  },
+  "polar le uvu mode0": {
+   "before_ms": 4.593412,
+   "after_ms": 0.908122
+  },
+  "polar scf project features": {
+   "before_ms": 2.393873,
+   "after_ms": 0.388734
+  },
+  "polar rev replay project": {
+   "before_ms": 2.382481,
+   "after_ms": 0.391839
+  },
+  "polar project features": {
+   "before_ms": 1.216601,
+   "after_ms": 0.208607
+  }
+ },
+ "families_ms_per_eval": {
+  "polar pipeline": {
+   "before": 73.88459900000002,
+   "after": 20.86660299999999
+  },
+  "backbone nonlinear": {
+   "before": 19.371179,
+   "after": 6.3840910000000015
+  },
+  "tensor product": {
+   "before": 11.086395000000001,
+   "after": 10.813734
+  },
+  "MLP/dense": {
+   "before": 3.955908,
+   "after": 3.784297
+  },
+  "cuBLAS/external": {
+   "before": 3.843755,
+   "after": 3.803786
+  },
+  "e3nn linear": {
+   "before": 2.889134,
+   "after": 2.67774
+  },
+  "other": {
+   "before": 1.593911,
+   "after": 1.6022
+  },
+  "Kokkos init/fill": {
+   "before": 0.028575,
+   "after": 0.028545
+  },
+  "radial/spline": {
+   "before": 0.010944,
+   "after": 0.010816
+  }
+ },
+ "stage_totals": {
+  "polar_pipeline_before": 73.88459900000002,
+  "polar_pipeline_after": 20.86660299999999,
+  "backbone_nonlinear_before": 19.371179,
+  "backbone_nonlinear_after": 6.3840910000000015
+ },
+ "bitwise_checks": {
+  "r2_vs_r3_project": {
+   "pe_identical": true,
+   "max_dF": 0.0
+  },
+  "r3_vs_r4_reverse_uvu": {
+   "pe_identical": true,
+   "max_dF": 0.0
+  },
+  "r4_vs_r5_forward_uvu": {
+   "pe_identical": true,
+   "max_dF": 0.0
+  },
+  "rn_fallback_2d_vs_scalar": {
+   "pe_identical": true,
+   "max_dF": 0.0
+  },
+  "note": "LAMMPS PE and all 128 atom force components compared; all exactly equal."
+ },
+ "gates": {
+  "module5": {
+   "verdict": "PASS",
+   "dens_abs_max": 6.689189646635896e-08,
+   "dens_rel_max": 4.217663435751021e-08,
+   "stage_rel_max": 7.126771337447904e-08,
+   "tol": {
+    "dens_abs": 5e-06,
+    "dens_rel": 1e-06
+   }
+  },
+  "module6": {
+   "verdict": "PASS",
+   "dE_abs_max_eV": 5.551115123125783e-16,
+   "dE_rel_max": 1.094887224235258e-15,
+   "tol": {
+    "rel": 1e-06,
+    "abs_eV": 5e-06
+   }
+  },
+  "module7": {
+   "verdict": "PASS",
+   "stage_rel_max": 1.1743238576715452e-07,
+   "out_abs_max": 4.5460139364017493e-07,
+   "tol": {
+    "stage_rel": 1e-06,
+    "out_abs": 1e-06
+   }
+  },
+  "module8": {
+   "verdict": "PASS",
+   "fd_max": 0.0005782702483827507,
+   "parity_max": 7.190934283585193e-07,
+   "tol": {
+    "fd": 0.001,
+    "parity": 0.001
+   }
+  },
+  "endtoend": {
+   "verdict": "PASS",
+   "frames_pass": "32/32",
+   "dE_rel_max": 1.0843925820053824e-11,
+   "dE_abs_max_eV": 1.034321030601859e-06,
+   "dF_max": 1.623653904658795e-07,
+   "tol": {
+    "e_rel": 1e-06,
+    "e_abs_eV": 5e-06,
+    "force": 0.0001
+   }
+  },
+  "lammps_parity": {
+   "verdict": "PASS",
+   "dE_abs_eV": 2.9103830456733704e-11,
+   "max_dF": 2.5789817879994463e-14,
+   "tol": {
+    "dE_abs_eV": 5e-05,
+    "max_dF": 0.0001
+   }
+  },
+  "teardown_note": "All gate processes exit 134 after writing PASS JSON due to a pre-existing cudaErrorCudartUnloading at interpreter shutdown (same in the e3lin round logs)."
+ },
+ "binary": {
+  "shared_lmp_at_check": "820953cd983cd0ecd6107942bcbec0b39837ffa0a44bbac0cddd69dc3b59355c",
+  "own_snapshot_lmp_r5": "54d8fe3978aa07f559224cea048489b1e433981804c45566a52a94bc1baef855",
+  "pyfinal_r2_so": "cb7098a08cfbe17fed31c17246b66669a67c80cd2fc97e607159b1a8ab4381b5",
+  "shared_lmp_measured_ms": 57.14,
+  "note": "The shared lmp was relinked twice by the concurrently running MPI agent (2c0634 -> 820953); every relink compiled the same kernel sources and measured 55.97-57.14 ms/eval. The hash may change again if the MPI agent rebuilds."
+ }
+}

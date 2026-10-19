@@ -17,8 +17,10 @@ was modified while preparing this document.
 | Item | Result |
 |---|---|
 | Single-rank v29 speed, 128 atoms, deterministic | **183.78 ms/eval** (v28: 6966.79 ms, **37.91x**) |
-| **Final kernel round, 128 atoms, full model** | **122.21 ms/eval** (**1.50x** vs v29; polar-off **40.71 ms**, **2.14x**) |
-| **Final kernel round, 432 atoms, full model** | **293.34 ms/step** (**1.63x** vs 477.83; polar-off **47.65 ms**) |
+| Kernel round 1, 128 atoms, full model | **122.21 ms/eval** (**1.50x** vs v29; polar-off **40.71 ms**, **2.14x**) |
+| Kernel round 1, 432 atoms, full model | **293.34 ms/step** (**1.63x** vs 477.83; polar-off **47.65 ms**) |
+| **Kernel round 2, 128 atoms, full model** | **56.50 ms/eval** (**2.17x** vs round 1, **3.25x** vs v29; polar-off **27.66 ms**, **1.47x** vs round 1) |
+| **Kernel round 2, 432 atoms, full model** | **126.59 ms/step** (**2.33x** vs round 1) |
 | Single-rank v29 speed, 1024 atoms, deterministic | **1007.72 ms/eval** (v28: 7795.59 ms, **7.74x**) |
 | Same-model ablation, 128 atoms (v29) | backbone-only **87.24 ms** -> full PolarMACE **183.50 ms**; polar layer adds **96.26 ms (2.10x)** |
 | Accuracy gates, modules 5-8 (final build) | all **PASS** |
@@ -27,13 +29,19 @@ was modified while preparing this document.
 | LAMMPS NVT MD, 50 steps | **PASS**, no lost atoms, Etot span 0.21295 eV |
 | RBE production use | **rejected by the force gate** (RMS_F 4.10e-2 to 1.03e-2 eV/A; 33 A p=800 is 1.23e-2, all >> 1e-4 eV/A) |
 | 1-hop MPI mode | **rejected by the force/energy gates** (max dF 4.116e-3 eV/A, dE 7.94e-5 eV) |
-| MPI H1 exact 2 rank | **PASS** (dE 2.91e-11 eV, max dF 1.41e-15 eV/A); 3.22x faster than exact 2-hop, 8.7x slower than 1 rank on one shared GPU |
+| MPI H1 exact 2 rank | **PASS on the pre-fix binary** (dE 2.91e-11 eV, max dF 1.41e-15 eV/A); 3.22x faster than exact 2-hop, 8.7x slower than the same-build 1 rank. Diagnosis: the H1 **1-rank** path creates 1042 periodic ghosts (1170 nodes vs 128, 4.87x overhead); H1 2-rank/H1 1-rank is 1.79x (better than upstream linear MACE's 3.38x). The first fix attempt failed the gate; see Section 5.8 |
 | MH-1/direct/JIT fast path | **architecturally blocked**; the upstream linear engine cannot load `MACE_Nonlinear` |
-| PyTorch MACE-Polar reference speed | **94.0 ms/eval** median vs final engine **122.2 ms** -> engine **1.30x slower** (was 1.95x) for the full model |
+| PyTorch MACE-Polar reference speed | **94.0 ms/eval** median vs round-2 engine **56.5 ms** -> engine **1.66x faster** (round 1: 1.30x slower; v29: 1.95x slower) for the full model |
 
 The v29 optimization removed two concrete bottlenecks: per-node-serial UVU tensor
 products and a ~0.7 s/eval device-environment probe on non-JIT models. All numerical
 gates are unchanged after the optimization.
+
+**Formulas, performance definitions, and the complete test catalog:**
+[THEORY_AND_METHODS.md](THEORY_AND_METHODS.md). In particular, the occupancy
+definition behind every “SM coverage” number, the Amdahl calculation behind the
+1.5x-vs-12x distinction, and the per-gate input/tolerance/command tables are
+there rather than repeated in this report.
 
 ---
 
@@ -575,7 +583,7 @@ marker is present). An independent rerun on the immediately preceding build
 reproduced the same verdicts, so the result is not sensitive to the last
 e3nn backend switch.
 
-| Configuration | v29 baseline | Final kernel round | Speedup |
+| Configuration | v29 baseline | Kernel round 1 | Speedup |
 |---|---:|---:|---:|
 | NH3 128 atoms, full PolarMACE | 183.50 ms/eval | **122.21 ms** | **1.50x** |
 | NH3 128 atoms, polar-off | 87.24 ms/eval | **40.71 ms** | **2.14x** |
@@ -584,21 +592,111 @@ e3nn backend switch.
 
 ![Final kernel-round speed: v29 baseline vs optimized](figures/12_kernel_round_speed.png)
 
-The 128-atom PyTorch `mace_polar` reference is 94.0 ms/eval, so the engine gap
-narrows from **1.95x slower** to **1.30x slower** for the full model. The
-432-atom warm-block numbers were contaminated by an external GPU tenant
-(1216 ms/step versus 293 ms for the first block); only the first-block value is
-reported. Remaining bottlenecks: polar replay (~59 ms), SCF/LE/embedding
-reverse, and the e3nn reverse path.
+The 128-atom PyTorch `mace_polar` reference is 94.0 ms/eval: after round 1 the
+engine was **1.30x slower**, and after round 2 (Section 5.6) it is **1.66x
+faster**. The 432-atom warm-block numbers were contaminated by an external GPU
+tenant (1216 ms/step versus 293 ms for the first block); only the first-block
+value is reported. Round-1 remaining bottlenecks were polar replay,
+SCF/LE/embedding reverse, and the e3nn reverse path; round 2 addresses them and
+re-ranks the remainder.
 
-### 5.6 Still pending
+### 5.6 Kernel round 2 (accepted, 2026-10-19)
+
+Round 2 supersedes the round-1 numbers in Section 5.5. All gates pass on the
+final build; the per-kernel table, waterfall, and stale-binary evidence are in
+[`results/KERNEL_ROUND2.md`](results/KERNEL_ROUND2.md).
+
+| Configuration | Round 1 | Round 2 | Speedup |
+|---|---:|---:|---:|
+| NH3 128 atoms, full PolarMACE | 122.46 ms/eval | **56.50 ms/eval** | **2.17x** |
+| NH3 128 atoms, polar-off | 40.58 ms/eval | **27.66 ms/eval** | 1.47x |
+| N2 432 atoms, full PolarMACE | 294.39 ms/step | **126.59 ms/step** | 2.33x |
+| GPU busy (CUPTI, 128 atoms) | 116.66 ms | **49.97 ms** | 2.33x |
+
+![Round-2 speed](figures/13_kernel_round2_speed.png)
+
+![Round-2 waterfall](figures/14_kernel_round2_waterfall.png)
+
+**The most important finding is not a source change.** The accepted round-1
+binary `7e9c6bec...` had been linked from stale objects: it still executed the
+old 1-D `polar reverse dense` (26.00 ms/eval) and the unfused reverse gate
+normalization (13.03 ms/eval), although the source already contained the 2-D
+and fused paths. A forced rebuild activated them and saved ~39 ms/eval. Every
+round now records the source state, the CUPTI kernel names, and the final binary
+hash; a binary hash alone is not proof of the source state.
+
+The source changes in round 2:
+
+- reverse nonlinear normalization: 2-D MDRange + per-node deterministic
+  density fold (13.03 → 0.00 ms; fused path 0.17 ms);
+- three project kernels: MDRange over `(node, j)` (5.00 ms saved);
+- reverse UVU x1/x2: TeamPolicy + shared-memory weight tile (16.00 → 7.47 ms);
+- forward/replay/LE UVU: same smem tile (17.19 → 3.31 ms).
+
+Bitwise checks: r2→r3, r3→r4, r4→r5 all have identical PE and max |dF| 0.0 on
+the 128-atom model; the RN fallback is bitwise against the scalar path.
+
+Gates: module 5 (dens abs 6.689e-8), module 6 (dE rel 1.095e-15), module 7
+(stage rel 1.174e-7), module 8 (FD 5.783e-4, parity 7.191e-7), end-to-end
+32/32 (dE rel 1.084e-11, dF 1.624e-7 eV/A), LAMMPS 1-rank (dE 2.910e-11 eV,
+dF 2.579e-14 eV/A). Every gate process exits 134 after writing PASS due to a
+pre-existing CUDA teardown abort; acceptance requires the PASS marker and JSON.
+
+![Family before/after](figures/15_kernel_round2_families.png)
+
+**What remains:** tensor products 10.81 ms (already 100% SM-covered,
+compute-bound; next lever is FP64 tensor cores/DMMA), cuBLAS 3.80 ms (312
+launches, 14.8% coverage), UVU reverse 6.76 ms (39.5%), and narrow
+affine/convolution kernels 4.33 ms (3%). Replay is no longer a major target:
+the UVU rewrite reduced it from 5.77 to 1.20 ms, so eliminating replay now
+saves at most ~1.5 ms.
+
+### 5.7 MPI H1 diagnosis (not yet accepted)
+
+The H1 path is numerically exact on 2 ranks but has a measured 1-rank defect.
+No MPI speedup is claimed on one GPU.
+
+| Metric | Value |
+|---|---:|
+| H1 1-rank diagnostic | 894.6 / 990.6 ms |
+| Production 1-rank (pre-round-2) | 183.6 ms |
+| H1 1-rank / production | **4.87x** |
+| H1 2-rank (one A100) | 1600.5 ms |
+| H1 2-rank / H1 1-rank | **1.79x** |
+| Exact 2-hop 2-rank | 5155.5 ms |
+| Upstream linear MACE H1 1→2 rank | 13.586 → 45.878 ms (**3.38x**) |
+
+The H1 1-rank diagnostic reports `Nghost: 1042` for 128 local atoms: the model
+runs on 1170 nodes instead of 128 (9.14x). The H1 mode extends the comm cutoff
+to 8 A, above the 7.37 A half-box, so LAMMPS creates periodic ghost images even
+without MPI. The communication volume is only ~4.27 MB per exchange
+(1042 x 512 x 8 bytes), ~17 MB for four exchanges; the overhead is ghost
+**compute**, not bytes.
+
+The first fix (skip the cutoff extension + device-side staging) **failed the
+gate**: H1 1-rank dE 756.6 eV / max dF 2.79e4 eV/A, H1 2-rank rc=11, exact
+2-hop control OOM while the GPU was shared. It is not accepted. The rework must
+bypass the H1 callbacks on one rank (production local path) or use a comm cutoff
+below the half-box with the correct local graph, then pass the H1 2-rank parity
+gate again.
+
+![H1 diagnosis](figures/17_mpi_h1_diagnosis.png)
+
+Details: [`results/MPI_H1.md`](results/MPI_H1.md) and
+[`theory/MPI_H1.md`](theory/MPI_H1.md).
+
+### 5.8 Still pending
 
 | Workstream | State |
 |---|---|
+| DMMA / batched GEMM for tensor products | proposed; needs layout and gate validation |
+| cuBLAS small-GEMM batching | proposed |
+| UVU reverse further widening / x1+x2 fusion | proposed |
+| narrow affine / convolution kernels (3% coverage) | proposed |
+| polar replay elimination | now low payoff (~1.5 ms); deprioritized |
+| MPI H1 1-rank fix + 2-rank parity re-gate | in progress; first attempt failed |
+| multi-GPU 2/4-rank scaling (432/1024 atoms) | waiting for queue3 capacity; 1-GPU remote probe queued on queue004 |
 | leoff timing | model exists; no timing JSON |
-| e3nn reverse packed/blocked path | in flight |
-| polar replay elimination (persist activations) | proposed; not implemented |
-| final clean rebuild + full gate suite + speed ablation | **complete** (Section 5.5) |
 
 ---
 
