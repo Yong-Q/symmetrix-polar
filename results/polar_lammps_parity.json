@@ -1,5 +1,9 @@
 {
  "gate": "P5-A",
+ "nproc": 1,
+ "run_steps": 0,
+ "loop_time_s": 0.000384701,
+ "ms_per_eval": null,
  "system": {
   "mol": "NH3",
   "nmol": 32,
@@ -20,9 +24,9 @@
   "pass": true
  },
  "forces": {
-  "max_dF": 2.6278817905683258e-14,
-  "mean_dF": 2.166806091938394e-15,
-  "max_engine_force": 1.7581057144722816,
+  "max_dF": 2.6319329767502234e-14,
+  "mean_dF": 2.1989013814256575e-15,
+  "max_engine_force": 1.7581057144722823,
   "tol_max": 0.0001,
   "pass": true
  },

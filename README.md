@@ -25,7 +25,7 @@ GPU speed in LAMMPS-class workflows, without retraining a universal potential.
 | **End-to-end** | Engine vs PyTorch PolarMACE (energy + forces) | **32/32 frames PASS: energy rel 4e-12–1.1e-11 (≤1.0e-6 eV); forces ≤1.6e-7 eV/Å** |
 | P3 ⑧ | Forces (full-chain reverse mode) | **PASS (v27)**: 12/12 configs — FD self-consistency ≤5.8e-4 (gate 1e-3), force parity vs PyTorch ≤7.2e-7 (gate 1e-3; pre-⑧ baseline mean/max 1.24/4.15), ΣF ≈ 1e-14 (exact translation invariance). Root cause of the final gap: missing *project-phase adjoint* in the descriptor reverse (design §2 ⑧-3 (d3), second line) — located via checkpoint audit (`harness/polar_rev_stage_audit.py`), fixed in `descriptor_reverse_channel` (iii-b) |
 | P4 | Random Batch Ewald k-space | **PASS (v28)**: RBE sampling (per-axis rounded-Gaussian + MH per lammps-rbe, counter-based SplitMix64 RNG, seed in JSON, exact discrete Z_q, full-space estimator with importance weights); p-scan RMS_F 4.1e-2 → 1.0e-2 eV/Å @ p=50→800, slope **−0.499** (≈ −1/√p), unbiased, same-seed bitwise-reproducible; see `harness/polar_rbe_gate.py` |
-| P5 | LAMMPS pair wiring + performance | **PASS (v29, 2026-10-19)**: `pair_style symmetrix/mace/kk` now dispatches `MACE_Nonlinear`/PolarMACE (materialized), maps LAMMPS types, passes cell/node positions, and adds polar node forces + virial. Single-point parity vs the engine: **dE 2.9e-11 eV**, **max dF 2.6e-14 eV/Å**; 50-step NVT MD: no lost atoms, Etot span **0.21 eV**, 494 ms/step. Performance: **184 ms/eval** at 128 atoms (37.8× v28) and **1008 ms** at 1024 atoms (7.7× v28). Multi-rank is rejected until a distributed long-range density is implemented. See `docs/REPORT_2026-10-19.md` |
+| P5 | LAMMPS pair wiring + performance | **PASS (v29/v30, 2026-10-19)**: `pair_style symmetrix/mace/kk` dispatches `MACE_Nonlinear`/PolarMACE, maps types, passes cell/node positions, and adds polar node forces + virial. Single-point parity: **dE 2.9e-11 eV**, **max dF 2.6e-14 eV/Å**; 50-step NVT MD: no lost atoms, Etot span **0.21 eV**. Single-rank performance: **184 ms/eval** at 128 atoms (37.8× v28), **1008 ms** at 1024 atoms (7.7× v28). **MPI 2-rank exact PASS** (dE 2.9e-11 eV, max dF 1.7e-6 eV/Å; 20-step NVT PASS), but no speedup on one shared A100. See `docs/REPORT_2026-10-19.md` |
 
 Every stage is accepted against **dual-source fixture gates** (frozen Python
 reference dumps + live recomputation through the same PyTorch model), including
@@ -55,6 +55,21 @@ end-to-end 32/32 with energy rel ≤4.2e-12 and forces ≤1.6e-7 eV/Å; RBE gate
 still slope −0.499 and bitwise seed-reproducible).
 
 ![v28 vs v29 performance](results/polar_perf_v28_vs_v29.png)
+
+### MPI status (v30)
+
+Multi-rank support is functionally complete for two ranks: the engine uses an
+optional `MPI_Allreduce` callback for every global polar quantity, and the pair
+style runs a local+ghost graph with `no_mpi_message_passing`. Exact 2-rank
+single-point parity passes (dE 2.9e-11 eV, max dF 1.7e-6 eV/Å) and a 20-step
+NVT run is stable. It is **not yet a speedup on one GPU**: the 2-hop ghost graph
+in a 14.7 Å box has ~20× more edges than the 1-rank graph, and both ranks share
+the same A100. A one-hop fast mode is 2.9× faster than exact 2-rank but fails
+the force gate (max dF 4.1e-3 eV/Å). True scaling needs local-graph message
+passing with per-layer feature exchange and multiple GPUs.
+
+![MPI status](results/polar_mpi_status.png)
+
 
 ## Repository layout
 

@@ -148,10 +148,10 @@ index 80169b3..9bbf03a 100644
          explicit Readout(const nlohmann::json& data);
          double evaluate(const std::vector<double>& features) const;
 diff --git a/libsymmetrix/source/mace_nonlinear_kokkos.hpp b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
-index ffcdc1c..1a79f31 100644
+index ffcdc1c..77c424b 100644
 --- a/libsymmetrix/source/mace_nonlinear_kokkos.hpp
 +++ b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
-@@ -2,12 +2,32 @@
+@@ -2,11 +2,33 @@
  
  #include <Kokkos_Core.hpp>
  
@@ -161,12 +161,14 @@ index ffcdc1c..1a79f31 100644
  #include <cstdint>
 +#include <cstdio>
 +#include <cstdlib>
++#include <functional>
  #include <limits>
  #include <memory>
 +#include <optional>
  #include <span>
  #include <type_traits>
- 
++#include <vector>
++
 +// Lightweight opt-in stage profiler (MATOS_POLAR_PROFILE=1).  Each call
 +// fences and prints the wall time elapsed since the previous mark.
 +inline void symmetrix_polar_profile_mark(const char *label) {
@@ -180,11 +182,59 @@ index ffcdc1c..1a79f31 100644
 +    std::fprintf(stderr, "[polar-profile] %-24s %10.3f ms\n", label, ms);
 +    last = now;
 +}
-+
+ 
  #include "affine_mlp_kokkos.hpp"
  #include "device_backend.hpp"
- #include "e3nn_kokkos.hpp"
-@@ -339,13 +359,220 @@ public:
+@@ -312,6 +334,20 @@ public:
+     void fence() const {
+         factorized_execution_space.fence("MACE_Nonlinear public fence");
+     }
++    // Optional MPI hooks.  The engine never links MPI directly: the pair style
++    // installs an in-place global-sum callback (MPI_Allreduce) and declares how
++    // many leading graph nodes are owned by this rank.  Serial users leave both
++    // unset, which preserves the original single-rank behavior.
++    using GlobalSumCallback = std::function<void(double*, std::size_t)>;
++    void set_global_sum_callback(GlobalSumCallback callback) {
++        global_sum_callback_=std::move(callback);
++    }
++    void set_polar_owned_nodes(const int owned_nodes) {
++        polar_owned_nodes_=owned_nodes;
++    }
++    void set_polar_global_rank(const int rank) {
++        polar_global_rank_=rank;
++    }
+     void set_e3_linear_backend(const std::string& backend);
+     std::string e3_linear_backend() const;
+     std::string selected_e3_linear_backend(std::size_t samples) const;
+@@ -336,16 +372,248 @@ public:
+     std::size_t node_workspace_bytes() const;
+     std::size_t precision_workspace_bytes() const;
+     std::vector<int> atomic_numbers_host;
++    GlobalSumCallback global_sum_callback_;
++    int polar_owned_nodes_=-1;
++    int polar_global_rank_=0;
++    int polar_owned_node_count(int num_nodes) const {
++        return (polar_owned_nodes_>=0&&polar_owned_nodes_<=num_nodes)
++            ?polar_owned_nodes_:num_nodes;
++    }
++    void polar_global_sum_host(double* values,std::size_t count) {
++        if(global_sum_callback_)global_sum_callback_(values,count);
++    }
++    template<class View>
++    void polar_global_sum_view(View view) {
++        if(!global_sum_callback_)return;
++        const std::size_t count=view.extent(0);
++        if(count==0)return;
++        std::vector<double> buffer(count);
++        auto host=Kokkos::create_mirror_view_and_copy(
++            Kokkos::HostSpace(),view);
++        for(std::size_t i=0;i<count;++i)
++            buffer[i]=static_cast<double>(host(i));
++        global_sum_callback_(buffer.data(),count);
++        for(std::size_t i=0;i<count;++i)
++            host(i)=static_cast<Precision>(buffer[i]);
++        Kokkos::deep_copy(view,host);
++    }
      Kokkos::View<int*> atomic_numbers;
      Kokkos::View<double*> atomic_energies,node_energies,node_forces,atom_forces,
          stress_tensor;
@@ -406,7 +456,7 @@ index ffcdc1c..1a79f31 100644
  
  private:
      struct SphericalHarmonicsState;
-@@ -430,17 +657,32 @@ private:
+@@ -430,17 +698,32 @@ private:
          Kokkos::View<const int*> neigh_types);
  public:
      struct Readout {
@@ -440,7 +490,7 @@ index ffcdc1c..1a79f31 100644
          void reverse(Kokkos::View<const Precision**,Kokkos::LayoutRight> input,Precision scale,
                       Kokkos::View<Precision**,Kokkos::LayoutRight> input_adjoint);
      };
-@@ -690,6 +932,73 @@ private:
+@@ -690,6 +973,73 @@ private:
      std::vector<Interaction> interactions;
      std::vector<E3ProductBasisKokkosT<Precision>> products;
      std::vector<Readout> readouts;
@@ -1024,10 +1074,10 @@ index 7514438..bc27a57 100644
              "MH-1 stress reduction inputs are inconsistent.");
 diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
 new file mode 100644
-index 0000000..dd3bc3d
+index 0000000..a4ac6be
 --- /dev/null
 +++ b/libsymmetrix/source/mace_polar_impl.tpp
-@@ -0,0 +1,3210 @@
+@@ -0,0 +1,3263 @@
 +// mace_polar_impl.tpp — P3 极性静电场独立编译单元(2026-10-15)。
 +// 目的: polar 逻辑(②Fukui/③k网格+GTO/④势特征/⑤SCF; 及未来⑥⑦⑧)与主 tpp 分离,
 +//       之后 polar 改动只重编本 TU(单 TU ~数分钟)而非四个大 TU(20-40 分钟)。
@@ -1237,6 +1287,7 @@ index 0000000..dd3bc3d
 +    double total_charge,double total_spin)
 +{
 +    symmetrix_polar_profile_mark("pipeline:enter");
++    const int owned_nodes=polar_owned_node_count(num_nodes);
 +    // 工作密度: ②/⑤ 在其上改写; ① 的原始累积(polar_spin_charge_density)
 +    // 保持只读(修复 ① 门语义漂移: 该视图此前被 ②/⑤ 原地改写)。
 +    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_working_density(
@@ -1263,11 +1314,22 @@ index 0000000..dd3bc3d
 +            Kokkos::HostSpace(),polar_accumulator);
 +        Precision source_sums[2]={Precision(0),Precision(0)};
 +        Precision predicted_zero[2]={Precision(0),Precision(0)};
-+        for(int node=0;node<num_nodes;++node) {
++        for(int node=0;node<owned_nodes;++node) {
 +            source_sums[0]+=polar_sources_host(node,0);
 +            source_sums[1]+=polar_sources_host(node,1);
 +            predicted_zero[0]+=polar_accumulator_host(node,0);
 +            predicted_zero[1]+=polar_accumulator_host(node,4);
++        }
++        {
++            double global_sums[4]={static_cast<double>(source_sums[0]),
++                static_cast<double>(source_sums[1]),
++                static_cast<double>(predicted_zero[0]),
++                static_cast<double>(predicted_zero[1])};
++            polar_global_sum_host(global_sums,4);
++            source_sums[0]=Precision(global_sums[0]);
++            source_sums[1]=Precision(global_sums[1]);
++            predicted_zero[0]=Precision(global_sums[2]);
++            predicted_zero[1]=Precision(global_sums[3]);
 +        }
 +        const Precision raw_source_sums[2]={source_sums[0],source_sums[1]};
 +        for(int channel=0;channel<2;++channel)
@@ -1670,7 +1732,7 @@ index 0000000..dd3bc3d
 +                        for(int m=0;m<4;++m) {
 +                            acc_cos[m]=Precision(0);acc_sin[m]=Precision(0);
 +                        }
-+                        for(int node=0;node<num_nodes;++node) {
++                        for(int node=0;node<owned_nodes;++node) {
 +                            const Precision c=kcos2(k,node);
 +                            const Precision s=ksin2(k,node);
 +                            for(int m=0;m<4;++m) {
@@ -1688,6 +1750,8 @@ index 0000000..dd3bc3d
 +                        rho_re(k)=rho_scale*re;
 +                        rho_im(k)=rho_scale*im;
 +                    });
++                polar_global_sum_view(rho_re);
++                polar_global_sum_view(rho_im);
 +                // project: features[n,·](8) = permute(2Σₖ (A·C+B·S)/(2π)³),
 +                // 再减自相互作用(逐列常数×选取分量)与逐通道归一。
 +                Kokkos::parallel_for("polar project features",num_nodes,
@@ -1928,7 +1992,7 @@ index 0000000..dd3bc3d
 +                                acc_cos[m]=Precision(0);
 +                                acc_sin[m]=Precision(0);
 +                            }
-+                            for(int node=0;node<num_nodes;++node) {
++                            for(int node=0;node<owned_nodes;++node) {
 +                                const Precision c=kcos2(k,node);
 +                                const Precision s=ksin2(k,node);
 +                                for(int m=0;m<4;++m) {
@@ -1948,6 +2012,8 @@ index 0000000..dd3bc3d
 +                            step_rho_re(k)=scf_rho_scale*re;
 +                            step_rho_im(k)=scf_rho_scale*im;
 +                        });
++                    polar_global_sum_view(step_rho_re);
++                    polar_global_sum_view(step_rho_im);
 +                    Kokkos::parallel_for("polar scf project features",
 +                        num_nodes,KOKKOS_LAMBDA(int node) {
 +                            Precision feat[8];
@@ -2166,11 +2232,22 @@ index 0000000..dd3bc3d
 +                        Kokkos::HostSpace(),density_all);
 +                Precision source_sums[2]={Precision(0),Precision(0)};
 +                Precision predicted_zero[2]={Precision(0),Precision(0)};
-+                for(int node=0;node<num_nodes;++node) {
++                for(int node=0;node<owned_nodes;++node) {
 +                    source_sums[0]+=sources_host(node,8);
 +                    source_sums[1]+=sources_host(node,9);
 +                    predicted_zero[0]+=density_host(node,0);
 +                    predicted_zero[1]+=density_host(node,4);
++                }
++                {
++                    double global_sums[4]={static_cast<double>(source_sums[0]),
++                        static_cast<double>(source_sums[1]),
++                        static_cast<double>(predicted_zero[0]),
++                        static_cast<double>(predicted_zero[1])};
++                    polar_global_sum_host(global_sums,4);
++                    source_sums[0]=Precision(global_sums[0]);
++                    source_sums[1]=Precision(global_sums[1]);
++                    predicted_zero[0]=Precision(global_sums[2]);
++                    predicted_zero[1]=Precision(global_sums[3]);
 +                }
 +                Precision raw_source_sums[2]={source_sums[0],source_sums[1]};
 +                for(int channel=0;channel<2;++channel)
@@ -2259,7 +2336,7 @@ index 0000000..dd3bc3d
 +                    Precision(0)};
 +                Precision acc_sin[4]={Precision(0),Precision(0),Precision(0),
 +                    Precision(0)};
-+                for(int node=0;node<num_nodes;++node) {
++                for(int node=0;node<owned_nodes;++node) {
 +                    const Precision c=coulomb_cos(k,node);
 +                    const Precision s=coulomb_sin(k,node);
 +                    for(int m=0;m<4;++m) {
@@ -2279,6 +2356,8 @@ index 0000000..dd3bc3d
 +                coulomb_rho_re(k)=re;
 +                coulomb_rho_im(k)=im;
 +            });
++            polar_global_sum_view(coulomb_rho_re);
++            polar_global_sum_view(coulomb_rho_im);
 +            // (b) E_k 归约(k=0 跳过;标量用 double,与库内既有 parallel_reduce
 +            //     标量风格一致:tpp "validate nonlinear nodes"/"reduce_stress")
 +            auto coulomb_kn2=polar_k_norm2;
@@ -2498,8 +2577,13 @@ index 0000000..dd3bc3d
 +            const auto le_atom_host=Kokkos::create_mirror_view_and_copy(
 +                Kokkos::HostSpace(),polar_le_atom);
 +            Precision le_sum=Precision(0);
-+            for(int node=0;node<num_nodes;++node)
++            for(int node=0;node<owned_nodes;++node)
 +                le_sum+=le_atom_host(node);
++            {
++                double global_le=static_cast<double>(le_sum);
++                polar_global_sum_host(&global_le,1);
++                le_sum=Precision(global_le);
++            }
 +            polar_le_total=le_sum;
 +        }
 +
@@ -2524,10 +2608,11 @@ index 0000000..dd3bc3d
 +            // 单图口径: 整盒总量加入 node 0(calculator.py L3860 汇总全部 node 能量)。
 +            auto coulomb_energy=polar_coulomb_energy;
 +            auto coulomb_energies=node_energies;
-+            Kokkos::parallel_for("add polar coulomb energy",1,
-+                KOKKOS_LAMBDA(int) {
-+                    coulomb_energies(0)+=coulomb_energy(0);
-+                });
++            if(polar_global_rank_==0)
++                Kokkos::parallel_for("add polar coulomb energy",1,
++                    KOKKOS_LAMBDA(int) {
++                        coulomb_energies(0)+=coulomb_energy(0);
++                    });
 +        }
 +    }
 +    symmetrix_polar_profile_mark("pipeline:end");
@@ -2711,6 +2796,7 @@ index 0000000..dd3bc3d
 +    const int num_nodes)
 +{
 +    if(!polar_enabled) return;
++    const int owned_nodes=polar_owned_node_count(num_nodes);
 +    constexpr double two_pi=6.283185307179586476925286766559;
 +    constexpr double two_pi_cubed=two_pi*two_pi*two_pi;
 +    constexpr double polar_field_constant=1.0/(5.526349406e-3);
@@ -2775,16 +2861,23 @@ index 0000000..dd3bc3d
 +        ensure_view(polar_rev_transform,polar_rev_transform_storage,8);
 +        auto transform=Kokkos::create_mirror_view(
 +            Kokkos::HostSpace(),polar_rev_transform);
++        double fbar_values[2]={0.0,0.0};
 +        for(int channel=0;channel<2;++channel) {
 +            const Precision s_raw=scalars_host[channel];
-+            const bool clamped=(s_raw==Precision(0));
-+            const Precision s_used=clamped?Precision(1):s_raw;
-+            const Precision f=scalars_host[4+channel];
++            const Precision s_used=(s_raw==Precision(0))?Precision(1):s_raw;
 +            double fbar=0.0;                                  // F̄ = Σ_n s̃·d̄(l=0)
-+            for(int node=0;node<num_nodes;++node)
++            for(int node=0;node<owned_nodes;++node)
 +                fbar+=static_cast<double>(dbar_host(node,4*channel))
 +                    *(static_cast<double>(sources_host(node,source_offset+channel))
 +                        /static_cast<double>(s_used));
++            fbar_values[channel]=fbar;
++        }
++        polar_global_sum_host(fbar_values,2);
++        for(int channel=0;channel<2;++channel) {
++            const Precision s_raw=scalars_host[channel];
++            const bool clamped=(s_raw==Precision(0));
++            const Precision f=scalars_host[4+channel];
++            const double fbar=fbar_values[channel];
 +            // [v3 修正·D-08] 引擎/mace 前向: d_out(n)=d_pre(n)+s_n·f, f=(T−pred)/S_used
 +            // (单一 1/S; mace extensions.py L742-766 与 ⑤ 前向核)。闭式伴随:
 +            //   pred̄=−F̄;  s̄=f·d̄ −[未钳制] f·F̄;  F̄=Σ_n (s_n/S_used)·d̄(n,l=0)。
@@ -3072,7 +3165,7 @@ index 0000000..dd3bc3d
 +                for(int j=0;j<8;++j) {
 +                    const int m=permutation(j);
 +                    Precision a=Precision(0),b=Precision(0);
-+                    for(int node=0;node<num_nodes;++node) {
++                    for(int node=0;node<owned_nodes;++node) {
 +                        const Precision z=w*proj_scale*feats_bar(node,j);
 +                        a+=kcos(k,node)*z;
 +                        b+=ksin(k,node)*z;
@@ -3080,6 +3173,10 @@ index 0000000..dd3bc3d
 +                    ab(k,m)=a;ab(k,8+m)=b;
 +                }
 +            });
++        {
++            Kokkos::View<Precision*> ab_flat(ab.data(),ab.size());
++            polar_global_sum_view(ab_flat);
++        }
 +        // (iii) project+kernel 反向一步到位:
 +        //       pr̄=Σ_m(X̄·FBR+Ŷ·FBI); pī=Σ_m(X̄·FBI−Ŷ·FBR); ρ̄=pr̄·inv_k2。
 +        Kokkos::parallel_for("polar desc rho adjoint",num_k,
@@ -3126,7 +3223,7 @@ index 0000000..dd3bc3d
 +                        for(int m=0;m<4;++m) {
 +                            acc_cos[m]=Precision(0);acc_sin[m]=Precision(0);
 +                        }
-+                        for(int node=0;node<num_nodes;++node) {
++                        for(int node=0;node<owned_nodes;++node) {
 +                            const Precision c=kcos(k,node);
 +                            const Precision s=ksin(k,node);
 +                            for(int m=0;m<4;++m) {
@@ -3141,6 +3238,8 @@ index 0000000..dd3bc3d
 +                        }
 +                        rho_re(k)=rho_scale*re;rho_im(k)=rho_scale*im;
 +                    });
++                polar_global_sum_view(rho_re);
++                polar_global_sum_view(rho_im);
 +            }
 +            Kokkos::parallel_for("polar desc proj phase reverse",num_nodes,
 +                KOKKOS_LAMBDA(int node) {
@@ -3195,7 +3294,7 @@ index 0000000..dd3bc3d
 +                        for(int m=0;m<4;++m) {
 +                            acc_cos[m]=Precision(0);acc_sin[m]=Precision(0);
 +                        }
-+                        for(int node=0;node<num_nodes;++node) {
++                        for(int node=0;node<owned_nodes;++node) {
 +                            const Precision c=kcos(k,node);
 +                            const Precision s=ksin(k,node);
 +                            for(int m=0;m<4;++m) {
@@ -3210,6 +3309,8 @@ index 0000000..dd3bc3d
 +                        }
 +                        rho_re(k)=rho_scale*re;rho_im(k)=rho_scale*im;
 +                    });
++                polar_global_sum_view(rho_re);
++                polar_global_sum_view(rho_im);
 +            }
 +            { // project + SI + permute + /knorm(与⑤"polar scf project features"
 +              //  及随后的归一 kernel 逐元素等价;仅省去中间 feats 存储)
@@ -3760,7 +3861,7 @@ index 0000000..dd3bc3d
 +                    for(int m=0;m<4;++m) {
 +                        acc_cos[m]=Precision(0);acc_sin[m]=Precision(0);
 +                    }
-+                    for(int node=0;node<num_nodes;++node) {
++                    for(int node=0;node<owned_nodes;++node) {
 +                        const Precision c=kcos(k,node);
 +                        const Precision s=ksin(k,node);
 +                        for(int m=0;m<4;++m) {
@@ -3775,6 +3876,8 @@ index 0000000..dd3bc3d
 +                    }
 +                    rho_re(k)=rho_scale*re;rho_im(k)=rho_scale*im;
 +                });
++            polar_global_sum_view(rho_re);
++            polar_global_sum_view(rho_im);
 +        }
 +        { // ρ̄(含 V 因子与 kfac_c;k=0 处 kfac=0)
 +            auto rho_bar_re=polar_rev_rho_adj_re,rho_bar_im=polar_rev_rho_adj_im;
@@ -4247,22 +4350,33 @@ index 0000000..8460105
 +// mace_polar_kokkos.cpp — P3 极性场独立 TU(2026-10-15)。
 +#include "mace_polar_impl.tpp"
 diff --git a/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp b/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp
-index 5b28ef1..95a2f38 100644
+index 5b28ef1..16829b3 100644
 --- a/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp
 +++ b/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp
-@@ -180,6 +180,8 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::settings(int narg, char **a
+@@ -180,6 +180,9 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::settings(int narg, char **a
  {
    mode = (comm->nprocs == 1) ? "no_domain_decomposition" : "mpi_message_passing";
    electric_field_set = false;
 +  polar_total_charge = 0.0;
 +  polar_total_spin = 1.0;
++  polar_mpi_ghost_one_hop = false;
    streamed_edges = "auto";
    execution_profile = "capacity";
    execution_profile_set = false;
-@@ -238,6 +240,22 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::settings(int narg, char **a
+@@ -238,6 +241,32 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::settings(int narg, char **a
        execution_profile_set = true;
        if (execution_profile != "capacity" && execution_profile != "speed")
          error->all(FLERR, "pair_style symmetrix/mace/kk profile requires capacity or speed");
++    } else if (token == "polar_mpi_ghost") {
++      if (i+1 >= narg)
++        error->all(FLERR, "pair_style symmetrix/mace/kk polar_mpi_ghost requires one_hop or two_hop");
++      const std::string value(arg[++i]);
++      if (value == "one_hop")
++        polar_mpi_ghost_one_hop = true;
++      else if (value == "two_hop")
++        polar_mpi_ghost_one_hop = false;
++      else
++        error->all(FLERR, "pair_style symmetrix/mace/kk polar_mpi_ghost requires one_hop or two_hop");
 +    } else if (token == "charge") {
 +      if (i+1 >= narg)
 +        error->all(FLERR, "pair_style symmetrix/mace/kk charge requires a numeric value");
@@ -4282,29 +4396,41 @@ index 5b28ef1..95a2f38 100644
      } else if (token == "low_memory") {
        if (i+1 >= narg)
          error->all(FLERR, "pair_style symmetrix/mace/kk low_memory requires yes or no");
-@@ -413,8 +431,78 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::coeff(int narg, char **arg)
+@@ -413,8 +442,90 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::coeff(int narg, char **arg)
    if (narg != atom->ntypes + 3)
      error->all(FLERR, "Incorrect args for pair coefficients");
  
 -  if (symmetrix_is_nonlinear_mace_model(arg[2]))
 -    error->all(FLERR, "MACE_Nonlinear models are not supported by pair_style symmetrix/mace/kk in this release");
 +  if (symmetrix_is_nonlinear_mace_model(arg[2])) {
-+    if (comm->nprocs > 1)
-+      error->all(
-+        FLERR,
-+        "MACE_Nonlinear/PolarMACE models currently require a single MPI rank: "
-+        "the long-range electrostatics needs the complete charge density, which "
-+        "is not available under domain decomposition.");
-+    if (mode != "no_domain_decomposition")
-+      error->all(
-+        FLERR,
-+        "MACE_Nonlinear/PolarMACE models require mode no_domain_decomposition "
-+        "(single MPI rank).");
++    // Single rank keeps the proven local-only graph. Multi-rank uses the
++    // full local+ghost graph with REQ_GHOST so ghost node features are
++    // complete; only owned-node contributions enter the global k-space
++    // density, energy, and force outputs.
++    if (comm->nprocs > 1) {
++      if (mode != "no_mpi_message_passing") {
++        mode = "no_mpi_message_passing";
++        if (comm->me == 0)
++          utils::logmesg(
++            lmp,
++            "MACE_Nonlinear/PolarMACE: using no_mpi_message_passing for {} MPI ranks\n",
++            comm->nprocs);
++      }
++    } else {
++      mode = "no_domain_decomposition";
++    }
 +    utils::logmesg(lmp, "Loading MaceNonlinearKokkos model from \'{}\' ... ", arg[2]);
 +    mace_nonlinear =
 +      std::make_unique<MaceNonlinearKokkosT<Precision>>(arg[2], prediction_head);
 +    mace.reset();
 +    is_polar_model = true;
++    mace_nonlinear->set_global_sum_callback(
++      [this](double *values, std::size_t count) {
++        int mpi_count = static_cast<int>(count);
++        MPI_Allreduce(
++          MPI_IN_PLACE, values, mpi_count, MPI_DOUBLE, MPI_SUM, lmp->world);
++      });
++    mace_nonlinear->set_polar_global_rank(comm->me);
 +    if (mace_nonlinear->has_field_coupling)
 +      error->all(
 +        FLERR,
@@ -4363,7 +4489,7 @@ index 5b28ef1..95a2f38 100644
  
    utils::logmesg(lmp, "Loading MACEKokkos model from \'{}\' ... ", arg[2]);
    mace = std::make_unique<MACEKokkos<Precision>>(arg[2], prediction_head);
-@@ -634,8 +722,8 @@ double PairSymmetrixMACEKokkos<DeviceType, Precision>::init_one(int i, int j)
+@@ -634,8 +745,8 @@ double PairSymmetrixMACEKokkos<DeviceType, Precision>::init_one(int i, int j)
  {
    if (setflag[i][j] == 0) error->all(FLERR, "All pair coeffs are not set");
  
@@ -4374,18 +4500,24 @@ index 5b28ef1..95a2f38 100644
  }
  
  /* ----------------------------------------------------------------------
-@@ -659,8 +747,8 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::init_style()
+@@ -657,10 +768,13 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::init_style()
+                              !std::is_same_v<DeviceType,LMPDeviceType>);
+     request->set_kokkos_device(std::is_same_v<DeviceType,LMPDeviceType>);
    } else {
-     // enforce the communication cutoff is more than twice the model cutoff
+-    // enforce the communication cutoff is more than twice the model cutoff
++    // Exact mode needs two hops (a ghost node's own r_cut neighborhood);
++    // one_hop is a faster, approximate mode that only supplies first-hop ghosts.
++    const double ghost_span =
++      (is_polar_model && polar_mpi_ghost_one_hop) ? model_rcut() : 2.0*model_rcut();
      const double comm_cutoff = comm->get_comm_cutoff();
 -    if (comm->get_comm_cutoff() < (2*mace->r_cut + neighbor->skin)) {
 -      std::string cutoff_val = std::to_string((2.0 * mace->r_cut) + neighbor->skin);
-+    if (comm->get_comm_cutoff() < (2*model_rcut() + neighbor->skin)) {
-+      std::string cutoff_val = std::to_string((2.0 * model_rcut()) + neighbor->skin);
++    if (comm->get_comm_cutoff() < (ghost_span + neighbor->skin)) {
++      std::string cutoff_val = std::to_string(ghost_span + neighbor->skin);
        char *args[2];
        args[0] = (char *)"cutoff";
        args[1] = const_cast<char *>(cutoff_val.c_str());
-@@ -999,10 +1087,10 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -999,10 +1113,10 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
    if (eflag_atom)
      Kokkos::deep_copy(k_eatom.template view<DeviceType>(), 0.0);
  
@@ -4398,7 +4530,7 @@ index 5b28ef1..95a2f38 100644
  
    NeighListKokkos<DeviceType>* k_list = static_cast<NeighListKokkos<DeviceType>*>(list);
    auto d_numneigh = k_list->d_numneigh;
-@@ -1031,6 +1119,21 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1031,6 +1145,21 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
    auto num_neigh = Kokkos::subview(this->num_neigh, Kokkos::make_pair(0,num_nodes));
    auto mace_types = this->mace_types;
    int num_edges = execution_num_edges;
@@ -4420,7 +4552,7 @@ index 5b28ef1..95a2f38 100644
    if (rebuild_topology) {
      k_map_array.template sync<DeviceType>();
      Kokkos::deep_copy(num_neigh, 0);
-@@ -1044,6 +1147,11 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1044,6 +1173,11 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
          const double x_i = x(i,0);
          const double y_i = x(i,1);
          const double z_i = x(i,2);
@@ -4432,7 +4564,7 @@ index 5b28ef1..95a2f38 100644
          Kokkos::parallel_reduce(
            Kokkos::TeamThreadRange(team_member, d_numneigh(i)),
            [&] (const int jj, int& num_neigh_ii) {
-@@ -1126,36 +1234,53 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1126,36 +1260,53 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
    if (stable_execution && !rebuild_topology)
      execution_geometry_only_update_count += 1.0;
  
@@ -4511,7 +4643,7 @@ index 5b28ef1..95a2f38 100644
      double energy;
      Kokkos::parallel_reduce("PairSymmetrixMACEKokkos::energy_reduction",
        num_nodes,
-@@ -1167,7 +1292,6 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1167,7 +1318,6 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
  
    if (eflag_atom) {
      auto d_eatom = k_eatom.template view<DeviceType>();
@@ -4519,7 +4651,7 @@ index 5b28ef1..95a2f38 100644
      Kokkos::parallel_for("PairSymmetrixMACEKokkos::extract_atomic_energies", num_nodes, KOKKOS_LAMBDA (const int ii) {
          d_eatom(node_indices(ii)) += node_energies(ii);
      });
-@@ -1175,7 +1299,7 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1175,7 +1325,7 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
      k_eatom.sync_host();
    }
  
@@ -4528,7 +4660,7 @@ index 5b28ef1..95a2f38 100644
    Kokkos::parallel_for("PairSymmetrixMACEKokkos::force_reduction",
      Kokkos::TeamPolicy<>(num_nodes, Kokkos::AUTO),
      KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
-@@ -1201,6 +1325,18 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1201,6 +1351,18 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
          });
      });
  
@@ -4547,7 +4679,7 @@ index 5b28ef1..95a2f38 100644
    if (vflag_global) {
      Kokkos::View<double*,Kokkos::LayoutRight> v("v", 6);
      Kokkos::deep_copy(v, 0.0);
-@@ -1237,6 +1373,28 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1237,6 +1399,28 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
            Kokkos::atomic_add(&v(5), v_5);
          });
        });
@@ -4576,16 +4708,18 @@ index 5b28ef1..95a2f38 100644
      auto h_v = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), v);
      virial[0] += h_v(0);
      virial[1] += h_v(1);
-@@ -1256,6 +1414,8 @@ template<class DeviceType, typename Precision>
+@@ -1256,6 +1440,10 @@ template<class DeviceType, typename Precision>
  void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_mpi_message_passing(int eflag, int vflag)
  {
    ev_init(eflag, vflag, 0);
-+  if (is_polar_model)
-+    error->all(FLERR, "MACE_Nonlinear/PolarMACE models require mode no_domain_decomposition (single MPI rank).");
++  if (is_polar_model) {
++    compute_polar_mpi(eflag, vflag);
++    return;
++  }
  
    if (eflag_atom && k_eatom.view<DeviceType>().extent(0)<maxeatom) {
       memoryKK->destroy_kokkos(k_eatom,eatom);
-@@ -1276,10 +1436,10 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_mpi_message_passing
+@@ -1276,10 +1464,10 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_mpi_message_passing
    auto tag = atomKK->k_tag.view<DeviceType>();
  
    const bool stable_execution =
@@ -4598,16 +4732,298 @@ index 5b28ef1..95a2f38 100644
    const double r_cut_squared = r_cut*r_cut;
    const int num_nodes = k_list->inum;
    const auto num_feature_nodes_size = static_cast<std::size_t>(atom->nlocal)
-@@ -1911,6 +2071,8 @@ template<class DeviceType, typename Precision>
+@@ -1907,10 +2095,290 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_mpi_message_passing
+ 
+ /* ---------------------------------------------------------------------- */
+ 
++/* ----------------------------------------------------------------------
++   PolarMACE multi-rank path.
++
++   Every rank builds a graph over its local atoms plus all ghost atoms. Ghost
++   nodes give each local node complete incoming messages, so no per-layer
++   MPI communication is required.  Only owned nodes (indices < nlocal) enter
++   the global k-space density, energy sum, force writes, and virial; ghost
++   node forces are deliberately not reverse-communicated because each rank
++   already computes the complete force for its own atoms.
++------------------------------------------------------------------------- */
++
++template<class DeviceType, typename Precision>
++void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_polar_mpi(int eflag, int vflag)
++{
++  ev_init(eflag, vflag, 0);
++
++  if (eflag_atom && k_eatom.view<DeviceType>().extent(0)<maxeatom) {
++     memoryKK->destroy_kokkos(k_eatom,eatom);
++     memoryKK->create_kokkos(k_eatom,eatom,maxeatom,"pair:eatom");
++  }
++  if (eflag_atom)
++    Kokkos::deep_copy(k_eatom.template view<DeviceType>(), 0.0);
++
++  NeighListKokkos<DeviceType>* k_list = static_cast<NeighListKokkos<DeviceType>*>(list);
++  auto d_numneigh = k_list->d_numneigh;
++  auto d_neighbors = k_list->d_neighbors;
++
++  atomKK->sync(execution_space,X_MASK|F_MASK|TYPE_MASK|TAG_MASK);
++  auto x = atomKK->k_x.view<DeviceType>();
++  auto f = atomKK->k_f.view<DeviceType>();
++  auto type = atomKK->k_type.view<DeviceType>();
++
++  const int nlocal = atom->nlocal;
++  const int num_nodes = atom->nlocal + atom->nghost;
++  const double r_cut = model_rcut();
++  const double r_cut_squared = r_cut*r_cut;
++
++  // Cell (LAMMPS lattice vectors as rows).
++  if (polar_cell.extent(0) != 9) Kokkos::realloc(polar_cell, 9);
++  {
++    auto h_cell = Kokkos::create_mirror_view(polar_cell);
++    h_cell(0) = domain->h[0]; h_cell(1) = 0.0;            h_cell(2) = 0.0;
++    h_cell(3) = domain->h[3]; h_cell(4) = domain->h[1];   h_cell(5) = 0.0;
++    h_cell(6) = domain->h[4]; h_cell(7) = domain->h[5];   h_cell(8) = domain->h[2];
++    Kokkos::deep_copy(polar_cell, h_cell);
++  }
++  auto cell_view = polar_cell;
++
++  if (polar_node_positions.extent(0) < static_cast<std::size_t>(3*num_nodes))
++    Kokkos::realloc(polar_node_positions, 3*num_nodes);
++  auto positions = Kokkos::subview(
++    polar_node_positions, Kokkos::make_pair(0, 3*num_nodes));
++  Kokkos::parallel_for("PairSymmetrixMACEKokkos::polar_mpi_positions",
++    num_nodes, KOKKOS_LAMBDA (const int ii) {
++      positions(3*ii) = x(ii,0);
++      positions(3*ii+1) = x(ii,1);
++      positions(3*ii+2) = x(ii,2);
++    });
++
++  if (node_indices.size() < num_nodes) Kokkos::realloc(node_indices, num_nodes);
++  if (node_types.size() < num_nodes) Kokkos::realloc(node_types, num_nodes);
++  if (num_neigh.size() < num_nodes) Kokkos::realloc(num_neigh, num_nodes);
++  auto node_indices = Kokkos::subview(this->node_indices, Kokkos::make_pair(0,num_nodes));
++  auto node_types = Kokkos::subview(this->node_types, Kokkos::make_pair(0,num_nodes));
++  auto num_neigh = Kokkos::subview(this->num_neigh, Kokkos::make_pair(0,num_nodes));
++  auto mace_types = this->mace_types;
++
++  Kokkos::deep_copy(num_neigh, 0);
++  Kokkos::parallel_for("PairSymmetrixMACEKokkos::polar_mpi_nodes",
++    Kokkos::TeamPolicy<>(num_nodes, Kokkos::AUTO),
++    KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
++      const int ii = team_member.league_rank();
++      node_indices(ii) = ii;
++      node_types(ii) = mace_types(type(ii)-1);
++      const double x_i = x(ii,0);
++      const double y_i = x(ii,1);
++      const double z_i = x(ii,2);
++      Kokkos::parallel_reduce(
++        Kokkos::TeamThreadRange(team_member, d_numneigh(ii)),
++        [&] (const int jj, int& count) {
++          const int j = (d_neighbors(ii,jj) & NEIGHMASK);
++          const double dx = x(j,0) - x_i;
++          const double dy = x(j,1) - y_i;
++          const double dz = x(j,2) - z_i;
++          if (dx*dx+dy*dy+dz*dz < r_cut_squared) count += 1;
++        }, num_neigh(ii));
++    });
++
++  int num_edges = 0;
++  Kokkos::parallel_reduce("PairSymmetrixMACEKokkos::polar_mpi_count_edges",
++    num_nodes,
++    KOKKOS_LAMBDA (const int ii, int& edge_count) {
++      edge_count += num_neigh(ii);
++    }, num_edges);
++
++  if (first_neigh.size() < num_nodes) Kokkos::realloc(first_neigh, num_nodes);
++  auto first_neigh = Kokkos::subview(this->first_neigh, Kokkos::make_pair(0,num_nodes));
++  Kokkos::parallel_scan("PairSymmetrixMACEKokkos::polar_mpi_first_neigh",
++    num_nodes,
++    KOKKOS_LAMBDA (const int ii, int& first, const bool final) {
++      if (final) first_neigh(ii) = first;
++      first += num_neigh(ii);
++    });
++
++  if (neigh_indices.size() < num_edges) Kokkos::realloc(neigh_indices, num_edges);
++  if (neigh_types.size() < num_edges) Kokkos::realloc(neigh_types, num_edges);
++  if (xyz.size() < 3*num_edges) Kokkos::realloc(xyz, 3*num_edges);
++  if (r.size() < num_edges) Kokkos::realloc(r, num_edges);
++  auto neigh_indices = Kokkos::subview(this->neigh_indices, Kokkos::make_pair(0,num_edges));
++  auto neigh_types = Kokkos::subview(this->neigh_types, Kokkos::make_pair(0,num_edges));
++  auto xyz = Kokkos::subview(this->xyz, Kokkos::make_pair(0,3*num_edges));
++  auto r = Kokkos::subview(this->r, Kokkos::make_pair(0,num_edges));
++
++  Kokkos::parallel_for("PairSymmetrixMACEKokkos::polar_mpi_edges",
++    num_nodes, KOKKOS_LAMBDA (const int ii) {
++      const int i = ii;
++      const double x_i = x(i,0);
++      const double y_i = x(i,1);
++      const double z_i = x(i,2);
++      int ij = first_neigh(ii);
++      for (int jj=0; jj<d_numneigh(i); ++jj) {
++        const int j = (d_neighbors(i,jj) & NEIGHMASK);
++        const double dx = x(j,0) - x_i;
++        const double dy = x(j,1) - y_i;
++        const double dz = x(j,2) - z_i;
++        const double r_squared = dx*dx + dy*dy + dz*dz;
++        if (r_squared < r_cut_squared) {
++          neigh_indices(ij) = j;
++          neigh_types(ij) = mace_types(type(j)-1);
++          xyz(3*ij) = dx;
++          xyz(3*ij+1) = dy;
++          xyz(3*ij+2) = dz;
++          r(ij) = std::sqrt(r_squared);
++          ij += 1;
++        }
++      }
++    });
++
++  mace_nonlinear->set_polar_owned_nodes(nlocal);
++  mace_nonlinear->set_polar_global_rank(comm->me);
++  mace_nonlinear->compute_node_energies_forces(
++    num_nodes, node_types, num_neigh, neigh_indices, neigh_types, xyz, r,
++    0, polar_total_charge, polar_total_spin, positions, cell_view);
++
++  auto node_energies = mace_nonlinear->node_energies;
++  if (eflag_global) {
++    double energy = 0.0;
++    Kokkos::parallel_reduce("PairSymmetrixMACEKokkos::polar_mpi_energy",
++      nlocal,
++      KOKKOS_LAMBDA (const int ii, double& e) {
++        e += node_energies(ii);
++      }, energy);
++    eng_vdwl += energy;
++  }
++
++  if (eflag_atom) {
++    auto d_eatom = k_eatom.template view<DeviceType>();
++    Kokkos::parallel_for("PairSymmetrixMACEKokkos::polar_mpi_eatom",
++      nlocal, KOKKOS_LAMBDA (const int ii) {
++        d_eatom(node_indices(ii)) += node_energies(ii);
++      });
++    k_eatom.modify<DeviceType>();
++    k_eatom.sync_host();
++  }
++
++  auto node_forces = mace_nonlinear->node_forces;
++  Kokkos::parallel_for("PairSymmetrixMACEKokkos::polar_mpi_forces",
++    Kokkos::TeamPolicy<>(num_nodes, Kokkos::AUTO),
++    KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
++      const int ii = team_member.league_rank();
++      const int i = node_indices(ii);
++      double f_x = 0.0, f_y = 0.0, f_z = 0.0;
++      Kokkos::parallel_reduce(
++        Kokkos::TeamThreadRange(team_member, num_neigh(ii)),
++        [&] (const int jj, double& f_x, double& f_y, double& f_z) {
++          const int ij = first_neigh(ii) + jj;
++          const int j = neigh_indices(ij);
++          const double ex = node_forces(3*ij);
++          const double ey = node_forces(3*ij+1);
++          const double ez = node_forces(3*ij+2);
++          f_x += ex; f_y += ey; f_z += ez;
++          if (j < nlocal) {
++            Kokkos::atomic_add(&f(j,0), ex);
++            Kokkos::atomic_add(&f(j,1), ey);
++            Kokkos::atomic_add(&f(j,2), ez);
++          }
++        }, f_x, f_y, f_z);
++      Kokkos::single(Kokkos::PerTeam(team_member), [&]() {
++        if (i < nlocal) {
++          Kokkos::atomic_add(&f(i,0), -f_x);
++          Kokkos::atomic_add(&f(i,1), -f_y);
++          Kokkos::atomic_add(&f(i,2), -f_z);
++        }
++      });
++    });
++
++  const bool polar_enabled = mace_nonlinear->polar_blocks_enabled();
++  auto polar_forces = mace_nonlinear->polar_node_forces;
++  if (polar_enabled && polar_forces.extent(0) >=
++      static_cast<std::size_t>(3*num_nodes)) {
++    Kokkos::parallel_for("PairSymmetrixMACEKokkos::polar_mpi_polar_forces",
++      nlocal, KOKKOS_LAMBDA (const int ii) {
++        const int i = node_indices(ii);
++        for (int c = 0; c < 3; ++c)
++          Kokkos::atomic_add(&f(i,c), polar_forces(3*ii+c));
++      });
++  }
++
++  if (vflag_global) {
++    Kokkos::View<double*,Kokkos::LayoutRight> v("v", 6);
++    Kokkos::deep_copy(v, 0.0);
++    Kokkos::parallel_for("PairSymmetrixMACEKokkos::polar_mpi_virial",
++      Kokkos::TeamPolicy<>(nlocal, Kokkos::AUTO),
++      KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
++        const int ii = team_member.league_rank();
++        double v_0 = 0.0, v_1 = 0.0, v_2 = 0.0;
++        double v_3 = 0.0, v_4 = 0.0, v_5 = 0.0;
++        Kokkos::parallel_reduce(
++          Kokkos::TeamThreadRange(team_member, num_neigh(ii)),
++          [&] (const int jj, double& v_0, double& v_1, double& v_2,
++                             double& v_3, double& v_4, double& v_5) {
++            const int ij = first_neigh(ii) + jj;
++            const double ex = xyz(3*ij);
++            const double ey = xyz(3*ij+1);
++            const double ez = xyz(3*ij+2);
++            const double f_x = node_forces(3*ij);
++            const double f_y = node_forces(3*ij+1);
++            const double f_z = node_forces(3*ij+2);
++            v_0 += ex*f_x;
++            v_1 += ey*f_y;
++            v_2 += ez*f_z;
++            v_3 += 0.5*(ex*f_y + ey*f_x);
++            v_4 += 0.5*(ex*f_z + ez*f_x);
++            v_5 += 0.5*(ey*f_z + ez*f_y);
++          }, v_0, v_1, v_2, v_3, v_4, v_5);
++        Kokkos::single(Kokkos::PerTeam(team_member), [&]() {
++          Kokkos::atomic_add(&v(0), v_0);
++          Kokkos::atomic_add(&v(1), v_1);
++          Kokkos::atomic_add(&v(2), v_2);
++          Kokkos::atomic_add(&v(3), v_3);
++          Kokkos::atomic_add(&v(4), v_4);
++          Kokkos::atomic_add(&v(5), v_5);
++        });
++      });
++    if (polar_enabled && polar_forces.extent(0) >=
++        static_cast<std::size_t>(3*num_nodes)) {
++      Kokkos::parallel_for("PairSymmetrixMACEKokkos::polar_mpi_polar_virial",
++        nlocal, KOKKOS_LAMBDA (const int ii) {
++          const int i = node_indices(ii);
++          const double x_i = x(i,0);
++          const double y_i = x(i,1);
++          const double z_i = x(i,2);
++          const double f_x = polar_forces(3*ii);
++          const double f_y = polar_forces(3*ii+1);
++          const double f_z = polar_forces(3*ii+2);
++          Kokkos::atomic_add(&v(0), x_i*f_x);
++          Kokkos::atomic_add(&v(1), y_i*f_y);
++          Kokkos::atomic_add(&v(2), z_i*f_z);
++          Kokkos::atomic_add(&v(3), 0.5*(x_i*f_y + y_i*f_x));
++          Kokkos::atomic_add(&v(4), 0.5*(x_i*f_z + z_i*f_x));
++          Kokkos::atomic_add(&v(5), 0.5*(y_i*f_z + z_i*f_y));
++        });
++    }
++    auto h_v = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), v);
++    virial[0] += h_v(0);
++    virial[1] += h_v(1);
++    virial[2] += h_v(2);
++    virial[3] += h_v(3);
++    virial[4] += h_v(4);
++    virial[5] += h_v(5);
++  }
++
++  if (vflag_atom)
++    error->all(FLERR, "Atomic virials not yet supported by pair_style symmetrix/mace/kk.");
++}
++
+ template<class DeviceType, typename Precision>
  void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_mpi_message_passing(int eflag, int vflag)
  {
    ev_init(eflag, vflag, 0);
-+  if (is_polar_model)
-+    error->all(FLERR, "MACE_Nonlinear/PolarMACE models require mode no_domain_decomposition (single MPI rank).");
++  if (is_polar_model) {
++    compute_polar_mpi(eflag, vflag);
++    return;
++  }
  
    if (eflag_atom && k_eatom.view<DeviceType>().extent(0)<maxeatom) {
       memoryKK->destroy_kokkos(k_eatom,eatom);
-@@ -1929,7 +2091,7 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_mpi_message_pass
+@@ -1929,7 +2397,7 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_mpi_message_pass
    auto f = atomKK->k_f.view<DeviceType>();
    auto type = atomKK->k_type.view<DeviceType>();
  
@@ -4617,7 +5033,7 @@ index 5b28ef1..95a2f38 100644
    // locate ghosts within r_cut of locals
    auto is_local = Kokkos::Bitset(atom->nlocal+atom->nghost);
 diff --git a/pair_symmetrix/pair_symmetrix_mace_kokkos.h b/pair_symmetrix/pair_symmetrix_mace_kokkos.h
-index 1079bac..1f5f7f7 100644
+index 1079bac..7ccb788 100644
 --- a/pair_symmetrix/pair_symmetrix_mace_kokkos.h
 +++ b/pair_symmetrix/pair_symmetrix_mace_kokkos.h
 @@ -40,6 +40,7 @@ PairStyle(symmetrix/mace/float32/kk/host,PairSymmetrixMACEKokkosHostFloat);
@@ -4628,7 +5044,15 @@ index 1079bac..1f5f7f7 100644
  
  namespace LAMMPS_NS {
  
-@@ -109,10 +110,22 @@ class PairSymmetrixMACEKokkos : public Pair, public KokkosBase {
+@@ -67,6 +68,7 @@ class PairSymmetrixMACEKokkos : public Pair, public KokkosBase {
+   void compute_no_domain_decomposition(int, int);
+   void compute_mpi_message_passing(int, int);
+  void compute_no_mpi_message_passing(int, int);
++  void compute_polar_mpi(int, int);
+ 
+  protected:
+   std::string mode;
+@@ -109,10 +111,23 @@ class PairSymmetrixMACEKokkos : public Pair, public KokkosBase {
    double execution_mpi_staged_index_h2d_bytes = 0.0;
    bool electric_field_set;
    std::unique_ptr<MACEKokkos<Precision>> mace;
@@ -4636,6 +5060,7 @@ index 1079bac..1f5f7f7 100644
 +  // is populated, selected by the JSON model_type in coeff().
 +  std::unique_ptr<MaceNonlinearKokkosT<Precision>> mace_nonlinear;
 +  bool is_polar_model = false;
++  bool polar_mpi_ghost_one_hop = false;
 +  double polar_total_charge = 0.0;
 +  double polar_total_spin = 1.0;
 +  Kokkos::View<double*> polar_cell;

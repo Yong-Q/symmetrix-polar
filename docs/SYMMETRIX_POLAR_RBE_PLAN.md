@@ -511,3 +511,16 @@ profile 定位到两处:
 
 数值门全部复跑且数字不变(模块⑤–⑧、端到端 32/32、RBE 斜率 −0.499)。
 产物:`bench/polar_perf_v28_vs_v29.png`、`results/polar_perf_v29.json`。
+
+## 24. MPI 多 rank（v30，2026-10-19）—— 功能打通，速度未突破
+
+- 引擎新增全局求和回调（pair 安装 `MPI_Allreduce`）与 `polar_owned_nodes`；
+  初始/逐步 Fukui、SCF k 空间、coulomb、LE 总量、反向 fbar/ab/ρ 重算全部归约。
+- pair 多 rank 走 `no_mpi_message_passing`（local+ghost 完整图，ghost cutoff
+  2·r_cut+skin）；能量/力/virial 只统计 owned 节点，coulomb 全局能量只在 rank 0 装配。
+- 验证：2 rank 单点 dE 2.91e-11 eV、max|ΔF| 1.69e-6 eV/Å；32 原子 20 步 NVT
+  无 lost atoms、Etotal span 0.013 eV；4 rank 受 ghost 图显存限制。
+- 速度（128 原子，单张 A100 共享）：1 rank 183.6 ms；2 rank exact 5167 ms
+  （慢 28×）；2 rank 1-hop 1809 ms 但 max|ΔF|=4.1e-3，未过门。
+- 结论：单 GPU 上单 rank 仍最快。真正并行加速需要 local 图 + 逐层特征交换
+  （forward/reverse message passing）和多 GPU；这是下一阶段重点。

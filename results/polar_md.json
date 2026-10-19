@@ -10,8 +10,8 @@
  "temperature": {
   "target": 300.0,
   "min": 188.964692227191,
-  "max": 335.949829406138,
-  "mean": 276.807843946832,
+  "max": 335.949829406139,
+  "mean": 276.80784394683224,
   "ok": true
  },
  "energy": {
@@ -23,14 +23,14 @@
   "ok": true
  },
  "pressure": {
-  "min": 657.501560490455,
+  "min": 657.501560490472,
   "max": 3231.32026320493,
-  "last": 735.769929872876
+  "last": 735.769929872778
  },
  "lost_atoms": false,
  "errors": false,
  "finite": true,
- "loop_time_s": 24.6831,
- "ms_per_step": 493.662,
+ "loop_time_s": 29.9792,
+ "ms_per_step": 599.584,
  "pass": true
 }
