@@ -485,4 +485,29 @@ cutoff=POLAR r_max(12 Å)、通讯截断、h2h 计时;门 = 与 python 参考同
 3. cutoff = r_max(12 Å)+ 邻居/通讯截断配置(键 force cutoff 与 POLAR 感受野对齐);
 4. LAMMPS 重建 + 单点能量/力 vs python 参考同盒对照(源 A/B 双源);
 5. 短 NVT MD 稳定性冒烟 + h2h 计时表(确定性 + RBE 两模式)。
-**状态: 未开始(接口契约已就位,树可编译)。**
+**状态: ✅ 完成(v29,2026-10-19)。** 全部 5 项落地:
+- `coeff()` 按 `model_type` 分派 `MaceNonlinearKokkosT`(PolarMACE materialized);
+- pair 构造/调用非线性引擎,传 cell/node positions,极性节点力 + virial;
+- cutoff=6 Å(双层感受野 12 Å),单 rank 强制(长程密度需要全局信息);
+- LAMMPS 重建 RC=0;单点 dE 2.9e-11 eV、max dF 2.6e-14 eV/Å;
+- 50 步 NVT MD 稳定(无 lost atoms,Etot span 0.21 eV),493.7 ms/step。
+详见 `docs/REPORT_2026-10-19.md`。
+
+## 23. v29 性能优化(2026-10-19)—— 37.8× (128 原子)
+
+profile 定位到两处:
+1. UVU 前向/反向/replay 均为"每节点一线程 + 内部 512×512 串行",反向还带
+   `atomic_add` 竞争。改为 `(node,u)` 二维并行(4 处),反向去原子加,mode1 预分配
+   工作区。
+2. `_apply_kernel_launch_tuning` 在确认无 JIT 实现前查询完整设备环境,约 0.7 s/eval。
+   将实现身份检查提前。
+
+结果(A100-80GB,f64,energy+forces):
+| 配置 | v28 | v29 | 加速 |
+|---|---|---|---|
+| 128 原子 det | 6951.7 ms | **183.8 ms** | **37.8×** |
+| 128 原子 RBE p=200 | 6962.9 ms | **186.3 ms** | **37.4×** |
+| 1024 原子 det | 7795.6 ms | **1007.7 ms** | **7.7×** |
+
+数值门全部复跑且数字不变(模块⑤–⑧、端到端 32/32、RBE 斜率 −0.499)。
+产物:`bench/polar_perf_v28_vs_v29.png`、`results/polar_perf_v29.json`。

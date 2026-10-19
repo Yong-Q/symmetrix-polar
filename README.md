@@ -25,11 +25,36 @@ GPU speed in LAMMPS-class workflows, without retraining a universal potential.
 | **End-to-end** | Engine vs PyTorch PolarMACE (energy + forces) | **32/32 frames PASS: energy rel 4e-12–1.1e-11 (≤1.0e-6 eV); forces ≤1.6e-7 eV/Å** |
 | P3 ⑧ | Forces (full-chain reverse mode) | **PASS (v27)**: 12/12 configs — FD self-consistency ≤5.8e-4 (gate 1e-3), force parity vs PyTorch ≤7.2e-7 (gate 1e-3; pre-⑧ baseline mean/max 1.24/4.15), ΣF ≈ 1e-14 (exact translation invariance). Root cause of the final gap: missing *project-phase adjoint* in the descriptor reverse (design §2 ⑧-3 (d3), second line) — located via checkpoint audit (`harness/polar_rev_stage_audit.py`), fixed in `descriptor_reverse_channel` (iii-b) |
 | P4 | Random Batch Ewald k-space | **PASS (v28)**: RBE sampling (per-axis rounded-Gaussian + MH per lammps-rbe, counter-based SplitMix64 RNG, seed in JSON, exact discrete Z_q, full-space estimator with importance weights); p-scan RMS_F 4.1e-2 → 1.0e-2 eV/Å @ p=50→800, slope **−0.499** (≈ −1/√p), unbiased, same-seed bitwise-reproducible; see `harness/polar_rbe_gate.py` |
-| P5 | LAMMPS pair wiring + performance | interface contract in place (v28: `MACEKokkos` polar placeholder ⇒ pair + polar force block inert + tree compilable); remaining work: `coeff()` dispatch to the nonlinear engine, cutoff/comm config, LAMMPS rebuild + MD/timing gates — see plan §22 |
+| P5 | LAMMPS pair wiring + performance | **PASS (v29, 2026-10-19)**: `pair_style symmetrix/mace/kk` now dispatches `MACE_Nonlinear`/PolarMACE (materialized), maps LAMMPS types, passes cell/node positions, and adds polar node forces + virial. Single-point parity vs the engine: **dE 2.9e-11 eV**, **max dF 2.6e-14 eV/Å**; 50-step NVT MD: no lost atoms, Etot span **0.21 eV**, 494 ms/step. Performance: **184 ms/eval** at 128 atoms (37.8× v28) and **1008 ms** at 1024 atoms (7.7× v28). Multi-rank is rejected until a distributed long-range density is implemented. See `docs/REPORT_2026-10-19.md` |
 
 Every stage is accepted against **dual-source fixture gates** (frozen Python
 reference dumps + live recomputation through the same PyTorch model), including
 intermediate-tensor comparisons at each block boundary.
+
+## Performance (v29, A100-80GB, f64, energy + forces)
+
+| Configuration | v28 | v29 | Speedup |
+|---|---|---|---|
+| NH3×32, 128 atoms, deterministic | 6951.7 ms | **183.8 ms** | **37.8×** |
+| NH3×32, 128 atoms, RBE p=200 | 6962.9 ms | **186.3 ms** | **37.4×** |
+| NH3×32×2×2×2, 1024 atoms | 7795.6 ms | **1007.7 ms** | **7.7×** |
+
+Root causes found by stage profiling (`MATOS_POLAR_PROFILE=1`):
+
+1. **UVU tensor products were per-node serial**: the forward, reverse, and SCF
+   replay kernels each used one GPU thread per node with an internal 512×512
+   loop. Rewritten as `(node, u)` 2-D kernels (four sites: forward SCF, forward
+   local-electron, reverse, replay), removing atomics in the reverse path.
+2. **Python launch-tuning probe on non-JIT models**: `_apply_kernel_launch_tuning`
+   queried the full device environment before checking whether a tunable JIT
+   implementation existed, costing ~0.7 s/eval for materialized models. The
+   implementation-identity check now runs first.
+
+All numerical gates are unchanged after the optimization (module ⑤–⑧ PASS;
+end-to-end 32/32 with energy rel ≤4.2e-12 and forces ≤1.6e-7 eV/Å; RBE gate
+still slope −0.499 and bitwise seed-reproducible).
+
+![v28 vs v29 performance](results/polar_perf_v28_vs_v29.png)
 
 ## Repository layout
 
@@ -37,8 +62,9 @@ intermediate-tensor comparisons at each block boundary.
 patches/    symmetrix-xl-polar-support.patch — the complete engine patch
             (against symmetrix-xl upstream; includes a new standalone
              compilation unit for the polar layer)
-harness/    verification gates, preflights, diagnostics, patch appliers
-            (all run against the frozen fixtures or live reference model)
+harness/    verification gates, preflights, diagnostics, patch appliers,
+            and the P5 LAMMPS parity/MD gates (run against frozen fixtures,
+            the live reference model, or the patched LAMMPS build)
 docs/       project plan (zh) + design documents:
               design/RBE_P4_DESIGN.md            — Random Batch Ewald plan
               design/POLAR_REVERSE_DESIGN.md     — force/adjoint chain design
@@ -86,6 +112,11 @@ python harness/polar_engine_load_smoke.py
 python harness/polar_module1_gate.py --live 2
 python harness/polar_module34_gate.py
 python harness/polar_module5_gate.py
+
+# P5 LAMMPS gates (after building the patched LAMMPS; edit LMP at the top of
+# each script to point at the local build)
+python harness/polar_lammps_parity.py
+python harness/polar_lammps_md.py
 ```
 
 ## Sync discipline
