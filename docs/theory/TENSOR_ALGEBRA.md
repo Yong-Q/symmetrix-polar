@@ -48,8 +48,10 @@ x^{(l_1)}_{m_1}\,y^{(l_2)}_{m_2}
 
 where \(C\) are Clebsch–Gordan coefficients. The product is the expensive
 regular FP64 contraction in the model. The engine's “MH-1 fused” kernels run at
-100% SM coverage (for the 128-atom case) and are compute-bound; they are **not**
-the target of the UVU fixes.
+100% SM coverage (for the 128-atom case) but are **instruction/store-bound**,
+not compute-bound: measured 0.12–0.25 TFLOP/s, 5–12x below the DMMA ridge
+because each output has only 1–21 nonzero Wigner entries. They are the target
+of the round-3 channel-blocking plan, not of the UVU fixes.
 
 ## 2.3 UVU factorization
 

@@ -87,10 +87,12 @@ starts with the stale-binary lesson, not with a source diff.
 Round 2 leaves 49.97 ms of GPU busy and 56.50 ms wall. The largest remaining
 items are:
 
-1. **Tensor products — 10.81 ms (19% of wall), already 100% SM-covered,
-   compute-bound.** The next lever is FP64 tensor cores (DMMA) or a better
-   contraction layout, not occupancy. Estimated 2–4 ms if a packed/batched
-   path is feasible and gate-neutral.
+1. **Tensor products — 10.81 ms (19% of wall), already 100% SM-covered.**
+   The round-3 plan shows they are **instruction/store-bound**, not
+   FLOP-bound: measured 0.12–0.25 TFLOP/s, 5–12x below the DMMA ridge, with
+   only 1–21 nonzero Wigner entries per output. The next lever is channel
+   blocking + register accumulation + zero-fill elision, **not DMMA**.
+   Expected 3.4–4.7 ms from these slices.
 2. **cuBLAS/external — 3.80 ms, 312 launches, 14.8% coverage.** Batch/group
    the small GEMMs; expected 2–3 ms.
 3. **UVU reverse — 6.76 ms (x2 3.55 + x1 3.21), 39.5% coverage.** The smem tile
@@ -141,8 +143,10 @@ All required gates pass on the final build; see
 - The RN 2-D fallback is dormant for this model (fused path used); it is kept
   as the safety net and was proven bitwise with the env revert.
 - Further tensor-product work was not attempted in this round: those kernels
-  already run at 100% coverage; the next attempt must target math throughput
-  (DMMA) rather than occupancy.
+  already run at 100% coverage. The round-3 plan rules out DMMA (the measured
+  arithmetic intensity is 5–12x below the ridge) and targets instruction/store
+  reduction instead: channel blocking, register accumulation, and zero-fill
+  elision.
 - No FP32/TF32 path was introduced; it would violate the gate.
 
 ## 9. Artifacts and reproduction

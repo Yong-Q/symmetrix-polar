@@ -120,7 +120,9 @@ P=\min\left(P_{\rm peak},\,I\cdot B_{\rm mem}\right).
 \]
 
 - e3 linear was latency-bound (low \(I\), strided loads), not FLOP-bound.
-- The tensor products are compute-bound (100% coverage, regular FP64).
+- The MH-1 tensor products are 100% covered but **instruction/store-bound**,
+  not compute-bound: measured 0.12–0.25 TFLOP/s, 5–12x below the DMMA ridge
+  (1–21 nonzero Wigner entries per output). See the round-3 plan.
 - UVU small dots are latency-bound; widening the grid is the fix.
 - Hardware counters are unavailable, so the roofline is used qualitatively,
   not as a measured plot.
@@ -133,7 +135,10 @@ P=\min\left(P_{\rm peak},\,I\cdot B_{\rm mem}\right).
    TeamPolicy, edge-level parallelism.
 3. **Fuse dependent kernels** to reduce serial boundaries and launches.
 4. **Batch small GEMMs** into grouped/batched calls.
-5. **Use FP64 tensor cores** where the contraction is regular (next round).
+5. **Use FP64 tensor cores only where the arithmetic intensity clears the DMMA
+   ridge.** The MH-1 tensor products are 5–12x below it (1–21 nonzero entries
+   per output, 0.12–0.25 TFLOP/s), so they need instruction/store reduction
+   (channel blocking, register accumulation), not DMMA.
 6. **Do not** use FP32/TF32, drop terms, or add redundant ghost work just to
    raise occupancy.
 

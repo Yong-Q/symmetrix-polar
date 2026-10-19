@@ -102,7 +102,7 @@ per-SM occupancy; `SM cov` is the static grid coverage defined above.
 | 7 | `polar uvu mode0` | polar pipeline | 5.76 | 3.1% | 6 | 960 | 32 | 256 / 2x128 | 100% / 30% | forward UVU; 30% grid coverage |
 | 8 | `polar reverse uvu mode0 x1` | polar pipeline | 5.45 | 3.0% | 10 | 545 | 32 | 256 / 2x128 | 100% / 30% | paired with #5; separate launch |
 | 9 | `polar le uvu mode0` | polar pipeline | 4.59 | 2.5% | 4 | 1147 | 32 | 256 / 2x128 | 100% / 30% | local-electron UVU; 30% grid coverage |
-| 10 | `e3 tensor reverse mh1 fused channels` | tensor product | 4.32 | 2.4% | 2 | 2158 | 48 | 256 / 73x32 | 62% / 100% | regular FP64 contraction; compute-bound |
+| 10 | `e3 tensor reverse mh1 fused channels` | tensor product | 4.32 | 2.4% | 2 | 2158 | 48 | 256 / 73x32 | 62% / 100% | regular FP64 contraction; 100% covered; **later reclassified instruction/store-bound** (round-3 plan) |
 
 Top 10 = **141.2 ms, 77.0% of the clean eval**, 292 of 755 launches.
 
@@ -180,8 +180,10 @@ time. Largest positive deltas (full − backbone):
   the weight matrix is small enough to sit in L2, but each sample re-reads it
   and the K loop is serial per thread; measured throughput is a few percent of
   the A100 FP64 peak. The tensor-product kernels (`73x128`, `73x32` grids) are
-  the only large compute-bound FP64 kernels. The UVU kernels are small-dot-
-  product latency-bound. cuBLAS is not a bottleneck because it is barely used.
+  100% covered, but the round-3 plan shows they are **instruction/store-bound**
+  (0.12–0.25 TFLOP/s, 5–12x below the DMMA ridge), not compute-bound. The UVU
+  kernels are small-dot-product latency-bound. cuBLAS is not a bottleneck
+  because it is barely used.
 
 ## Caveat: concurrent tree edits
 

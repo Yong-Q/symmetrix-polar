@@ -1,11 +1,14 @@
 # Kernel Round 3 — Target, Acceptance Contract, and Iteration Loop
 
 **中文摘要：** round 3 的目标是把 128 原子全模型从 **56.50 ms** 压到
-**20–30 ms**，同时保持 FP64 和全部数值门通过。30 ms 是必须达到的主目标，
-20–25 ms 是冲刺；20 ms 已经低于“当前工作量 100% SM 覆盖”的静态下界
-（22.93 ms），因此必须同时做到 DMMA/张量核、删除冗余工作、压缩 host gap，
-不是单靠把现有 kernel 摊宽。任何一片不过 gate 就回退，换下一片，不降低精度门；
-达不到目标不停止迭代。
+**20–30 ms**，同时保持 FP64 和全部数值门通过。详细规划
+（`KERNEL_ROUND3_PLAN.md`）有一个重要结论：**MH-1 tensor product 不能改成
+DMMA/GEMM**（每输出只有 1–21 个非零项，实测 0.12–0.25 TFLOP/s，瓶颈是标量
+指令和输出写带宽，不是浮点吞吐，DMMA ridge 的 5–12× 以下）。因此 Stage 1
+（通道分块、寄存器累加、删 zero-fill、UVU/affine/cutoff 加宽）的现实目标是
+**41–45 ms**；**30 ms 需要 Stage 2**（gather/SCF/host-gap/UVU forward/fusion
+等额外 8–13.5 ms）；**20–25 ms** 还需要 Stage 2 之外的算法级删工作，置信度低。
+任何一片不过 gate 就回退，换下一片，不降低精度门；达不到目标不停止迭代。
 
 ## 1. Baseline and goal
 
@@ -25,33 +28,37 @@ target. Occupancy is a means; the gate is the contract.
 
 | Level | What it requires | Confidence |
 |---|---|---|
-| **30 ms** | DMMA tensor products + cuBLAS batching + UVU/low-coverage widening + significant host-gap reduction | high if DMMA lands |
-| **25 ms** | the above plus near-optimal UVU/low-coverage and launch elimination | medium |
-| **20 ms** | also remove work (replay/gather/redundant passes) and/or exceed the current-work static floor via tensor cores; small-grid/dependency floor at 128 atoms | low but pursued |
+| **41–45 ms** | Stage 1: MH-1 channel blocking/register accumulation/zero-fill elision, UVU reverse split, affine/convolution widening, e3 pack/unpack fusion, tiny-GEMM grouping | high |
+| **30–35 ms** | Stage 2: gather fusion, SCF/Coulomb occupancy, host-gap refactor, UVU forward/replay/LE, tensor second pass, replay/stage fusion | medium |
+| **20–25 ms** | Stage 2 plus algorithmic work removal (fewer SCF iterations within tolerance, caching invariants, persistent-kernel refactor); below the current-work static floor 22.93 ms | low but pursued |
 
 We will not fake 20 ms by relaxing gates, dropping terms, or using FP32/TF32.
 If the measured floor is above 20 ms, the result will say so with the exact
 blocking kernels and the evidence.
 
-## 2. Budget (staged, from the r5 profile)
+## 2. Budget (staged, from the r5 profile and the round-3 plan)
 
 | Stage | Slice | Current | Expected saving | Cumulative |
 |---|---|---:|---:|---:|
-| A | FP64 tensor products (DMMA/batched GEMM) | 10.81 ms | 4–6 ms | 50.5–52.5 |
-| A | cuBLAS 312 small launches | 3.80 ms | 2–3 ms | 47.5–50.5 |
-| A | UVU reverse x1/x2 | 6.76 ms | 2–3 ms | 44.5–48.5 |
-| A | low-coverage affine/convolution | 4.33 ms | 2–3 ms | 41.5–46.5 |
-| B | UVU forward/replay/LE + mode1 | ~5.3 ms | 2–3 ms | 38.5–44.5 |
-| B | e3 pack/unpack fusion | 1.76 ms | 1–1.5 ms | 37–43.5 |
-| B | gather fusion (adjoint + messages) | 3.56 ms | 1–2 ms | 35–42.5 |
-| B | SCF/project 1×1×1 kernels | ~5.7 ms | 1–2 ms | 33–41.5 |
-| C | host gaps / CUDA Graph / launch elimination | ~6.5 ms | 3–4.5 ms | **28.5–38.5** |
-| C | replay elimination / persistent fusion | ~1.2 ms + fusion | 1–2 ms | **26.5–37.5** |
-| D | DMMA at tensor-core peak / work removal | residual | 2–5 ms | **20–35.5** |
+| 1 | MH-1 reverse channels: channel blocking + register accumulation | 4.29 ms | 2.0–2.7 ms | 53.8–54.5 |
+| 1 | MH-1 forward: channel blocking + write-through, drop zero-fill | 3.34 ms | 1.4–2.0 ms | 51.8–53.1 |
+| 1 | UVU reverse x1/x2: split reduction + `mixed_bar` staging | 6.76 ms | 2.4–3.4 ms | 48.4–50.7 |
+| 1 | Affine LayerNorm+SiLU forward/reverse: team per row | 2.80 ms | 2.0–2.4 ms | 46.0–48.7 |
+| 1 | Reverse convolution cutoff: 2-D (edge,k) | 1.53 ms | 1.0–1.2 ms | 44.8–47.7 |
+| 1 | MH-1 reverse harmonics: channel unroll | 3.10 ms | 0.9–1.4 ms | 43.4–46.8 |
+| 1 | e3-linear pack/unpack fusion | 2.68 ms | 1.5–2.5 ms | 40.9–45.3 |
+| 1 | Tiny cuBLAS grouping | 0.39 ms | 0.2–0.3 ms | **40.5–45.1** |
+| 2 | Gather fusion (adjoint + messages) | ~3.6 ms | 1.0–2.0 ms | 38.5–44.1 |
+| 2 | SCF/Coulomb/project occupancy | ~5.7 ms | 1.0–2.0 ms | 36.5–43.1 |
+| 2 | Host-gap refactor / partial graph | ~6.5 ms gap | 3.0–4.0 ms | **32.5–40.1** |
+| 2 | UVU forward/replay/LE split | ~3.3 ms | 1.0–1.5 ms | 31.5–38.6 |
+| 2 | Tensor second pass (8-channel, plan hoisting) | ~4.6–5.2 ms | 1.0–2.0 ms | 29.5–37.6 |
+| 2 | Replay elimination / stage fusion | ~1–3 ms | 1.0–2.0 ms | **27.5–36.6** |
+| 3 | Algorithmic work removal / persistent kernels | residual | 3–8 ms | **20–33** |
 
 The stages land one at a time. If a slice fails the gate or yields <1 ms,
-revert it and take the next; the target does not move. Stage A alone does not
-reach 30 ms; **30 ms requires Stage B + C**, and 20–25 ms requires Stage D.
+revert it and take the next; the target does not move. **Stage 1 alone does
+not reach 30 ms; 30 ms requires Stage 2; 20–25 ms requires Stage 3.**
 
 ## 3. Acceptance contract
 
@@ -99,7 +106,10 @@ profile -> pick the largest valid slice -> implement -> build -> A/B -> gates
 ## 6. Current state
 
 - Round-2 is accepted and committed (`f25c655`, `3b51131`, `fef3e03`).
-- Round-3 planning is in progress (`docs/design/KERNEL_ROUND3_PLAN.md`).
+- Round-3 planning is **complete** (`docs/design/KERNEL_ROUND3_PLAN.md`): it
+  rules out DMMA for MH-1 tensor products with measured arithmetic-intensity
+  evidence and defines the Stage-1 slices (41–45 ms) and Stage-2 levers
+  (30–35 ms).
 - MPI H1 is still being reworked; it is not part of the round-3 speed target
   until the 2-rank parity gate passes again.
 - The remote 1-GPU probe is queued on queue004; the 2-GPU task is pending

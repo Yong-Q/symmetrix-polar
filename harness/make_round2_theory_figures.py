@@ -14,20 +14,14 @@ import matplotlib.pyplot as plt
 from matplotlib import mathtext
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Circle
 
+import figstyle
+
 PROJ = Path("/workspace/group/shared/bza/symmetrix-polar")
 BENCH = PROJ / "bench" / "kernel_round2_2026-10-19"
 FIG = PROJ / "docs" / "figures"
 FIG.mkdir(parents=True, exist_ok=True)
 
-plt.rcParams.update({
-    "font.size": 9,
-    "axes.titlesize": 10,
-    "axes.labelsize": 9,
-    "figure.dpi": 160,
-    "savefig.dpi": 160,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-})
+figstyle.apply()
 
 summary = json.loads((BENCH / "summary.json").read_text())
 h1 = json.loads(Path(
@@ -44,37 +38,44 @@ def read_csv(path):
 # 13: round-2 speed
 # ---------------------------------------------------------------------------
 sp = summary["speed"]
-fig, axes = plt.subplots(1, 2, figsize=(10, 4.2))
+fig, axes = plt.subplots(1, 2, figsize=(10, 4.0),
+                         gridspec_kw={"width_ratios": [1.55, 1.0]})
 ax = axes[0]
-labels = ["full\n128 atoms", "polar-off\n128 atoms"]
+labels = ["full", "polar-off"]
 before = [sp["baseline_ms"], sp["polaroff_before_ms"]]
 after = [sp["final_ms"], sp["polaroff_after_ms"]]
-x = range(len(labels))
-ax.bar([i - 0.18 for i in x], before, width=0.36, label="before", color="#9aa4b2")
-ax.bar([i + 0.18 for i in x], after, width=0.36, label="round 2", color="#1f6feb")
+x = list(range(len(labels)))
+b1 = ax.bar([i - 0.18 for i in x], before, width=0.36,
+            color=figstyle.GRAY, label="before round 2")
+b2 = ax.bar([i + 0.18 for i in x], after, width=0.36,
+            color=figstyle.BLUE, label="round 2")
 for i, (b, a) in enumerate(zip(before, after)):
+    top = max(b, a)
     ax.text(i - 0.18, b + 2, f"{b:.1f}", ha="center", va="bottom", fontsize=8)
     ax.text(i + 0.18, a + 2, f"{a:.1f}", ha="center", va="bottom", fontsize=8)
-    ax.text(i, max(b, a) * 0.52, f"{b/a:.2f}x", ha="center", color="#0b3d91",
-            fontweight="bold")
-ax.set_xticks(list(x)); ax.set_xticklabels(labels)
+    ax.text(i, top * 1.12, f"{b/a:.2f}x", ha="center", va="bottom",
+            color=figstyle.BLUE, fontweight="bold", fontsize=9)
+ax.set_xticks(x); ax.set_xticklabels(labels)
 ax.set_ylabel("ms / eval"); ax.set_title("NH3, 128 atoms (energy + forces)")
-ax.legend(frameon=False)
+ax.set_ylim(0, max(before) * 1.22)
+ax.set_axisbelow(True)
 ax = axes[1]
 before = [sp["n2_432_before_ms_per_step"]]
 after = [sp["n2_432_after_ms_per_step"]]
-ax.bar([-0.18], before, width=0.36, color="#9aa4b2", label="before")
-ax.bar([0.18], after, width=0.36, color="#1f6feb", label="round 2")
+ax.bar([-0.18], before, width=0.36, color=figstyle.GRAY)
+ax.bar([0.18], after, width=0.36, color=figstyle.BLUE)
 ax.text(-0.18, before[0] + 4, f"{before[0]:.1f}", ha="center", fontsize=8)
 ax.text(0.18, after[0] + 4, f"{after[0]:.1f}", ha="center", fontsize=8)
-ax.text(0, max(before) * 0.55, f"{before[0]/after[0]:.2f}x", ha="center",
-        color="#0b3d91", fontweight="bold")
-ax.set_xticks([0]); ax.set_xticklabels(["N2, 432 atoms"])
+ax.text(0, before[0] * 1.12, f"{before[0]/after[0]:.2f}x", ha="center",
+        va="bottom", color=figstyle.BLUE, fontweight="bold", fontsize=9)
+ax.set_xticks([0]); ax.set_xticklabels(["full"])
 ax.set_ylabel("ms / step"); ax.set_title("N2, 432 atoms (first 10-step loop)")
-ax.legend(frameon=False)
-fig.tight_layout()
-fig.savefig(FIG / "13_kernel_round2_speed.png", bbox_inches="tight")
-plt.close(fig)
+ax.set_ylim(0, before[0] * 1.22)
+ax.set_axisbelow(True)
+fig.legend([b1, b2], ["before round 2", "round 2"], loc="upper center",
+           ncol=2, bbox_to_anchor=(0.5, 1.03))
+fig.tight_layout(rect=(0, 0, 1, 0.94))
+figstyle.save(fig, FIG / "13_kernel_round2_speed.png")
 
 # ---------------------------------------------------------------------------
 # 14: waterfall from 122.46 to 56.50 ms

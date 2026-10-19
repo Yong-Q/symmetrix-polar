@@ -644,8 +644,9 @@ pre-existing CUDA teardown abort; acceptance requires the PASS marker and JSON.
 
 ![Family before/after](figures/15_kernel_round2_families.png)
 
-**What remains:** tensor products 10.81 ms (already 100% SM-covered,
-compute-bound; next lever is FP64 tensor cores/DMMA), cuBLAS 3.80 ms (312
+**What remains:** tensor products 10.81 ms (already 100% SM-covered but
+instruction/store-bound; the round-3 plan rules out DMMA and targets channel
+blocking + register accumulation + zero-fill elision), cuBLAS 3.80 ms (312
 launches, 14.8% coverage), UVU reverse 6.76 ms (39.5%), and narrow
 affine/convolution kernels 4.33 ms (3%). Replay is no longer a major target:
 the UVU rewrite reduced it from 5.77 to 1.20 ms, so eliminating replay now
@@ -689,7 +690,7 @@ Details: [`results/MPI_H1.md`](results/MPI_H1.md) and
 
 | Workstream | State |
 |---|---|
-| DMMA / batched GEMM for tensor products | proposed; needs layout and gate validation |
+| MH-1 tensor products: channel blocking + register accumulation + zero-fill elision | proposed in `design/KERNEL_ROUND3_PLAN.md`; DMMA ruled out by measured arithmetic intensity |
 | cuBLAS small-GEMM batching | proposed |
 | UVU reverse further widening / x1+x2 fusion | proposed |
 | narrow affine / convolution kernels (3% coverage) | proposed |
@@ -706,13 +707,16 @@ All commands run from the MLIP bench workspace, which is the source of the
 gates and logs:
 
 ```bash
-export MLIP=/workspace/group/shared/bza/task3_sampling_database/mlip
+export MLIP=/workspace/group/shared/bza/\
+task3_sampling_database/mlip
 cd "$MLIP"
 
 export CUDA_VISIBLE_DEVICES=0
 export SYMMETRIX_BACKEND=cuda12-sm80
-export SYMMETRIX_BACKEND_DESCRIPTOR_PATH="$MLIP/models/mace-polar/backend_cuda12_sm80.json"
-export LD_LIBRARY_PATH=/opt/matos-tools/cuda/12.9/lib64:/opt/matos-tools/conda/envs/matos-compute/lib
+export SYMMETRIX_BACKEND_DESCRIPTOR_PATH=\
+"$MLIP/models/mace-polar/backend_cuda12_sm80.json"
+export LD_LIBRARY_PATH=/opt/matos-tools/cuda/12.9/lib64:\
+/opt/matos-tools/conda/envs/matos-compute/lib
 PY=/workspace/caches/conda/envs/polar/bin/python
 
 # Accuracy gates
@@ -746,7 +750,8 @@ Notes:
 - Do not run these on a shared GPU without exclusive access; the v29 absolute
   times are contention-sensitive.
 - The patched LAMMPS binary used by the gates is
-  `/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-lammps-aacd036df381800a/lmp`.
+  `symmetrix/build-lammps-aacd036df381800a/lmp` under the engine checkout
+  (`external-repos/symmetrix-xl` in the workspace).
 - The engine patch is `patches/symmetrix-xl-polar-support.patch` (325,145 bytes).
 
 ---
@@ -781,8 +786,8 @@ Notes:
 
 | Artifact | Path |
 |---|---|
-| v28 benchmark JSON | `/workspace/group/shared/bza/task3_sampling_database/mlip/bench/polar_perf_v28.json` |
-| v29 benchmark JSON (copy) | `/workspace/group/shared/bza/task3_sampling_database/mlip/bench/polar_perf.json` |
+| v28 benchmark JSON | `.../mlip/bench/polar_perf_v28.json` |
+| v29 benchmark JSON (copy) | `.../mlip/bench/polar_perf.json` |
 | Engine comparison JSON | `.../bench/lammps_parity/engine_compare/engine_compare.json` |
 | Homogeneous timings | `.../bench/lammps_parity/homog_timing/homog_timing.json` |
 | RBE 33 A timings | `.../bench/lammps_parity/rbe_md_timing/rbe_md_timing.json` |
