@@ -70,6 +70,24 @@ passing with per-layer feature exchange and multiple GPUs.
 
 ![MPI status](results/polar_mpi_status.png)
 
+### Engine comparison (v30, same 128-atom box, one A100)
+
+| Configuration | 1-rank eval |
+|---|---:|
+| Linear MACE-OFF23 medium (`MACEKokkos`) | **7.2 ms** |
+| Linear MACE + `mpi_message_passing` | 13.6 ms |
+| Nonlinear backbone (polar off) | **87.2 ms** |
+| Full PolarMACE v29 | **183.5 ms** |
+
+The nonlinear engine is ~12× the linear engine on this workload; the polar
+layer adds another 2.1×. For MPI, upstream linear H1 message passing is 3.4×
+slower at 2 ranks on one shared GPU, while our exact ghost path is 28.1×
+slower—message passing is ~113× faster than ghost replication at 2 ranks.
+The linear MACE model is not the same potential; this is an engine-overhead
+comparison, not a model-accuracy comparison.
+
+![Engine comparison](results/polar_engine_compare.png)
+
 
 ## Repository layout
 
