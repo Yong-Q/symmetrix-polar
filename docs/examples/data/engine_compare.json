@@ -1,0 +1,32 @@
+[
+ {
+  "label": "linear MACE-OFF23 medium",
+  "note": "MACE (linear engine)",
+  "model": "/workspace/group/shared/bza/task3_sampling_database/mlip/models/symmetrix/mace-off23-medium.json",
+  "rc": 0,
+  "loop_time_s": 0.007219,
+  "ms_per_eval": 7.218999999999999,
+  "pe": -49282.521,
+  "error": null
+ },
+ {
+  "label": "nonlinear backbone only",
+  "note": "MACE_Nonlinear, polar blocks off",
+  "model": "/workspace/group/shared/bza/task3_sampling_database/mlip/models/mace-polar/polar_symmetrix_probe_polaroff.json",
+  "rc": 0,
+  "loop_time_s": 0.0872388,
+  "ms_per_eval": 87.23880000000001,
+  "pe": -49251.677,
+  "error": null
+ },
+ {
+  "label": "full PolarMACE v29",
+  "note": "MACE_Nonlinear + polar",
+  "model": "/workspace/group/shared/bza/task3_sampling_database/mlip/models/mace-polar/polar_symmetrix_probe.json",
+  "rc": 0,
+  "loop_time_s": 0.183495,
+  "ms_per_eval": 183.495,
+  "pe": -49242.456,
+  "error": null
+ }
+]

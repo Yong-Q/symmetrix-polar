@@ -1,0 +1,16 @@
+[
+ {
+  "nproc": 1,
+  "rc": 0,
+  "loop_time_s": 0.0135862,
+  "ms_per_eval": 13.5862,
+  "error": null
+ },
+ {
+  "nproc": 2,
+  "rc": 0,
+  "loop_time_s": 0.0458779,
+  "ms_per_eval": 45.8779,
+  "error": null
+ }
+]

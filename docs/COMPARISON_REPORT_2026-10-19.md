@@ -346,6 +346,24 @@ No PyTorch-vs-engine speed ratio is claimed.
 
 ![RBE gate](../results/polar_rbe_gate_v29.png)
 
+The reading package adds the higher-level diagnostic figures (relative paths
+from this `docs/` directory):
+
+![Cost structure: backbone vs long-range vs polar kernels](figures/01_cost_structure.png)
+
+![RBE speed/accuracy trade-off and the force gate](figures/02_rbe_tradeoff.png)
+
+![All accuracy gates pass with large margin](figures/03_gate_margins.png)
+
+![Homogeneous MD per-step cost and 1 ns extrapolation](figures/04_homog_cost.png)
+
+![LAMMPS single-point parity and residual distribution](figures/07_lammps_parity.png)
+
+![NVT MD temperature and energy stability](figures/08_nvt_md.png)
+
+See [阅读说明](阅读说明.md) for the reading order, data provenance, and
+reproduction entry points.
+
 ---
 
 ## 4. Findings

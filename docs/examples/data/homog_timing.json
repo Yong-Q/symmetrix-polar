@@ -1,0 +1,101 @@
+[
+ {
+  "molecule": "N2",
+  "elements": [
+   "N"
+  ],
+  "atoms": 432,
+  "temperature_K": 151.43,
+  "density_A^-3": 0.006,
+  "nmol": 216,
+  "rc": 0,
+  "loop_time_s": 4.76668,
+  "ms_per_step": 476.668,
+  "est_10ps_h": 2.6481555555555554,
+  "est_100ps_h": 26.481555555555552,
+  "est_1ns_days": 11.033981481481481,
+  "est_1.5ns_days": 16.55097222222222,
+  "error": null,
+  "note": "T/Tc=1.20"
+ },
+ {
+  "molecule": "CO2",
+  "elements": [
+   "C",
+   "O"
+  ],
+  "atoms": 648,
+  "temperature_K": 364.95,
+  "density_A^-3": 0.006,
+  "nmol": 216,
+  "rc": 0,
+  "loop_time_s": 17.4914,
+  "ms_per_step": 1749.1399999999999,
+  "est_10ps_h": 9.717444444444443,
+  "est_100ps_h": 97.17444444444445,
+  "est_1ns_days": 40.48935185185185,
+  "est_1.5ns_days": 60.734027777777776,
+  "error": null,
+  "note": "T/Tc=1.20"
+ },
+ {
+  "molecule": "CH4",
+  "elements": [
+   "H",
+   "C"
+  ],
+  "atoms": 1080,
+  "temperature_K": 317.0,
+  "density_A^-3": 0.006,
+  "nmol": 216,
+  "rc": 0,
+  "loop_time_s": 10.9537,
+  "ms_per_step": 1095.37,
+  "est_10ps_h": 6.085388888888888,
+  "est_100ps_h": 60.85388888888889,
+  "est_1ns_days": 25.355787037037036,
+  "est_1.5ns_days": 38.033680555555556,
+  "error": null,
+  "note": "T*=2 (task1 CH4 bulk)"
+ },
+ {
+  "molecule": "H2O",
+  "elements": [
+   "H",
+   "O"
+  ],
+  "atoms": 648,
+  "temperature_K": 776.52,
+  "density_A^-3": 0.006,
+  "nmol": 216,
+  "rc": 0,
+  "loop_time_s": 36.4987,
+  "ms_per_step": 3649.87,
+  "est_10ps_h": 20.277055555555553,
+  "est_100ps_h": 202.77055555555555,
+  "est_1ns_days": 84.48773148148148,
+  "est_1.5ns_days": 126.73159722222222,
+  "error": null,
+  "note": "T/Tc=1.20"
+ },
+ {
+  "molecule": "NH3",
+  "elements": [
+   "H",
+   "N"
+  ],
+  "atoms": 864,
+  "temperature_K": 486.48,
+  "density_A^-3": 0.006,
+  "nmol": 216,
+  "rc": 0,
+  "loop_time_s": 22.1759,
+  "ms_per_step": 2217.5899999999997,
+  "est_10ps_h": 12.319944444444443,
+  "est_100ps_h": 123.19944444444444,
+  "est_1ns_days": 51.33310185185185,
+  "est_1.5ns_days": 76.99965277777778,
+  "error": null,
+  "note": "T/Tc=1.20"
+ }
+]

@@ -1,0 +1,36 @@
+{
+ "gate": "P5-B",
+ "system": {
+  "atoms": 128,
+  "steps": 50,
+  "timestep_fs": 0.5
+ },
+ "completed": true,
+ "thermo_rows": 11,
+ "temperature": {
+  "target": 300.0,
+  "min": 188.964692227191,
+  "max": 335.949829406139,
+  "mean": 276.80784394683224,
+  "ok": true
+ },
+ "energy": {
+  "pe_first": -49242.4564153149,
+  "pe_last": -49241.964606067,
+  "etotal_first": -49237.5316037904,
+  "etotal_last": -49237.3186541311,
+  "etotal_span": 0.21294965929700993,
+  "ok": true
+ },
+ "pressure": {
+  "min": 657.501560490472,
+  "max": 3231.32026320493,
+  "last": 735.769929872778
+ },
+ "lost_atoms": false,
+ "errors": false,
+ "finite": true,
+ "loop_time_s": 29.9792,
+ "ms_per_step": 599.584,
+ "pass": true
+}

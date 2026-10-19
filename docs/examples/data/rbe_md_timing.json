@@ -1,0 +1,30 @@
+[
+ {
+  "rbe_p": null,
+  "rc": 0,
+  "loop_time_s": 4.77827,
+  "ms_per_step": 477.82700000000006,
+  "error": null
+ },
+ {
+  "rbe_p": 50,
+  "rc": 0,
+  "loop_time_s": 3.85427,
+  "ms_per_step": 385.427,
+  "error": null
+ },
+ {
+  "rbe_p": 200,
+  "rc": 0,
+  "loop_time_s": 4.05901,
+  "ms_per_step": 405.90099999999995,
+  "error": null
+ },
+ {
+  "rbe_p": 800,
+  "rc": 0,
+  "loop_time_s": 4.65281,
+  "ms_per_step": 465.28099999999995,
+  "error": null
+ }
+]

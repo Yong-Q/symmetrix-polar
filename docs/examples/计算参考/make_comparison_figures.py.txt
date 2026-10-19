@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Generate the intuitive comparison figures for the Symmetrix-Polar report.
+
+Reads existing JSON/log data only; no GPU runs.
+"""
+import json
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+ROOT = Path("/workspace/group/shared/bza/task3_sampling_database/mlip")
+PROJ = Path("/workspace/group/shared/bza/symmetrix-polar")
+OUT = PROJ / "docs" / "figures"
+OUT.mkdir(parents=True, exist_ok=True)
+
+plt.style.use("seaborn-v0_8-whitegrid")
+plt.rcParams.update({
+    "font.size": 10,
+    "axes.titlesize": 12,
+    "axes.titleweight": "bold",
+    "axes.labelsize": 10,
+    "savefig.dpi": 150,
+})
+BLUE = "#1f6feb"
+GREEN = "#2da44e"
+ORANGE = "#bf8700"
+RED = "#cf222e"
+GRAY = "#8c96a0"
+
+
+def save(fig, name):
+    fig.savefig(OUT / name, bbox_inches="tight")
+    plt.close(fig)
+    print("wrote", OUT / name)
+
+
+# 1) Cost structure at 128 and 432 atoms -------------------------------------
+# 128 atoms: backbone 87.2, full 183.5; long-range estimated from RBE p50
+# saving (183.8-177.6=6.2 ms); polar non-k by difference.
+# 432 atoms: polaroff 190.7, full 475.9; long-range 90-100 (RBE saving ~92).
+fig, ax = plt.subplots(figsize=(9, 4.6))
+groups = ["128 atoms\n(NH$_3$ x32)", "432 atoms\n(N$_2$ x216, 33 Å)"]
+backbone = np.array([87.2, 190.7])
+long_range = np.array([6.2, 92.4])
+polar_non_k = np.array([183.5 - 87.2 - 6.2, 475.9 - 190.7 - 92.4])
+x = np.arange(len(groups))
+ax.bar(x, backbone, 0.5, label="nonlinear backbone", color=GREEN)
+ax.bar(x, long_range, 0.5, bottom=backbone,
+       label="long-range k-space (estimate)", color=ORANGE, hatch="//",
+       edgecolor="white")
+ax.bar(x, polar_non_k, 0.5, bottom=backbone + long_range,
+       label="polar SCF/UVU/LE/reverse", color=BLUE)
+for i, total in enumerate(backbone + long_range + polar_non_k):
+    ax.text(i, total + 8, f"{total:.0f} ms", ha="center", va="bottom",
+            fontweight="bold")
+    ax.text(i, backbone[i] / 2, f"{backbone[i]:.0f}", ha="center", va="center",
+            color="white", fontsize=9)
+    ax.text(i, backbone[i] + long_range[i] / 2,
+            f"{long_range[i]:.0f}", ha="center", va="center", fontsize=8)
+    ax.text(i, backbone[i] + long_range[i] + polar_non_k[i] / 2,
+            f"{polar_non_k[i]:.0f}", ha="center", va="center", color="white",
+            fontsize=9)
+ax.set_xticks(x)
+ax.set_xticklabels(groups)
+ax.set_ylabel("time per energy+force eval (ms)")
+ax.set_title("Where the time goes: backbone vs long-range vs polar kernels")
+ax.legend(loc="upper left", frameon=True, fontsize=8)
+ax.set_ylim(0, 560)
+save(fig, "01_cost_structure.png")
+
+# 2) RBE trade-off: speed vs force error, gate line ---------------------------
+fig, ax = plt.subplots(figsize=(8.2, 4.8))
+points = [
+    ("deterministic", 477.8, 1e-8, GREEN),
+    ("RBE p=50", 385.4, 4.10e-2, ORANGE),
+    ("RBE p=200", 405.9, 2.14e-2, ORANGE),
+    ("RBE p=800", 465.3, 1.03e-2, ORANGE),
+]
+for label, ms, err, color in points:
+    ax.scatter(ms, err, s=110, color=color, edgecolor="white", zorder=3)
+    ax.annotate(label, (ms, err), xytext=(8, 8), textcoords="offset points",
+                fontsize=9)
+ax.axhline(1e-4, color=RED, ls="--", lw=1.2, label="force gate 1e-4 eV/Å")
+ax.set_yscale("log")
+ax.set_xlabel("N$_2$ x216, 33 Å: ms/step (10-step NVT)")
+ax.set_ylabel("RBE force error RMS (eV/Å, log)")
+ax.set_title("RBE is faster but fails the accuracy gate")
+ax.legend(loc="upper right", frameon=True)
+ax.text(0.02, 0.05,
+        "All RBE points are above the gate → rejected.\n"
+        "The exact path is the only production option.",
+        transform=ax.transAxes, fontsize=9,
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="#f6f8fa",
+                  edgecolor="#d0d7de"))
+save(fig, "02_rbe_tradeoff.png")
+
+# 3) Gate margins: measured / tolerance --------------------------------------
+gates = [
+    ("Module 5 (density rel)", 5.9e-8 / 1e-6),
+    ("Module 6 (rho rel)", 1.26e-15 / 1e-6),
+    ("Module 7 (out abs)", 4.04e-7 / 1e-6),
+    ("Module 8 (FD)", 5.783e-4 / 1e-3),
+    ("Module 8 (parity)", 7.191e-7 / 1e-3),
+    ("End-to-end energy rel", 4.2e-12 / 1e-6),
+    ("End-to-end force max", 1.6e-7 / 1e-4),
+    ("LAMMPS dE", 2.91e-11 / 5e-5),
+    ("LAMMPS max dF", 2.62e-14 / 1e-4),
+]
+fig, ax = plt.subplots(figsize=(9.2, 4.8))
+y = np.arange(len(gates))[::-1]
+vals = [v for _, v in gates]
+ax.barh(y, vals, color=[GREEN if v < 0.5 else BLUE for v in vals], height=0.55)
+for yi, (label, v) in zip(y, gates):
+    ax.text(v * 1.15, yi, f"{v:.1e}", va="center", fontsize=8)
+ax.axvline(1.0, color=RED, ls="--", lw=1.2, label="gate = 1.0")
+ax.set_xscale("log")
+ax.set_yticks(y)
+ax.set_yticklabels([g[0] for g in gates], fontsize=9)
+ax.set_xlabel("measured / tolerance (log scale, lower is better)")
+ax.set_title("All accuracy gates pass with large margin")
+ax.legend(loc="lower right", frameon=True)
+ax.set_xlim(1e-10, 3)
+save(fig, "03_gate_margins.png")
+
+# 4) Homogeneous MD cost: 1 ns days and 100 ps hours ------------------------
+homog = [
+    ("N2", 477.0, 432),
+    ("CO2", 1749.0, 648),
+    ("CH4", 1095.0, 1080),
+    ("H2O", 3650.0, 648),
+    ("NH3", 2218.0, 864),
+]
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.6))
+x = np.arange(len(homog))
+ms = np.array([h[1] for h in homog])
+days = ms * 2_000_000 / 1e3 / 86400
+hours100 = ms * 200_000 / 1e3 / 3600
+axes[0].bar(x, ms, color=BLUE)
+for i, v in enumerate(ms):
+    axes[0].text(i, v * 1.04, f"{v:.0f}", ha="center", fontsize=9)
+axes[0].set_xticks(x)
+axes[0].set_xticklabels([h[0] for h in homog])
+axes[0].set_ylabel("ms/step (216 molecules)")
+axes[0].set_title("Per-step cost")
+axes[1].bar(x, days, color=ORANGE)
+for i, v in enumerate(days):
+    axes[1].text(i, v * 1.04, f"{v:.1f} d", ha="center", fontsize=9)
+axes[1].set_xticks(x)
+axes[1].set_xticklabels([h[0] for h in homog])
+axes[1].set_ylabel("wall time for 1 ns (days, 1 GPU)")
+axes[1].set_title("PNAS-length 1 ns extrapolation")
+fig.suptitle("Homogeneous MD with MACE-Polar: single rank, 0.5 fs",
+             fontsize=13, fontweight="bold", y=0.99)
+fig.tight_layout(rect=[0, 0, 1, 0.94])
+save(fig, "04_homog_cost.png")
+
+# 5) Copy existing polished figures into the report figure folder -----------
+import shutil
+copies = [
+    (PROJ / "results" / "polar_engine_compare.png", "05_engine_compare.png"),
+    (PROJ / "results" / "polar_mpi_status.png", "06_mpi_status.png"),
+    (PROJ / "results" / "polar_lammps_parity.png", "07_lammps_parity.png"),
+    (PROJ / "results" / "polar_lammps_md.png", "08_nvt_md.png"),
+]
+for src, dst in copies:
+    if src.exists():
+        shutil.copy2(src, OUT / dst)
+        print("copied", OUT / dst)
+print("done")
