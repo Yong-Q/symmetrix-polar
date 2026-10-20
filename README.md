@@ -200,10 +200,42 @@ are active inside the materialized path** (`e3 tensor product mh1 fused`,
 `e3 tensor reverse mh1 fused channels/harmonics` in the CUPTI trace). "Cannot
 use streamed" is not the same as "cannot use materialized".
 
+For the **linear** MACE-OFF23 model the direct/JIT path is now enabled
+(float32, `streamed_edges direct` + a generated `jit_device_artifact`) and
+measures **4.47–4.53 µs/atom/step** on a 5,184-atom water box, matching the
+paper's 4.50. PolarMACE cannot use this path: the nonlinear model's MH-1 fast
+path is rejected with `MH-1 node, edge, and hidden irreps are inconsistent`,
+so the polar model remains materialized. Extending the MH-1 codegen to the
+polar irrep layout is a separate engineering project, not a runtime switch.
+
 ![Engine comparison](results/polar_engine_compare.png)
 
+### Paper benchmark comparison (all values in µs/atom/step)
 
-## Repository layout
+A100 80 GB unless marked. The paper's rows are arXiv:2610.01036 Figure 1b /
+capacity table; our rows are measured in this repository.
+
+| Workload | Model / precision | Atoms | Path | µs/atom/step |
+|---|---|---|---:|---|---:|
+| OMAT-0 SrTiO₃ (paper) | MACE-OMAT-0 / FP32 | 5,000 | ML-IAP + cuEq | 19.34 |
+| OMAT-0 SrTiO₃ (paper) | MACE-OMAT-0 / FP32 | 5,000 | standard streaming | **5.80** |
+| OFF23 water (paper) | MACE-OFF23 / FP32 | 5,184 | ML-IAP + cuEq | 13.99 |
+| OFF23 water (paper) | MACE-OFF23 / FP32 | 5,184 | standard streaming | **4.50** |
+| **OFF23 water (this work)** | **MACE-OFF23 medium / FP32** | **5,184** | **direct/JIT** | **4.47–4.53 min** |
+| OFF23 NH₃ (this work) | MACE-OFF23 medium / FP32 | 6,144 | direct/JIT | 3.72 median |
+| OFF23 NH₃ (this work) | MACE-OFF23 medium / FP64 | 6,144 | materialized | 12.26 |
+| PolarMACE (this work) | nonlinear polar / FP64 | 128 | materialized | 380.8 (48.74 ms) |
+| PolarMACE (this work) | nonlinear polar / FP64 | 1,024 | materialized | 304.8 (312.1 ms) |
+| **PolarMACE + replay cache (this work)** | **nonlinear polar / FP64** | **128** | **materialized + cache** | **351.7 (45.02 ms)** |
+
+The paper's 4.50 is reproduced on the **linear** MACE-OFF23 model at the same
+5,184-atom water scale. PolarMACE is a different, much heavier model
+(nonlinear readout + polar SCF/Ewald, FP64); its 380.8 µs/atom is not
+comparable with the paper's linear FP32 throughput. See
+[docs/results/PAPER_COMPARABILITY.md](docs/results/PAPER_COMPARABILITY.md)
+for the full table, caveats, and the direct/JIT measurement details.
+
+
 
 ```
 patches/    symmetrix-xl-polar-support.patch — the complete engine patch
