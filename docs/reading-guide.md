@@ -1,5 +1,11 @@
 # Reading Guide — Symmetrix-Polar Report
 
+> **Start with the final round-3 report:**
+> [results/KERNEL_ROUND3_FINAL.md](results/KERNEL_ROUND3_FINAL.md)
+> (48.74 ms at 128 atoms = 32 NH3 molecules; 312 ms at 1024 atoms = 256 NH3;
+> RBE rejected by the production force gate). The consolidated comparison
+> below is historical (round-2 headline).
+
 This is the English reading guide for the consolidated comparison report. The
 Chinese guide is [`阅读说明.md`](阅读说明.md); the theory and test modules are in
 [`THEORY_AND_METHODS.md`](THEORY_AND_METHODS.md).

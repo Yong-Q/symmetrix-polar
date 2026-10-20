@@ -1,4 +1,19 @@
 category,metric,configuration,value,unit,tolerance,status,source
+speed,round2_det_128,"128 atoms (32 NH3), full PolarMACE",56.50,ms/eval,median of medians,accepted,docs/results/KERNEL_ROUND2.md
+speed,round3_det_128,"128 atoms (32 NH3), full PolarMACE",48.74,ms/eval,median of medians,final,docs/results/KERNEL_ROUND3_FINAL.md
+speed,round3_fallback_128,"128 atoms (32 NH3), all round-3 switches reverted",53.54,ms/eval,median of medians,measured,docs/results/KERNEL_ROUND3_FINAL.md
+speed,round3_same_binary_speedup,"round-3 defaults vs fallbacks, 128 atoms",1.0985,x,,final,docs/results/KERNEL_ROUND3_FINAL.md
+speed,round3_speedup_vs_v29,"128 atoms, round 3 vs v29 Kokkos engine",3.77,x,,final,docs/results/KERNEL_ROUND3_FINAL.md
+speed,round3_speedup_vs_v28,"128 atoms, round 3 vs v28 initial polar",142.6,x,,final,docs/results/KERNEL_ROUND3_FINAL.md
+speed,round3_vs_pytorch,"128 atoms, round 3 vs mace_polar reference 94.0 ms",1.93,x,,final,docs/results/KERNEL_ROUND3_FINAL.md
+speed,round3_det_1024,"1024 atoms (256 NH3), full PolarMACE",312.1,ms/eval,samples 311.6-312.5,final,docs/results/KERNEL_ROUND3_FINAL.md
+speed,round3_det_4096_estimate,"4096 atoms (~1024 NH3), full PolarMACE",1250,ms/eval,linear estimate; not measured,estimate,docs/results/KERNEL_ROUND3_FINAL.md
+validation,round3_lammps_dE_1rank,"128 atoms (32 NH3)",2.910e-11,eV,5e-5,PASS,docs/results/KERNEL_ROUND3_FINAL.md
+validation,round3_lammps_dF_1rank,"128 atoms (32 NH3)",2.5869e-14,eV/A,1e-4,PASS,docs/results/KERNEL_ROUND3_FINAL.md
+accuracy,round3_rbe_p800_final_check,"128 atoms (32 NH3), 6 evals",6.1e-3,eV/A,1e-4,REJECTED,docs/results/KERNEL_ROUND3_FINAL.md
+accuracy,round3_rbe_p800_max_component,"128 atoms (32 NH3), 6 evals",3.0e-2,eV/A,1e-4,REJECTED,docs/results/KERNEL_ROUND3_FINAL.md
+accuracy,round3_rbe_p800_energy_noise,"128 atoms (32 NH3), 6 evals",5e-2,eV,5e-6,REJECTED,docs/results/KERNEL_ROUND3_FINAL.md
+accuracy,round3_rbe_p_required_for_1e_4,"extrapolated from slope -0.499",8.5e6,count,,not feasible,docs/results/KERNEL_ROUND3_FINAL.md
 accuracy,module5_density_max_rel,4 molecules x 3 gated items,4.22e-8,relative,1e-6,PASS,logs/polar_module5_gate_v29opt.log
 accuracy,module5_density_max_abs,4 molecules x 3 gated items,6.689e-8,density units,5e-6,PASS,logs/polar_module5_gate_v29opt.log
 accuracy,module5_stage_max_rel,11 stage tensors,7.13e-8,relative,1e-6,PASS,logs/polar_module5_gate_v29opt.log

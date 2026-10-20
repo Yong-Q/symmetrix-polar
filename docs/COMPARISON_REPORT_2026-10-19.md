@@ -1,5 +1,10 @@
 # Symmetrix-Polar: Consolidated Speed and Accuracy Comparison
 
+> **HISTORICAL (pre-round-3).** This report's headline speed is round 2
+> (56.5 ms at 128 atoms). The final round-3 numbers, RBE decision, and the
+> 1024-atom measurement are in
+> [results/KERNEL_ROUND3_FINAL.md](results/KERNEL_ROUND3_FINAL.md).
+
 **Date:** 2026-10-19 (v29 / v30 evidence cut-off, ~08:20 UTC; later measured
 rows are marked with their source logs)
 **Scope:** PolarMACE (MACE-Polar) support in the Symmetrix-XL C++/Kokkos engine.

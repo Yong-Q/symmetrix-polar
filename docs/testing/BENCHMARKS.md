@@ -16,13 +16,32 @@ limitations of the container.
 | GPU | one NVIDIA A100-SXM4-80GB (`CUDA_VISIBLE_DEVICES=0`) |
 | Precision | FP64 |
 | Workload | one energy+force evaluation per loop iteration |
-| System | 128-atom NH3, 14.736 Å cubic, periodic |
+| System | 128-atom NH3 = **32 NH3 molecules**, 14.736 Å cubic, periodic |
 | Warmup | 1 evaluation |
 | Measured | 12 evaluations per round |
 | Rounds | 2, interleaved: baseline, candidate, baseline, candidate |
 | Statistic | median of the two per-round medians of LAMMPS `Loop time` |
 | Locking | every run under `flock /workspace/group/shared/bza/.tmp/gpu.lock` |
 | Env | `SYMMETRIX_BACKEND=cuda12-sm80`, descriptor path, FP64 model |
+
+### Round-3 final result (build 8, 2026-10-20)
+
+| Item | Value |
+|---|---:|
+| 128 atoms (32 NH3), full PolarMACE | **48.74 ms/eval** |
+| Same binary, all round-3 env switches reverted | 53.54 ms/eval |
+| Same-binary speedup | **1.0985×** |
+| Speedup vs round-2 accepted 56.50 ms | **1.159×** |
+| Speedup vs v29 Kokkos engine 183.8 ms | **3.77×** |
+| 1024 atoms (256 NH3), full PolarMACE | **312.1 ms/eval** |
+| Final binary sha256 | `c7608f35845548ef037341833c138da87515484ce51c04a257a5920bb9424631` |
+
+A/B files: `bench/kernel_round3_2026-10-19/speed_ab_r3final2.json`; trace:
+`bench/kernel_round3_2026-10-19/analysis_exact/r3c_full_*`; parity:
+`bench/kernel_round3_2026-10-19/r3_gate_lammps_parity_build8.log`. The
+same-binary fallback protocol disables every round-3 slice through its
+documented env switch, so the ratio is not confounded by a different
+LAMMPS/Kokkos build.
 
 The interleaved A/B is deliberate: absolute times are contention-sensitive,
 while same-run ratios are stable. A speed claim without an interleaved baseline
@@ -121,6 +140,10 @@ No speed change is accepted unless:
 
 | Artifact | Path |
 |---|---|
+| **Round-3 final report** | `docs/results/KERNEL_ROUND3_FINAL.md` |
+| **Round-3 A/B** | `bench/kernel_round3_2026-10-19/speed_ab_r3final2.json` |
+| **Round-3 trace** | `bench/kernel_round3_2026-10-19/analysis_exact/r3c_full_*` |
+| **Round-3 parity** | `bench/kernel_round3_2026-10-19/r3_gate_lammps_parity_build8.log` |
 | Round-2 report | `bench/kernel_round2_2026-10-19/FINAL_REPORT.md` |
 | Round-2 summary | `docs/examples/data/kernel_round2_summary.json` |
 | Round-2 family table | `docs/examples/data/kernel_round2_families.csv` |

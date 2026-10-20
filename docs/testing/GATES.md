@@ -30,7 +30,7 @@ LMP=/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-lamm
 - Python snapshots: `bench/kernel_round2_2026-10-19/pyfinal_r2` (tested build),
   `bench/e3lin_opt_2026-10-19/pybase` (baseline).
 
-## 1. Gate summary (round 2 final build)
+## 1. Gate summary (round 2 final build; round-3 row added)
 
 | Gate | What it protects | Metric | Tolerance | Round-2 result | Verdict |
 |---|---|---|---|---|---|
@@ -40,9 +40,17 @@ LMP=/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-lamm
 | module 8 | forces (FD + PyTorch parity) | FD max, parity max | both ≤1e-3 | 5.783e-4, 7.191e-7 | **PASS** |
 | end-to-end | full engine vs PyTorch | 32 frames, dE rel/abs, dF | rel ≤1e-6, abs ≤5e-6 eV, dF ≤1e-4 eV/Å | 32/32; 1.084e-11; 1.034e-6 eV; 1.624e-7 | **PASS** |
 | LAMMPS parity 1 rank | pair style vs engine | dE, max dF | ≤5e-5 eV, ≤1e-4 eV/Å | 2.910e-11 eV, 2.579e-14 eV/Å | **PASS** |
+| **LAMMPS parity 1 rank, round-3 build 8** | pair style vs round-2 Python reference | dE, max dF | ≤5e-5 eV, ≤1e-4 eV/Å | **2.910e-11 eV, 2.586e-14 eV/Å** | **PASS** |
 | LAMMPS parity, exact 2-hop 2 ranks | MPI correctness | dE, max dF | ≤5e-5 eV, ≤1e-4 eV/Å | 2.910e-11 eV, 1.687e-6 eV/Å (e3lin round) | **PASS** |
 | NVT MD 50 steps | dynamics stability | completion, lost atoms, finite | 50/50, none, finite | 50/50, none, Etot span 0.213 eV | **PASS** |
-| RBE force gate | approximation quality | RMS_F | ≤1e-4 eV/Å | 4.1e-2 … 1.0e-2 eV/Å | **REJECTED** |
+| RBE force gate | approximation quality | RMS_F | ≤1e-4 eV/Å | 4.1e-2 … 1.0e-2 eV/Å (p=50…800); final-build p=800 check **6.1e-3 eV/Å**, max 3.0e-2, energy noise ±0.05 eV | **REJECTED** |
+| RBE P4 convergence/unbiasedness | implementation/statistics | slope, RMS drop, 3·SEM | slope ∈ [−0.8,−0.2], drop ≥2× | slope −0.499, unbiased within 3·SEM, same-seed bitwise | **PASS** |
+
+The two RBE rows are deliberately separate: the P4 implementation/statistics
+gate passes, while the production force gate is rejected. The p-scan and the
+final-build p=800 check are in
+`docs/results/KERNEL_ROUND3_FINAL.md` §6. Reaching 1e-4 eV/Å would need
+p≈8.5e6 (≈17 TB of cos/sin storage), so exact full-k Ewald remains production.
 | 1-hop ghost MPI | approximation quality | dE, max dF | ≤5e-5 eV, ≤1e-4 eV/Å | 7.94e-5 eV, 4.116e-3 eV/Å | **REJECTED** |
 | H1 2-rank parity | H1 exactness | dE, max dF | ≤5e-5 eV, ≤1e-4 eV/Å | 2.910e-11 eV, 1.413e-15 eV/Å | **PASS** (pre-fix binary) |
 
@@ -153,7 +161,12 @@ LMP=/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-lamm
 ### 2.9 Rejected approximations
 
 - **RBE:** unbiased and bitwise seed-reproducible, but RMS_F 4.1e-2 to
-  1.0e-2 eV/Å (100–400× the gate) → rejected.
+  1.0e-2 eV/Å (100–400× the gate) → rejected. A final-build p=800 check on
+  128-atom NH3 gives RMS dF **6.1e-3 eV/Å**, max component **3.0e-2 eV/Å**,
+  energy noise **±0.05 eV**, and **70.4 ms/step** — slower than exact Ewald
+  (~53–62 ms). The observed 1/√p slope implies p≈8.5e6 for 1e-4 eV/Å, with
+  ≈17 TB of cos/sin storage; the full-support vs truncated-reference mismatch
+  adds a systematic 1e-4–1e-3 floor. Exact full-k Ewald remains production.
 - **1-hop ghost MPI:** 2.86× faster than exact 2-hop, but dE 7.94e-5 eV and
   max dF 4.116e-3 eV/Å → rejected.
 - These are documented as negative results; they are not silently enabled.

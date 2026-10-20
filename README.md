@@ -2,7 +2,16 @@
 
 **GPU-accelerated PolarMACE with long-range electrostatics — PolarMACE (MACE-POLAR)
 support for the [Symmetrix-XL](https://github.com/) engine, with a full Ewald
-electrostatic layer and Random Batch Ewald (RBE) k-space sampling in progress.**
+electrostatic layer. Random Batch Ewald (RBE) is implemented and statistically
+validated, but its production force gate is rejected; exact full-k Ewald is the
+production path.**
+
+**Final kernel-round-3 result (2026-10-20): 48.74 ms/eval on 128 atoms
+(32 NH3 molecules), full nonlinear PolarMACE, FP64, one A100.** That is
+1.159× over the round-2 accepted 56.50 ms, 3.77× over the original
+Symmetrix-XL Kokkos engine, and 1.93× faster than the PyTorch reference.
+1024 atoms (256 NH3 molecules) run at 312 ms/eval. Full report:
+[docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md).
 
 PolarMACE extends MACE with a self-consistent, long-range electrostatic layer
 (learned multipolar spin-charge densities, GTO-Ewald k-space electrostatics, a
@@ -24,19 +33,28 @@ GPU speed in LAMMPS-class workflows, without retraining a universal potential.
 | P3 ⑦ | `local_electron_energy` | engine: 8/8 configs PASS (stage rel **≤1e-6**, out ≤4e-7) |
 | **End-to-end** | Engine vs PyTorch PolarMACE (energy + forces) | **32/32 frames PASS: energy rel 4e-12–1.1e-11 (≤1.0e-6 eV); forces ≤1.6e-7 eV/Å** |
 | P3 ⑧ | Forces (full-chain reverse mode) | **PASS (v27)**: 12/12 configs — FD self-consistency ≤5.8e-4 (gate 1e-3), force parity vs PyTorch ≤7.2e-7 (gate 1e-3; pre-⑧ baseline mean/max 1.24/4.15), ΣF ≈ 1e-14 (exact translation invariance). Root cause of the final gap: missing *project-phase adjoint* in the descriptor reverse (design §2 ⑧-3 (d3), second line) — located via checkpoint audit (`harness/polar_rev_stage_audit.py`), fixed in `descriptor_reverse_channel` (iii-b) |
-| P4 | Random Batch Ewald k-space | **PASS (v28)**: RBE sampling (per-axis rounded-Gaussian + MH per lammps-rbe, counter-based SplitMix64 RNG, seed in JSON, exact discrete Z_q, full-space estimator with importance weights); p-scan RMS_F 4.1e-2 → 1.0e-2 eV/Å @ p=50→800, slope **−0.499** (≈ −1/√p), unbiased, same-seed bitwise-reproducible; see `harness/polar_rbe_gate.py` |
+| P4 | Random Batch Ewald k-space | **Convergence/unbiasedness gate PASS (v28); production force gate REJECTED.** RBE sampling (per-axis rounded-Gaussian + MH, counter-based SplitMix64 RNG, exact discrete Z_q, full-space importance weights) is correct and same-seed bitwise-reproducible; p-scan RMS_F 4.1e-2 → 1.0e-2 eV/Å @ p=50→800, slope **−0.499**. A p=800 single-system check on the final build gives RMS dF **6.1e-3 eV/Å**, max **3.0e-2 eV/Å**, energy noise **±0.05 eV**, and **70.4 ms/step** (slower than exact Ewald). Reaching the 1e-4 eV/Å production gate needs p≈8.5e6 (≈17 TB of cos/sin storage), so exact full-k Ewald remains production. See `docs/results/KERNEL_ROUND3_FINAL.md` §6 |
 | P5 | LAMMPS pair wiring + performance | **PASS (v29/v30, 2026-10-19)**: `pair_style symmetrix/mace/kk` dispatches `MACE_Nonlinear`/PolarMACE, maps types, passes cell/node positions, and adds polar node forces + virial. Single-point parity: **dE 2.9e-11 eV**, **max dF 2.6e-14 eV/Å**; 50-step NVT MD: no lost atoms, Etot span **0.21 eV**. Single-rank performance: **184 ms/eval** at 128 atoms (37.8× v28), **1008 ms** at 1024 atoms (7.7× v28). **MPI 2-rank exact PASS** (dE 2.9e-11 eV, max dF 1.7e-6 eV/Å; 20-step NVT PASS), but no speedup on one shared A100. See `docs/REPORT_2026-10-19.md` |
 | Kernel round 1 | e3nn linear + polar dense reverse | **PASS (2026-10-19)**: full model **122.2 ms** at 128 atoms (**1.50×** vs v29) and **293.3 ms/step** at 432 atoms (**1.63×**); polar-off **40.7 ms** (**2.14×**) and **47.7 ms** (**4.03×**). e3nn scalar, packed GEMM, fused gate-reverse and polar dense-reverse changes are bitwise or gate-identical; module 5–8, 32/32 end-to-end and LAMMPS 1/2-rank parity all PASS on a single clean build. **MPI H1 2-rank PASS** (dE 2.9e-11 eV, max dF 1.4e-15 eV/Å) on the pre-fix binary; see the MPI status below |
 | Kernel round 2 | UVU / project kernels + stale-object activation | **PASS (2026-10-19)**: full model **56.5 ms** at 128 atoms (**3.25×** vs v29, **2.17×** vs round 1); polar-off **27.7 ms** (1.47× vs round 1); 432 atoms **126.6 ms/step** (2.33× vs round 1). Every kernel edit is bitwise-neutral on the 128-atom PE and all 128×3 force components; module 5–8, 32/32 end-to-end and LAMMPS 1-rank parity PASS on the final build. The accepted binary was found to be linked from stale objects; see `docs/results/KERNEL_ROUND2.md` |
+| **Kernel round 3** | MH-1/UVU/affine/k-space kernels | **FINAL (2026-10-20)**: full model **48.74 ms** at **128 atoms = 32 NH3 molecules** (full nonlinear PolarMACE, FP64), **1.159×** vs round 2 and **3.77×** vs v29; **1024 atoms = 256 NH3 molecules** at **312 ms/eval**. Same-binary fallback A/B 53.54 → 48.74 ms (**1.0985×**). LAMMPS 1-rank parity PASS (dE **2.91e-11 eV**, max dF **2.59e-14 eV/Å**); Stage-A build bitwise on all 384 forces. RBE remains rejected by the production force gate. See `docs/results/KERNEL_ROUND3_FINAL.md` |
 
 Every stage is accepted against **dual-source fixture gates** (frozen Python
 reference dumps + live recomputation through the same PyTorch model), including
 intermediate-tensor comparisons at each block boundary.
 
-**Consolidated comparison (2026-10-19):**
+**Final round-3 report (authoritative, 2026-10-20):**
+[docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md) —
+48.74 ms at 128 atoms (32 NH3), 312 ms at 1024 atoms (256 NH3), the RBE
+production-gate decision, numerical validation, and the remaining gap to 30 ms.
+(For a ~1000-molecule 4096-atom cell, the linear extrapolation is
+~1.2–1.3 s/eval; that run was not completed, so it is not a measured headline.)
+
+**Historical consolidated comparison (pre-round-3, 2026-10-19):**
 [docs/COMPARISON_REPORT_2026-10-19.md](docs/COMPARISON_REPORT_2026-10-19.md) —
 speed, accuracy gates, linear-vs-nonlinear, MPI/RBE, and MH-1 findings in one
-place. Also available as a paginated
+place. Its headline speed is round 2 (56.5 ms); use the round-3 final report
+for current numbers. Also available as a paginated
 [**PDF report**](docs/COMPARISON_REPORT_2026-10-19.pdf) with a cover, all
 figures, and page numbers, and as an
 [offline HTML page](docs/index.html). Key numeric rows are in
@@ -51,20 +69,23 @@ gate catalog, and reproduction protocol).
 
 ## Performance (A100-80GB, f64, energy + forces)
 
-| Configuration | v28 | v29 | Round 1 | Round 2 | Speedup vs v29 |
-|---|---|---|---:|---:|---:|
-| NH3×32, 128 atoms, full PolarMACE | 6951.7 ms | 183.8 ms | 122.2 ms | **56.5 ms** | **3.25×** |
-| NH3×32, 128 atoms, polar-off | — | 87.2 ms | 40.7 ms | **27.7 ms** | 3.15× |
-| N2×216, 432 atoms, full PolarMACE | — | 477.8 ms/step | 293.3 ms/step | **126.6 ms/step** | 3.77× |
-| N2×216, 432 atoms, polar-off | — | 191.9 ms/eval | 47.7 ms | — (not re-measured) | — |
-| NH3×32, 128 atoms, RBE p=200 | 6962.9 ms | 186.3 ms | — | — | — |
-| NH3×32×2×2×2, 1024 atoms | 7795.6 ms | 1007.7 ms | — | — | — |
+| Configuration | v28 | v29 | Round 1 | Round 2 | Round 3 | Speedup vs v29 |
+|---|---|---|---:|---:|---:|---:|
+| NH3×32, **128 atoms (32 NH3)**, full PolarMACE | 6951.7 ms | 183.8 ms | 122.2 ms | 56.5 ms | **48.74 ms** | **3.77×** |
+| NH3×32, 128 atoms, polar-off | — | 87.2 ms | 40.7 ms | **27.7 ms** | — | 3.15× |
+| N2×216, **432 atoms**, full PolarMACE | — | 477.8 ms/step | 293.3 ms/step | **126.6 ms/step** | — | 3.77× |
+| N2×216, 432 atoms, polar-off | — | 191.9 ms/eval | 47.7 ms | — (not re-measured) | — | — |
+| NH3×32, 128 atoms, RBE p=200 | 6962.9 ms | 186.3 ms | — | — | — | — |
+| NH3×32×2×2×2, **1024 atoms (256 NH3)** | 7795.6 ms | 1007.7 ms | — | — | **312.1 ms** | **3.23×** |
 
 The 128-atom PyTorch `mace_polar` reference is 94.0 ms/eval. After round 1 the
-engine was 1.30× slower; after round 2 it is **1.66× faster** than the PyTorch
-reference. All required gates (module 5–8, 32/32 end-to-end, LAMMPS parity)
-pass on the final build; the stale-object finding and the exact per-kernel
-table are in [docs/results/KERNEL_ROUND2.md](docs/results/KERNEL_ROUND2.md).
+engine was 1.30× slower; after round 2 it was 1.66× faster; after round 3 it is
+**1.93× faster** than the PyTorch reference. All required gates (module 5–8,
+32/32 end-to-end, LAMMPS parity) pass on the final build; the stale-object
+finding and the exact per-kernel table are in
+[docs/results/KERNEL_ROUND2.md](docs/results/KERNEL_ROUND2.md). The final
+round-3 numbers, system sizes, RBE decision, and remaining gap are in
+**[docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md)**.
 
 ![Kernel round-2 speed](docs/figures/13_kernel_round2_speed.png)
 
