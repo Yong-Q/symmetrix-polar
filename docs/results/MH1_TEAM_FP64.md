@@ -69,3 +69,18 @@ eval with `polar reverse: geometry cache missing or stale`. The B4 fused
 final (460.8 ms) and the main-tree team build (407.75 ms) still run and pass
 parity. The 367 ms number is withheld until B4 is merged into the stable main
 tree and re-gated.
+
+## 1,296-atom UVU knob check
+
+Same stable main-team binary, only the env changes:
+
+| variant | median ms/eval |
+|---|---:|
+| base (smem0, fwd sweep0) | **407.8–408.2** |
+| `MATOS_UVU_X2_MB_SMEM=1` | 410.5 / 422.1 |
+| `MATOS_UVU_FWD_SWEEP=1` | 415.2 |
+| both on | 410.3 |
+
+The 128-atom conclusion holds at 1,296: the defaults (smem off, sweep off)
+are the best. No further runtime-knob gain is available; the stable best is
+**407.75 ms / 314.6 µs/atom**.
