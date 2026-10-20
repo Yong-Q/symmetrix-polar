@@ -245,13 +245,17 @@ on one A100 80 GB):
 | Implementation | Precision | Path | Atoms | µs/atom/step | ms/eval |
 |---|---|---:|---:|---:|---:|
 | This work: MACE-OFF23 medium (linear) | FP32 | direct/JIT | 1,296 | **6.31 min; 9.69 clean median** | 8.2 / 12.6 |
-| **This work: full PolarMACE** | **FP64** | **materialized + replay cache + team cutoff** | **1,296** | **462.4** | **599.77** |
-| Ratio polar / linear | | | | **~48–73×** | |
+| This work: full PolarMACE | FP64 | materialized + cache + team cutoff, fused MH-1 | 1,296 | 462.6 | 599.54 |
+| **This work: full PolarMACE** | **FP64** | **materialized + cache + team cutoff + team MH-1** | **1,296** | **314.6** | **407.75** |
+| Ratio polar / linear | | | | **~32–50×** | |
 
-The polar row is the measured candidate (`MATOS_REPLAY_CACHE=1`, UVU x2 smem
-off, forward sweep off, team cutoff). With the scalar cutoff it is 625.55 ms /
-482.7 µs/atom. The linear direct/JIT numbers are the measured minimum and the
-cleanest trial median; the shared A100 produced outliers.
+The current polar best is the **team-MH-1** candidate (`MATOS_REPLAY_CACHE=1`,
+UVU x2 smem off, forward sweep off, team cutoff, FP64 team MH-1). It is
+**32.0% faster** than the fused-MH-1 result and passes the LAMMPS 1-rank
+parity gate (dE 2.91e-11, max dF 2.57e-14). The linear direct/JIT numbers are
+the measured minimum and the cleanest trial median; the shared A100 produced
+outliers. The 4.6 µs/atom target is 68.4× away; see
+[docs/results/MH1_TEAM_FP64.md](docs/results/MH1_TEAM_FP64.md).
 
 **PolarMACE — a different model, not paper-comparable:**
 
