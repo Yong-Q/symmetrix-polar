@@ -13,6 +13,12 @@ Symmetrix-XL Kokkos engine, and 1.93× faster than the PyTorch reference.
 1024 atoms (256 NH3 molecules) run at 312 ms/eval. Full report:
 [docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md).
 
+**Post-round-3 Plan B replay cache (2026-10-20): 45.12 ms/eval = 352.5
+µs/atom on the same 128-atom box; LAMMPS 1-rank parity PASS. The switch is
+`MATOS_REPLAY_CACHE=1` and defaults off.** The build-8 round-3 headline stays
+48.74 ms; 45.12 ms is the next gate-passed candidate
+([docs/results/PLAN_B_REPLAY_CACHE.md](docs/results/PLAN_B_REPLAY_CACHE.md)).
+
 **Plan B audit (what 20–25 ms would require):**
 [docs/design/PLAN_B_AUDIT.md](docs/design/PLAN_B_AUDIT.md) — separate from
 Plan A; 36–40 ms is credible, 20–25 ms needs work removal below the current
@@ -226,7 +232,7 @@ capacity table; our rows are measured in this repository.
 | OFF23 NH₃ (this work) | MACE-OFF23 medium / FP64 | 6,144 | materialized | 12.26 |
 | PolarMACE (this work) | nonlinear polar / FP64 | 128 | materialized | 380.8 (48.74 ms) |
 | PolarMACE (this work) | nonlinear polar / FP64 | 1,024 | materialized | 304.8 (312.1 ms) |
-| **PolarMACE + replay cache (this work)** | **nonlinear polar / FP64** | **128** | **materialized + cache** | **351.7 (45.02 ms)** |
+| **PolarMACE + replay cache (this work)** | **nonlinear polar / FP64** | **128** | **materialized + cache** | **352.5 (45.12 ms, main tree)** |
 
 The paper's 4.50 is reproduced on the **linear** MACE-OFF23 model at the same
 5,184-atom water scale. PolarMACE is a different, much heavier model

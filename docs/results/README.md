@@ -37,8 +37,9 @@
   (median of medians) at 6,144 atoms, in the paper's 4.50 range.
 - [`PLAN_B_REPLAY_CACHE.md`](PLAN_B_REPLAY_CACHE.md) — forward SCF replay
   cache; PE identical, max force difference 7.77e-16 (cross-process noise);
-  A/B **49.69 → 45.02 ms (4.67 ms, 9.4%)**; full parity gate pending, not in
-  the headline.
+  main-tree A/B **48.86 → 45.12 ms (3.74 ms, 7.6%; 381.7 → 352.5
+  µs/atom)**, LAMMPS parity gate **PASS**. The isolated-tree first run was
+  49.69 → 45.02 ms. Default off; not yet the headline.
 - [`MERGED_UNPACK_NEGATIVE.md`](MERGED_UNPACK_NEGATIVE.md) — merged e3-linear
   unpack: numerically correct (1e-15), but **54.69 vs 49.00 ms**, a
   performance negative; default off.

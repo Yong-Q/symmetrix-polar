@@ -36,11 +36,13 @@ two fresh processes of the same mode differ by the same ~7e-16.
 Same binary, only the env switch changes; interleaved one round × 8 measured
 `run 1` samples on an idle A100:
 
-| mode | median ms/eval | µs/atom/step (128 atoms) |
-|---|---:|---:|
-| `MATOS_REPLAY_CACHE=0` | **49.69** | 388.2 |
-| `MATOS_REPLAY_CACHE=1` | **45.02** | **351.7** |
-| saving | **4.67 ms (9.4%)** | **36.5** |
+| binary | cache=0 | cache=1 | saving |
+|---|---:|---:|---:|
+| isolated `lammps-b` | 49.69 ms (388.2 µs/atom) | 45.02 ms (351.7 µs/atom) | **4.67 ms (9.4%)** |
+| main tree `build-kernel-r3` | **48.86 ms (381.7 µs/atom)** | **45.12 ms (352.5 µs/atom)** | **3.74 ms (7.6%)** |
+
+The main-tree numbers are the authoritative port result; the isolated-tree
+run is the first measurement.
 
 This is larger than the 3.5 ms replay slice in the CUPTI trace. The B tree
 shows a **+4.67 ms** improvement on this protocol; it has not yet been
@@ -49,20 +51,19 @@ gate suite.
 
 ## Gate status
 
-**LAMMPS 1-rank parity with cache=1: PASS** (2026-10-20).
+**LAMMPS 1-rank parity with cache=1: PASS** on both the isolated `lammps-b`
+build and the main-tree `build-kernel-r3` (2026-10-20).
 
-| quantity | value | tolerance | result |
-|---|---:|---:|---|
-| energy difference vs Python reference | 2.91e-11 | 5e-5 | PASS |
-| max force difference | 2.59e-14 | 1e-4 | PASS |
-| max position drift | 4.97e-14 | — | PASS |
+| binary | energy difference | max force difference | tolerance | result |
+|---|---:|---:|---:|---|
+| isolated `lammps-b` | 2.91e-11 | 2.59e-14 | 5e-5 / 1e-4 | PASS |
+| main tree | 2.91e-11 | 2.56e-14 | 5e-5 / 1e-4 | PASS |
 
-The gate ran the isolated `lammps-b/build-b/lmp` with
-`MATOS_REPLAY_CACHE=1`, with split Python/engine backend descriptors (the
-`symmetrix` package and the LAMMPS pair style use different
-`SYMMETRIX_BACKEND` selectors). The trailing
-`cudaErrorCudartUnloading` message is process-exit driver shutdown after
-`GATE PASS`, not a gate failure.
+The gate ran with `MATOS_REPLAY_CACHE=1` and split Python/engine backend
+descriptors (the `symmetrix` package and the LAMMPS pair style use different
+`SYMMETRIX_BACKEND` selectors). The trailing `cudaErrorCudartUnloading`
+message is process-exit driver shutdown after `GATE PASS`, not a gate
+failure.
 
 Module 5–8 and the 32/32 end-to-end gates are engine-independent Python
 reference gates and remain the build-8 PASS; the LAMMPS parity gate is the
