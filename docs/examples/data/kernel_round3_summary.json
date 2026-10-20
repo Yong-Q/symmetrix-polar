@@ -18,20 +18,28 @@
       "full_polar_ms_per_eval": 48.74,
       "same_binary_all_round3_switches_reverted_ms": 53.54,
       "same_binary_speedup": 1.0985,
-      "saving_ms": 4.80
+      "saving_ms": 4.8
     },
     "nh3_1024": {
       "atoms": 1024,
       "molecules": 256,
       "construction": "replicate 2 2 2 of the 128-atom cell",
       "full_polar_ms_per_eval": 312.1,
-      "samples_ms": [311.613, 312.071, 312.471, 312.540]
+      "samples_ms": [
+        311.613,
+        312.071,
+        312.471,
+        312.54
+      ]
     },
     "nh3_4096_estimate": {
       "atoms": 4096,
       "molecules": 1024,
       "construction": "replicate 2 4 4 of the 128-atom cell",
-      "full_polar_ms_per_eval_estimate": [1200, 1300],
+      "full_polar_ms_per_eval_estimate": [
+        1200,
+        1300
+      ],
       "measured": false,
       "note": "run interrupted; linear extrapolation from the 1024-atom point"
     }
@@ -65,12 +73,15 @@
     "p_scan_slope": -0.498848,
     "final_build_p800_quick_check": {
       "rms_df_eV_per_angstrom": 0.0061,
-      "max_component_df_eV_per_angstrom": 0.030,
+      "max_component_df_eV_per_angstrom": 0.03,
       "energy_noise_eV": 0.05,
       "six_frame_bias_max_eV_per_angstrom": 0.0088,
       "six_frame_bias_rms_eV_per_angstrom": 0.0024,
       "ms_per_step": 70.4,
-      "exact_ms_per_step": [53, 62]
+      "exact_ms_per_step": [
+        53,
+        62
+      ]
     },
     "p_required_for_1e_4": 8500000,
     "cos_sin_storage_tb_at_p_required": 17,
@@ -79,9 +90,14 @@
   "validation": {
     "lammps_1rank_parity": "PASS",
     "dE_eV": 2.9103830456733704e-11,
-    "max_dF_eV_per_angstrom": 2.5869060098505263e-14,
+    "max_dF_eV_per_angstrom": 2.6279964842581474e-14,
     "stage_a_bitwise_vs_round2": "max |dF| = 0.0 over all 384 components",
-    "full_module5_8_32frame": "not rerun on the round-3 Python snapshot"
+    "full_module5_8_32frame": "PASS on the round-3 Python snapshot (module5 PASS; module6 rel 1.02e-15/abs 7.77e-16 eV; module7 out 4.55e-7; module8 FD 5.783e-4/parity 7.191e-7; end-to-end 32/32 PASS)",
+    "latest_full_gate_suite": {
+      "ms_per_eval": 48.74,
+      "build": "round 3 build 8",
+      "sha256": "c7608f35845548ef037341833c138da87515484ce51c04a257a5920bb9424631"
+    }
   },
   "final_report": "docs/results/KERNEL_ROUND3_FINAL.md"
 }

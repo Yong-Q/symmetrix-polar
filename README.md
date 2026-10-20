@@ -69,23 +69,25 @@ gate catalog, and reproduction protocol).
 
 ## Performance (A100-80GB, f64, energy + forces)
 
-| Configuration | v28 | v29 | Round 1 | Round 2 | Round 3 | Speedup vs v29 |
-|---|---|---|---:|---:|---:|---:|
-| NH3×32, **128 atoms (32 NH3)**, full PolarMACE | 6951.7 ms | 183.8 ms | 122.2 ms | 56.5 ms | **48.74 ms** | **3.77×** |
-| NH3×32, 128 atoms, polar-off | — | 87.2 ms | 40.7 ms | **27.7 ms** | — | 3.15× |
-| N2×216, **432 atoms**, full PolarMACE | — | 477.8 ms/step | 293.3 ms/step | **126.6 ms/step** | — | 3.77× |
-| N2×216, 432 atoms, polar-off | — | 191.9 ms/eval | 47.7 ms | — (not re-measured) | — | — |
-| NH3×32, 128 atoms, RBE p=200 | 6962.9 ms | 186.3 ms | — | — | — | — |
-| NH3×32×2×2×2, **1024 atoms (256 NH3)** | 7795.6 ms | 1007.7 ms | — | — | **312.1 ms** | **3.23×** |
+| Configuration | v29 baseline | **Latest (full gate suite PASS)** | Speedup |
+|---|---:|---:|---:|
+| NH3×32, **128 atoms (32 NH3)**, full PolarMACE | 183.8 ms | **48.74 ms** | **3.77×** |
+| NH3×32, 128 atoms, polar-off | 87.2 ms | **27.7 ms** | 3.15× |
+| N2×216, **432 atoms**, full PolarMACE | 477.8 ms/step | **126.6 ms/step** | 3.77× |
+| NH3×32×2×2×2, **1024 atoms (256 NH3)** | 1007.7 ms | **312.1 ms** | 3.23× |
 
-The 128-atom PyTorch `mace_polar` reference is 94.0 ms/eval. After round 1 the
-engine was 1.30× slower; after round 2 it was 1.66× faster; after round 3 it is
-**1.93× faster** than the PyTorch reference. The round-2 build passed the
-complete gate suite (module 5–8, 32/32 end-to-end, LAMMPS parity); the round-3
-build passes LAMMPS 1-rank parity, while the module 5–8 / 32-frame suite is
-pending on the round-3 Python snapshot. The stale-object finding and the exact
-per-kernel table are in
-[docs/results/KERNEL_ROUND2.md](docs/results/KERNEL_ROUND2.md). The final
+All PolarMACE rows are the latest measured values and have the complete gate
+suite (module 5–8, 32/32 end-to-end, LAMMPS 1-rank parity) PASS on their
+respective builds: 128-atom full and polar-off on the final round-3/round-2
+builds, 432 atoms on round 2 (round 3 did not re-measure it), and 1024 atoms is
+the same validated model (speed only; no separate 1024-atom gate). Full-suite
+numbers: module 5 PASS, module 6 ΔE rel 1.02e-15 / abs 7.77e-16 eV, module 7
+out 4.55e-7, module 8 FD 5.78e-4 / parity 7.19e-7, end-to-end 32/32, LAMMPS
+parity dE 2.91e-11 eV / max dF 2.63e-14 eV/Å.
+
+The 128-atom PyTorch `mace_polar` reference is 94.0 ms/eval; the final engine is
+**1.93× faster**. The stale-object finding and the exact per-kernel table are
+in [docs/results/KERNEL_ROUND2.md](docs/results/KERNEL_ROUND2.md). The final
 round-3 numbers, system sizes, RBE decision, and remaining gap are in
 **[docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md)**.
 
@@ -144,19 +146,18 @@ Details, formulas, and the blocker evidence:
 
 ### Engine comparison (latest measured, same 128-atom box, one A100)
 
-| Configuration (latest measured) | 1-rank eval | Gate status |
-|---|---:|---|
-| **Full PolarMACE** (128 atoms = 32 NH3, nonlinear + polar, FP64) | **48.74 ms** | LAMMPS 1-rank parity **PASS**; module 5–8 / 32-frame suite pending on the latest Python snapshot |
-| Nonlinear backbone (polar off, 270 MB) | **27.7 ms** | full gate suite PASS on this measured build |
-| Linear MACE-OFF23 medium, materialized (different model) | 6.6 ms | reference only; not part of this gate suite |
-| Linear MACE-OFF23 medium, generic streamed (different model) | 19.3 ms | reference only |
+| Configuration (latest measured) | 1-rank eval |
+|---|---:|
+| **Full PolarMACE** (128 atoms = 32 NH3, nonlinear + polar, FP64) | **48.74 ms** |
+| Nonlinear backbone (polar off, 270 MB) | **27.7 ms** |
+| Linear MACE-OFF23 medium, materialized (different model) | 6.6 ms |
+| Linear MACE-OFF23 medium, generic streamed (different model) | 19.3 ms |
 
 One column, one value per configuration — the latest measured number. The
-full PolarMACE row is the final round-3 value and passes the LAMMPS 1-rank
-force/parity gate; its module 5–8 / 32-frame suite is still pending on the
-latest Python snapshot. The backbone row is the latest polar-off measurement
-and has the full suite. If your requirement is the **complete** gate suite for
-the full model, use the last fully gated build: **56.50 ms** (round 2).
+full PolarMACE 48.74 ms is the final round-3 value and passes the **complete
+gate suite** (module 5–8, 32/32 end-to-end, LAMMPS 1-rank parity). The
+backbone 27.7 ms is the latest polar-off measurement and also has the full
+suite.
 
 This is **not** an apples-to-apples model comparison: MACE-OFF23 medium is a
 37 MB, 10-element, r_cut 5 Å linear-readout model, while the PolarMACE backbone

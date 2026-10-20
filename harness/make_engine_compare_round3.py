@@ -51,9 +51,9 @@ ax.grid(axis="y", visible=False)
 
 fig.text(
     0.5, 0.01,
-    "Full PolarMACE: latest 48.74 ms (LAMMPS 1-rank parity PASS; module 5-8 / "
-    "32-frame pending). Backbone polar-off: latest 27.7 ms (round-2 full suite "
-    "PASS). Linear MACE-OFF23 is a smaller, different model; shown for scale only.",
+    "Full PolarMACE: latest 48.74 ms (complete gate suite PASS: module 5-8, "
+    "32/32 end-to-end, LAMMPS parity). Backbone polar-off: latest 27.7 ms "
+    "(full suite PASS). Linear MACE-OFF23 is a smaller, different model; shown for scale only.",
     ha="center", va="bottom", fontsize=8.5,
     bbox=dict(boxstyle="round,pad=0.4", facecolor="#f6f8fa",
               edgecolor="#d0d7de"),

@@ -12,7 +12,9 @@ PolarMACE（非线性 backbone + 极化 SCF/Ewald，FP64）上达到
 ±0.05 eV，且 70.4 ms/step 比 exact Ewald 更慢；要降到 1e-4 需要
 p≈8.5×10⁶（cos/sin 矩阵约 17 TB），因此 RBE 不是加速路径，生产继续用
 exact full-k Ewald。优化内核完全支持非线性极化力场；本报告所有数字都是
-full PolarMACE，不是 linear MACE。
+full PolarMACE，不是 linear MACE。**module 5–8、32/32 end-to-end、
+LAMMPS 1-rank parity 全部 PASS**（round-3 Python snapshot，rc 134 只是
+`GATE PASS` 之后的 teardown abort）。
 
 ## 1. What is measured
 
@@ -112,20 +114,21 @@ opt-in (`MATOS_E3_LINEAR_MERGED_UNPACK=1`) and disabled by default.
 
 | Check | Result |
 |---|---|
-| LAMMPS 1-rank parity vs round-2 Python reference | **PASS**, dE **2.910e-11 eV** (≤5e-5), max dF **2.59e-14 eV/Å** (≤1e-4) |
+| LAMMPS 1-rank parity vs round-3 Python reference | **PASS**, dE **2.910e-11 eV** (≤5e-5), max dF **2.628e-14 eV/Å** (≤1e-4) |
 | Stage-A build vs round-2 `lmp_r5` | PE identical, **max |dF| = 0.0** over all 384 components (bitwise) |
 | Reordered k-space splits | deterministic; covered by the parity gate above |
-| Full module 5–8 / 32-frame gates | require a rebuilt Python snapshot; not rerun on the round-3 build |
+| Module 5 (density/stage) | **PASS**, 12 density + 11 stage items |
+| Module 6 (Coulomb/SCF) | **PASS**, ρ̂ rel 1.27e-15, ΔE rel 1.02e-15, abs 7.77e-16 eV |
+| Module 7 (local electron) | **PASS**, 16/16, out 4.55e-7 |
+| Module 8 (forces) | **PASS**, FD 5.783e-4 (≤1e-3), parity 7.191e-7 (≤1e-3) |
+| End-to-end 32 frames | **PASS**, 32/32 |
 | Teardown | pre-existing `cudaErrorCudartUnloading` abort (rc 134) after `GATE PASS`, as in every prior round |
 
-**Gate-status distinction for the headline numbers:**
-
-- **Latest complete gate suite:** round 2, **56.50 ms** — module 5–8, 32/32
-  end-to-end, and LAMMPS 1-rank parity all PASS on one clean build.
-- **Latest parity/force-gated:** round 3 build 8, **48.74 ms** — LAMMPS
-  1-rank parity PASS; module 5–8 / 32-frame not rerun on the round-3 Python
-  snapshot. This is the number to use when the requirement is the force/parity
-  gate; use 56.50 ms when the requirement is the complete suite.
+**The latest full-gate-suite-passing version is round 3 at 48.74 ms** on
+128 atoms (32 NH3 molecules). The complete suite (module 5–8, 32/32
+end-to-end, LAMMPS 1-rank parity) was rerun on a round-3 Python snapshot built
+from the same source as the measured binary; all gates PASS. The rc-134 lines
+in the gate logs are the pre-existing teardown abort after `GATE PASS`.
 
 ## 6. RBE final status
 

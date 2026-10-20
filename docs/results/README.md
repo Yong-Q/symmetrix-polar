@@ -5,7 +5,9 @@
 - [`KERNEL_ROUND3_FINAL.md`](KERNEL_ROUND3_FINAL.md) — **48.74 ms/eval**
   on 128 atoms (**32 NH3 molecules**), full nonlinear PolarMACE, FP64;
   1024 atoms (**256 NH3 molecules**) at **312 ms/eval**; RBE decision;
-  numerical validation; remaining gap to 30 ms.
+  numerical validation; remaining gap to 30 ms. This is the **latest
+  full-gate-suite-passing version**: module 5–8, 32/32 end-to-end, and
+  LAMMPS 1-rank parity all PASS on the round-3 snapshot.
 - [`../examples/data/kernel_round3_summary.json`](../examples/data/kernel_round3_summary.json)
   — machine-readable final numbers.
 - [`../../results/comparison_summary.csv`](../../results/comparison_summary.csv)
