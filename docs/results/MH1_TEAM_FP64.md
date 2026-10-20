@@ -58,3 +58,14 @@ at 1,296 atoms.
 away (310.0 µs/atom). Even setting the MH-1 family to zero would leave
 >190 µs/atom. The 4.6 number is the linear MACE-OFF23 FP32 5,184-atom result;
 it is not reachable for full PolarMACE with kernel work.
+
+## B4 + team (provisional, not accepted)
+
+An A/B of the coordinator's B4 binary vs a B4+team build measured
+460.84 → 367.33 ms at 1,296 atoms (−20.4%). That binary is **not accepted**:
+after the measurement the shared B tree was rebuilt by the concurrent
+Plan B-core workstream, and the current B4+team binary aborts at the first
+eval with `polar reverse: geometry cache missing or stale`. The B4 fused
+final (460.8 ms) and the main-tree team build (407.75 ms) still run and pass
+parity. The 367 ms number is withheld until B4 is merged into the stable main
+tree and re-gated.
