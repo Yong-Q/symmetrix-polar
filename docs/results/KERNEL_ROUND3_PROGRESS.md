@@ -1,9 +1,12 @@
 # Kernel Round 3 — implementation progress (2026-10-19/20)
 
 **中文摘要：** round 3 第一批切片已经实现并完成干净 A/B 测速。
-同一二进制、全部 round-3 开关回退 vs 默认：**54.45 → 49.79 ms/eval**
-（**1.0935×，省 4.66 ms**）；相对 round-2 验收的 56.50 ms 为 **1.135×**。
-CUPTI kernel 时间总和 **49.97 → 43.91 ms**。真正有效的切片是
+最新 build 8（含 `polar rev phase and source` 分块和三个 polar
+LayerNorm+SiLU 的 team 版本）：同一二进制、全部 round-3 开关回退 vs 默认
+**53.54 → 48.74 ms/eval**（**1.0985×，省 4.80 ms**）；相对 round-2 验收的
+56.50 ms 为 **1.159×**。build 5 的对应数字是 54.45 → 49.79 ms
+（1.0935×）。CUPTI kernel 时间总和（build 5）**49.97 → 43.91 ms**。
+真正有效的切片是
 MH-1 反向通道（-1.63 ms）、MH-1 harmonics（-0.65 ms）、
 affine LayerNorm+SiLU 正反向（合计 -1.92 ms）、UVU reverse x1（-0.46 ms）、
 k 空间 `desc ab` / `desc proj phase` 分块（合计 -1.59 ms）和
@@ -20,21 +23,25 @@ host gap/CUDA Graph）。
 
 ## Measured result (clean interleaved A/B)
 
-Protocol: one binary (`build-kernel-r3/lmp`, sha256
-`936440bf69fef369f6de2e935bc5c5d8a9310ab82c22f75ba5080c60d84374e0`),
-baseline = every round-3 slice reverted through its env switch
-(`MATOS_MH1_CHANNEL_VEC=1`, `MATOS_MH1_WRITE_THROUGH=0`,
+Protocol: one binary, baseline = every round-3 slice reverted through its env
+switch (`MATOS_MH1_CHANNEL_VEC=1`, `MATOS_MH1_WRITE_THROUGH=0`,
 `MATOS_MH1_HARMONIC_UNROLL=1`, `MATOS_MH1_WEIGHT_ZERO_ELIDE=0`,
 `MATOS_UVU_REV_SWEEP=1`, `MATOS_UVU_FWD_SWEEP=1`,
 `MATOS_AFFINE_LN_PARALLEL=0`, `MATOS_CONV_CUTOFF_BACKEND=scalar`).
 1 warmup + 12 measured, 2 interleaved rounds, median of per-round medians.
 
-| Configuration | ms/eval | Note |
+| Build / configuration | ms/eval | Note |
 |---|---:|---|
-| Round-3 defaults | **49.79** | per-round medians 49.86, 49.72 |
-| Round-2 fallbacks (same binary) | **54.45** | per-round medians 54.15, 54.75 |
-| Saving | **4.66 ms** | **1.0935×** |
-| Round-2 accepted headline | 56.50 | **1.135× vs round 2** |
+| **build 8** round-3 defaults | **48.74** | per-round medians 48.33, 49.15 |
+| build 8 round-2 fallbacks | **53.54** | per-round medians 53.53, 53.55 |
+| build 8 saving | **4.80 ms** | **1.0985×** |
+| build 5 round-3 defaults | 49.79 | per-round medians 49.86, 49.72 |
+| build 5 round-2 fallbacks | 54.45 | per-round medians 54.15, 54.75 |
+| Round-2 accepted headline | 56.50 | **1.159× vs round 2 (build 8)** |
+
+Build 8 adds the deterministic phase-source k split and team-per-row polar
+LayerNorm+SiLU kernels on top of build 5; the measured improvement over
+build 5 is ≈1.0 ms.
 
 CUPTI kernel-time comparison (same 128-atom load, one eval):
 
@@ -69,12 +76,13 @@ Wall 49.79 vs GPU busy 43.91 leaves a ≈5.88 ms host/launch gap.
 | Item | State |
 |---|---|
 | Round-2 accepted baseline | 56.50 ms/eval (GPU busy 49.97 ms) |
-| Round-3 current | **49.79 ms/eval** (GPU busy 43.91 ms) |
+| Round-3 current | **48.74 ms/eval** (build 8; GPU busy 43.91 ms on build 5) |
 | Round-3 target | ≤30 ms primary, 20–25 ms stretch |
-| Code slices implemented | 9 (MH-1 ×3, UVU reverse, UVU forward, affine LN, conv cutoff, ab/phase split, phase-source split) |
+| Code slices implemented | 10 (MH-1 ×3, UVU reverse, UVU forward, affine LN, conv cutoff, ab/phase split, phase-source split, polar LN teams) |
 | Private build | `symmetrix/build-kernel-r3` (sm80, CUDA 12.9), clean build |
+| Final binary (build 8) | sha256 `c7608f35845548ef037341833c138da87515484ce51c04a257a5920bb9424631` |
 | Speed A/B | PASS, interleaved same-binary protocol |
-| Numerical gates | LAMMPS 1-rank parity PASS; full module 5–8 / 32-frame gates still require a rebuilt Python snapshot |
+| Numerical gates | LAMMPS 1-rank parity PASS on builds 5/7/8; full module 5–8 / 32-frame gates still require a rebuilt Python snapshot |
 | GitHub sync | this commit (patch snapshot, implementation WIP) |
 
 ## Implemented slices
