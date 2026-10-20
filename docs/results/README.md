@@ -15,6 +15,13 @@
 - [`../../results/comparison_summary.csv`](../../results/comparison_summary.csv)
   — CSV; the round-2 rows are historical, the round-3 row is final.
 
+**Post-final follow-up (pending clean A/B):**
+
+- [`KERNEL_ROUND3_FOLLOWUP.md`](KERNEL_ROUND3_FOLLOWUP.md) — vectorized
+  `nonlinear gather messages` / `gather edge message adjoint`; bitwise vs
+  build 8, clean single round 49.25 → 48.63 ms. The official interleaved A/B
+  is queued because another GPU job currently holds the A100.
+
 **Historical evidence (numbers superseded by the final report):**
 
 - [`KERNEL_ROUND2.md`](KERNEL_ROUND2.md) — round-2 accepted 56.50 ms.
