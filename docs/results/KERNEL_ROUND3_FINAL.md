@@ -36,7 +36,7 @@ LAMMPS 1-rank parity 全部 PASS**（round-3 Python snapshot，rc 134 只是
 | Saving | **4.80 ms (1.0985×)** |
 | Round-2 accepted headline | 56.50 |
 | Round-1 | 122.2 |
-| v29 original Symmetrix-XL Kokkos engine | 183.8 |
+| v29 pre-round-1 Symmetrix-XL Kokkos build | 183.8 |
 | v28 initial polar implementation | 6951.7 |
 | PyTorch `mace_polar` reference | 94.0 |
 
@@ -45,9 +45,18 @@ Speedups of the final 48.74 ms:
 | Baseline | Speedup |
 |---|---:|
 | Round-2 accepted (56.50) | **1.159×** |
-| v29 Kokkos engine (183.8) | **3.77×** |
+| v29 pre-round-1 build (183.8) | **3.77×** |
 | v28 initial polar (6951.7) | **142.6×** |
 | PyTorch reference (94.0) | **1.93×** |
+
+**Comparability note (2026-10-20):** every baseline in this table is an
+internal or PolarMACE-specific reference (same model, same 128-atom box).
+None of them is the Symmetrix-XL paper's ML-IAP + cuEquivariance comparison,
+which uses MACE-OMAT-0/OFF23 in float32 at 5,000 atoms and the specialized
+standard-streaming path. Do not read the 3.77× as the paper's 3.1–5.0×.
+See [`PAPER_COMPARABILITY.md`](PAPER_COMPARABILITY.md) for the matched
+linear-engine measurement (~12.3 µs/atom/step at 6,144 atoms, materialized
+float64).
 
 The same-binary fallback protocol is the attribution measurement: all round-3
 slices are disabled with their documented env switches

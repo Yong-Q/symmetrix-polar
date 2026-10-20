@@ -15,6 +15,14 @@
 - [`../../results/comparison_summary.csv`](../../results/comparison_summary.csv)
   — CSV; the round-2 rows are historical, the round-3 row is final.
 
+**Paper comparability (separate):**
+
+- [`PAPER_COMPARABILITY.md`](PAPER_COMPARABILITY.md) — why the 48.74 ms
+  PolarMACE number must not be compared with the Symmetrix-XL paper's
+  3.1–5.0× / 4.50 µs/atom (different model, precision, system size, and
+  execution path), plus the matched linear MACE-OFF23 scaling measurement
+  (12.26 µs/atom/step at 6,144 atoms, materialized float64).
+
 **Plan B audit (separate):**
 
 - [`../design/PLAN_B_AUDIT.md`](../design/PLAN_B_AUDIT.md) — what a 20–25 ms
@@ -22,7 +30,20 @@
   inventory, and kill criteria. Conclusion: 36–40 ms is credible; 20–25 ms is
   not credible under the current FP64/exact-physics/full-gate contract.
 
-**Post-final follow-up (pending clean A/B):**
+**Post-final experiments (not in the accepted headline):**
+
+- [`PAPER_COMPARABILITY.md`](PAPER_COMPARABILITY.md) — paper-vs-ours
+  alignment; direct/JIT float32 path now measures **3.72 µs/atom/step**
+  (median of medians) at 6,144 atoms, in the paper's 4.50 range.
+- [`PLAN_B_REPLAY_CACHE.md`](PLAN_B_REPLAY_CACHE.md) — forward SCF replay
+  cache; PE identical, max force difference 7.77e-16 (cross-process noise);
+  A/B **49.69 → 45.02 ms (4.67 ms, 9.4%)**; full parity gate pending, not in
+  the headline.
+- [`MERGED_UNPACK_NEGATIVE.md`](MERGED_UNPACK_NEGATIVE.md) — merged e3-linear
+  unpack: numerically correct (1e-15), but **54.69 vs 49.00 ms**, a
+  performance negative; default off.
+
+**Round-3 follow-up (pending clean A/B):**
 
 - [`KERNEL_ROUND3_FOLLOWUP.md`](KERNEL_ROUND3_FOLLOWUP.md) — vectorized
   `nonlinear gather messages` / `gather edge message adjoint`; bitwise vs
