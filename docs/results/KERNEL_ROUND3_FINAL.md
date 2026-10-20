@@ -117,7 +117,7 @@ opt-in (`MATOS_E3_LINEAR_MERGED_UNPACK=1`) and disabled by default.
 | LAMMPS 1-rank parity vs round-3 Python reference | **PASS**, dE **2.910e-11 eV** (≤5e-5), max dF **2.628e-14 eV/Å** (≤1e-4) |
 | Stage-A build vs round-2 `lmp_r5` | PE identical, **max |dF| = 0.0** over all 384 components (bitwise) |
 | Reordered k-space splits | deterministic; covered by the parity gate above |
-| Module 5 (density/stage) | **PASS**, 12 density + 11 stage items |
+| Module 5 (density/stage) | **PASS**, 12 density + 11 stage items; dens abs 6.689e-8, rel 4.218e-8 |
 | Module 6 (Coulomb/SCF) | **PASS**, ρ̂ rel 1.27e-15, ΔE rel 1.02e-15, abs 7.77e-16 eV |
 | Module 7 (local electron) | **PASS**, 16/16, out 4.55e-7 |
 | Module 8 (forces) | **PASS**, FD 5.783e-4 (≤1e-3), parity 7.191e-7 (≤1e-3) |

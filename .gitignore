@@ -2,3 +2,5 @@
 bench/
 __pycache__/
 *.pyc
+pytools/
+docs/technical/fonts/

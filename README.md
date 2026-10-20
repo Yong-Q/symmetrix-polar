@@ -13,6 +13,13 @@ Symmetrix-XL Kokkos engine, and 1.93× faster than the PyTorch reference.
 1024 atoms (256 NH3 molecules) run at 312 ms/eval. Full report:
 [docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md).
 
+**Technical report (extendable PDF, for newcomers):**
+[docs/technical/SYMMETRIX_POLAR_TECHNICAL_REPORT.pdf](docs/technical/SYMMETRIX_POLAR_TECHNICAL_REPORT.pdf)
+— theory, engine implementation, optimization methods, measured results,
+the RBE negative result, honest limitations, and a reproduction guide. Its
+source is `docs/technical/TECHNICAL_REPORT.md`; edit the Markdown and rerun
+`harness/make_technical_pdf.py` to extend it.
+
 PolarMACE extends MACE with a self-consistent, long-range electrostatic layer
 (learned multipolar spin-charge densities, GTO-Ewald k-space electrostatics, a
 Fukui-balanced SCF fixed point). This project brings that layer into the
@@ -150,8 +157,8 @@ Details, formulas, and the blocker evidence:
 |---|---:|
 | **Full PolarMACE** (128 atoms = 32 NH3, nonlinear + polar, FP64) | **48.74 ms** |
 | Nonlinear backbone (polar off, 270 MB) | **27.7 ms** |
-| Linear MACE-OFF23 medium, materialized (different model) | 6.6 ms |
-| Linear MACE-OFF23 medium, generic streamed (different model) | 19.3 ms |
+| Linear MACE-OFF23 medium, materialized (Symmetrix linear path; different model) | 6.6 ms |
+| Linear MACE-OFF23 medium, generic streamed (Symmetrix generic path; different model) | 19.3 ms |
 
 One column, one value per configuration — the latest measured number. The
 full PolarMACE 48.74 ms is the final round-3 value and passes the **complete
@@ -160,7 +167,7 @@ backbone 27.7 ms is the latest polar-off measurement and also has the full
 suite.
 
 This is **not** an apples-to-apples model comparison: MACE-OFF23 medium is a
-37 MB, 10-element, r_cut 5 Å linear-readout model, while the PolarMACE backbone
+37 MB, 10-element, r_cut 5 Å linear-readout model measured on the **same Symmetrix engine** (its linear/generic path), while the PolarMACE backbone
 is 270 MB, 83-element, r_cut 6 Å, 512-channel nonlinear-readout. The clean
 same-model isolation is nonlinear backbone 27.7 ms → full PolarMACE 48.74 ms
 (polar layer adds 1.76×). Both engines are Kokkos/CUDA; this is not a

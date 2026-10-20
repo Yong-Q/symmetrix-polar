@@ -30,8 +30,8 @@ plt.rcParams.update({
 rows = [
     ("Full PolarMACE\n(latest, 128 atoms = 32 NH3)", comp["polar_mace"]["full_polar_ms"], "#1f6feb"),
     ("Nonlinear backbone\n(polar off, latest)", comp["polar_mace"]["backbone_polar_off_ms"], "#bf8700"),
-    ("Linear MACE-OFF23 medium\ngeneric streamed (different model)", comp["linear_mace_off23_medium"]["generic_streamed_ms"], "#2da44e"),
-    ("Linear MACE-OFF23 medium\nmaterialized (different model)", comp["linear_mace_off23_medium"]["materialized_ms"], "#1a7f37"),
+    ("Linear MACE-OFF23 medium\ngeneric streamed (Symmetrix path)", comp["linear_mace_off23_medium"]["generic_streamed_ms"], "#2da44e"),
+    ("Linear MACE-OFF23 medium\nmaterialized (Symmetrix path)", comp["linear_mace_off23_medium"]["materialized_ms"], "#1a7f37"),
 ]
 
 fig, ax = plt.subplots(figsize=(10, 4.8))

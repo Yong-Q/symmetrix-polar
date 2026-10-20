@@ -2,6 +2,8 @@
 
 **Final (authoritative):**
 
+- [`../technical/SYMMETRIX_POLAR_TECHNICAL_REPORT.pdf`](../technical/SYMMETRIX_POLAR_TECHNICAL_REPORT.pdf)
+  — extendable technical report (theory, implementation, results, gaps).
 - [`KERNEL_ROUND3_FINAL.md`](KERNEL_ROUND3_FINAL.md) — **48.74 ms/eval**
   on 128 atoms (**32 NH3 molecules**), full nonlinear PolarMACE, FP64;
   1024 atoms (**256 NH3 molecules**) at **312 ms/eval**; RBE decision;

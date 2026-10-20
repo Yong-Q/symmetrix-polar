@@ -6,7 +6,8 @@
     "generic_streamed_ms": 19.29,
     "auto_ms": 7.22,
     "source": "v30 (2026-10-19); not re-measured with round-3 kernels",
-    "note": "different model: 37 MB, 10 elements, r_cut 5 A, linear readout"
+    "note": "different model: 37 MB, 10 elements, r_cut 5 A, linear readout; measured on the Symmetrix engine, not an external implementation",
+    "measurement_engine": "Symmetrix-XL Kokkos engine, linear/generic path (same framework as PolarMACE)"
   },
   "polar_mace": {
     "backbone_polar_off_ms": 27.66,
