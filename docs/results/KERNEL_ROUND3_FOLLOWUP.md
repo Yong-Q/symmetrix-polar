@@ -41,11 +41,12 @@ kernel. No model, precision, or gate tolerance changed.
 - Each x2 team now stages a `(64 nodes x 32 u)` `mixed_bar` tile and a
   `(4 v x 32 u)` weight tile in shared memory (≈17 KB). Four v threads share
   one node's `mixed_bar` row, so those global loads drop 4×.
-- The ascending-`u` accumulation order is unchanged, so the kernel is
-  intended to be bitwise vs build 9; the bitwise/parity check is queued behind
-  another GPU job at the time of writing.
+- The ascending-`u` accumulation order is unchanged. **Verified:** build 10
+  vs build 8 on the 128-atom input gives PE identical and
+  **max |dF| = 0.0** over all 384 force components (bitwise).
 - Revert switch: `MATOS_UVU_X2_MB_SMEM=0` restores the build-9 x2 kernel.
-- Build 10 compiled successfully; speed A/B is pending a clean GPU window.
+- Build 10 compiled successfully; bitwise verification **PASS**. The clean
+  interleaved speed A/B is queued behind another GPU job.
 
 ## Next nonlinear slices
 
