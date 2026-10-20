@@ -170,8 +170,12 @@ This is **not** an apples-to-apples model comparison: MACE-OFF23 medium is a
 37 MB, 10-element, r_cut 5 Å linear-readout model measured on the **same Symmetrix engine** (its linear/generic path), while the PolarMACE backbone
 is 270 MB, 83-element, r_cut 6 Å, 512-channel nonlinear-readout. The clean
 same-model isolation is nonlinear backbone 27.7 ms → full PolarMACE 48.74 ms
-(polar layer adds 1.76×). Both engines are Kokkos/CUDA; this is not a
-“Kokkos vs ours” comparison. Data:
+(polar layer adds 1.76×). The 48.74/6.6 = 7.4× is therefore **not a pure
+nonlinearity penalty**: linear 6.6 → nonlinear backbone 27.7 is ≈4.2×
+(model size/architecture: 270 MB/83 elements/512 channels vs 37 MB/10
+elements), and backbone 27.7 → full 48.74 is 1.76× (polar SCF/Ewald). Both
+PolarMACE rows are materialized, same as the 6.6 ms linear row. Both engines
+are Kokkos/CUDA; this is not a “Kokkos vs ours” comparison. Data:
 `docs/examples/data/engine_compare_round3.json`.
 
 **Execution mode:** the nonlinear PolarMACE rows (48.74 / 27.7 ms) are
