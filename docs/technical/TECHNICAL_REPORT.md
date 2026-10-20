@@ -332,6 +332,17 @@ kernel 仍然在 materialized 路径里运行**（CUPTI trace 中的
 引擎的线性路径可以很快；Full PolarMACE 是 270 MB、83 元素、r_cut 6 Å、512 通道
 非线性 readout，二者不可直接比较。
 
+**48.74/6.6 = 7.4× 的分解（哪些是模型本身，哪些是引擎）：**
+
+| 部分 | 时间 | 倍率 | 性质 |
+|---|---:|---:|---|
+| Linear MACE-OFF23 medium | 6.6 ms | 1.00× | 小模型、线性 readout |
+| → Nonlinear PolarMACE backbone | 27.7 ms | **4.2×** | **模型本身**更大/更复杂：270 MB vs 37 MB、83 vs 10 元素、r_cut 6 vs 5 Å、512 通道、2 interactions、非线性 readout |
+| → Full PolarMACE | 48.74 ms | **1.76×** | **模型物理**：polar 长程层（SCF + Ewald） |
+| 引擎/内核可优化余量 | GPU-busy ≈43.9 ms，静态 SM-weighted ≈22.9 ms；host/launch gap ≈5 ms | — | **引擎效率**，不是模型规模 |
+
+所以 7.4× 主要是“这个非线性极化模型更大 + 多了一个长程极化层”，不是同一个模型被引擎拖慢了 7.4×。若要单独测“非线性 readout”的代价，需要一个与 PolarMACE backbone 同规模、只把 readout 改成线性的模型，当前没有这个对照。
+
 ### 5.4 数值门（round-3 最终 build）
 
 ![Gate status](figures/fig_05_gates.png)
