@@ -240,9 +240,19 @@ MACE-OMAT-0 on this engine, so no matched row is claimed.
 
 | Configuration | Precision | Atoms | Path | µs/atom/step | ms/eval |
 |---|---|---:|---|---:|---:|
-| Full PolarMACE | FP64 | 128 | materialized | 380.8 | 48.74 |
-| Full PolarMACE | FP64 | 1,024 | materialized | 304.8 | 312.1 |
-| **PolarMACE + replay cache** | **FP64** | **128** | **materialized + cache** | **352.5** | **45.12 (parity PASS)** |
+| Full PolarMACE (NH₃) | FP64 | 128 | materialized | 380.8 | 48.74 |
+| Full PolarMACE (NH₃) | FP64 | 1,024 | materialized | 304.8 | 312.1 |
+| **PolarMACE + replay cache (NH₃)** | **FP64** | **128** | **materialized + cache** | **352.5** | **45.12 (parity PASS)** |
+| **Full PolarMACE (water)** | **FP64** | **1,296** | **materialized + cache** | **480.7** | **623.0** |
+| Full PolarMACE (water) | FP64 | 2,592 | materialized | **OOM** | — |
+| Full PolarMACE (water) | FP64 | 5,184 | materialized | **OOM** | — |
+
+The 5,184-atom polar comparison is currently **blocked by device memory**, not
+by kernel speed: at 2,592 atoms the materialized workspace already fails a
+2.0 GiB allocation after filling an A100 80 GB, and 5,184 fails a 0.567 GiB
+allocation. The paper's 5,184/11.24M-atom capacity is for standard MACE with
+streamed/tiled execution; PolarMACE's graph-wide SCF/Ewald workspace needs a
+tiled polar workspace or multi-GPU to reach that atom count.
 
 The polar model is not a slower version of the paper's linear model: the
 same-box linear → polar ratio is **7.4×**, FP64 adds ~2×, materialized vs
