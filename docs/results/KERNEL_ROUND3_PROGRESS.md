@@ -1,23 +1,75 @@
-# Kernel Round 3 — implementation progress (2026-10-19)
+# Kernel Round 3 — implementation progress (2026-10-19/20)
 
-**中文摘要：** round 3 已进入实现阶段。第一批切片已经落到引擎源码：
-MH-1 反向通道（4-channel 寄存器累加 + 按指令 flush）、MH-1 前向
-（4-channel + 写穿输出 + 去 zero-fill）、MH-1 harmonics 4 路 ILP、
-UVU reverse x1/x2 确定性分块归约（S=4）、affine LayerNorm+SiLU 的
-team-per-row 版本、reverse convolution cutoff 两阶段归约。每片都保留
-round-2 标量回退环境变量。当前私有 build 正在编译；测速要等 MPI agent
-释放共享 GPU lock。数值门和速度数字尚未产生，本文件只记录已实现的代码切片。
+**中文摘要：** round 3 第一批切片已经实现并完成干净 A/B 测速。
+同一二进制、全部 round-3 开关回退 vs 默认：**54.45 → 49.79 ms/eval**
+（**1.0935×，省 4.66 ms**）；相对 round-2 验收的 56.50 ms 为 **1.135×**。
+CUPTI kernel 时间总和 **49.97 → 43.91 ms**。真正有效的切片是
+MH-1 反向通道（-1.63 ms）、MH-1 harmonics（-0.65 ms）、
+affine LayerNorm+SiLU 正反向（合计 -1.92 ms）、UVU reverse x1（-0.46 ms）、
+k 空间 `desc ab` / `desc proj phase` 分块（合计 -1.59 ms）和
+MH-1 前向写穿（-0.11 ms）。计划中预期的 MH-1 前向 4-channel 和
+reverse cutoff 两阶段归约实测**变慢**，已分别改回 scalar 默认（保留 opt-in）；
+UVU reverse x2 的分块归约基本中性。离 20–30 ms 仍有明显差距，下一阶段需要
+继续做 Stage B/C（e3 pack/unpack 合并、UVU x2 共享内存、gather 融合、
+host gap/CUDA Graph）。
+
+## Measured result (clean interleaved A/B)
+
+Protocol: one binary (`build-kernel-r3/lmp`, sha256
+`936440bf69fef369f6de2e935bc5c5d8a9310ab82c22f75ba5080c60d84374e0`),
+baseline = every round-3 slice reverted through its env switch
+(`MATOS_MH1_CHANNEL_VEC=1`, `MATOS_MH1_WRITE_THROUGH=0`,
+`MATOS_MH1_HARMONIC_UNROLL=1`, `MATOS_MH1_WEIGHT_ZERO_ELIDE=0`,
+`MATOS_UVU_REV_SWEEP=1`, `MATOS_UVU_FWD_SWEEP=1`,
+`MATOS_AFFINE_LN_PARALLEL=0`, `MATOS_CONV_CUTOFF_BACKEND=scalar`).
+1 warmup + 12 measured, 2 interleaved rounds, median of per-round medians.
+
+| Configuration | ms/eval | Note |
+|---|---:|---|
+| Round-3 defaults | **49.79** | per-round medians 49.86, 49.72 |
+| Round-2 fallbacks (same binary) | **54.45** | per-round medians 54.15, 54.75 |
+| Saving | **4.66 ms** | **1.0935×** |
+| Round-2 accepted headline | 56.50 | **1.135× vs round 2** |
+
+CUPTI kernel-time comparison (same 128-atom load, one eval):
+
+| kernel | round 2 | round 3 | delta |
+|---|---:|---:|---:|
+| e3 tensor reverse mh1 fused channels | 4.288 | 2.662 | **-1.626** |
+| e3 tensor reverse mh1 fused harmonics | 3.097 | 2.449 | **-0.649** |
+| affine fused reverse layer norm silu | 1.539 | 0.490 | **-1.049** |
+| affine fused layer norm silu | 1.262 | 0.392 | **-0.870** |
+| polar desc ab reverse (+partial) | 1.043 | 0.077 | **-0.966** |
+| polar desc proj phase reverse (+partial) | 0.846 | 0.221 | **-0.625** |
+| polar reverse uvu mode0 x1 | 3.207 | 2.749 | -0.458 |
+| polar uvu mode0 | 1.201 | 1.092 | -0.110 |
+| e3 tensor product mh1 fused | 3.337 | 3.231 | -0.106 |
+| polar reverse uvu mode0 x2 | 3.552 | 3.612 | +0.060 |
+| **GPU-busy total** | **49.97** | **43.91** | **-6.06** |
+
+Wall 49.79 vs GPU busy 43.91 leaves a ≈5.88 ms host/launch gap.
+
+## Numerical validation on this build
+
+- LAMMPS 1-rank parity vs the round-2 Python reference (`pybase`):
+  **PASS**, dE 2.910e-11 eV (≤5e-5), max dF 2.603e-14 eV/Å (≤1e-4).
+- Bitwise check round-2 `lmp_r5` vs the Stage-A build on the 128-atom input:
+  PE identical, **max |dF| = 0.0** over all 384 components. The k-space
+  ab/phase split was added afterwards and is covered by the parity gate above.
+- The pre-existing `cudaErrorCudartUnloading` abort at interpreter teardown
+  (rc 134) follows the printed GATE PASS, as in every prior round.
 
 ## Status
 
 | Item | State |
 |---|---|
 | Round-2 accepted baseline | 56.50 ms/eval (GPU busy 49.97 ms) |
+| Round-3 current | **49.79 ms/eval** (GPU busy 43.91 ms) |
 | Round-3 target | ≤30 ms primary, 20–25 ms stretch |
-| Code slices implemented | 6 (MH-1 ×3, UVU reverse, affine LN, conv cutoff) |
-| Private build | `symmetrix/build-kernel-r3` (sm80, CUDA 12.9), in progress |
-| Speed A/B | blocked on the shared GPU lock (MPI H1 debug session) |
-| Numerical gates | not yet run on this build |
+| Code slices implemented | 9 (MH-1 ×3, UVU reverse, UVU forward, affine LN, conv cutoff, ab/phase split, phase-source split) |
+| Private build | `symmetrix/build-kernel-r3` (sm80, CUDA 12.9), clean build |
+| Speed A/B | PASS, interleaved same-binary protocol |
+| Numerical gates | LAMMPS 1-rank parity PASS; full module 5–8 / 32-frame gates still require a rebuilt Python snapshot |
 | GitHub sync | this commit (patch snapshot, implementation WIP) |
 
 ## Implemented slices
@@ -35,13 +87,15 @@ round-2 标量回退环境变量。当前私有 build 正在编译；测速要�
 
 ### 2. MH-1 forward (`e3nn_kokkos.cpp`)
 
-- Four channels per thread; channel-invariant `values`/`input_2` loads shared.
 - Host-side coverage check proves the instruction output blocks tile the
   complete output exactly once and the mask is identity; in that case the
   zero-fill and the `+=` read-modify-write are replaced by a write-through
-  store.
-- Launch: `73×32` / `73×8`; output zero-fill removed.
-- Fallbacks: `MATOS_MH1_CHANNEL_VEC=1`, `MATOS_MH1_WRITE_THROUGH=0`.
+  store. Measured saving ≈0.13 ms.
+- Four-channel blocking is implemented but **not the default**: it measured
+  4.04 ms vs 3.34 ms for the scalar kernel. `MATOS_MH1_FWD_CHANNEL_VEC=4`
+  enables it; the shared `MATOS_MH1_CHANNEL_VEC` still overrides both
+  directions when set.
+- Fallbacks: `MATOS_MH1_FWD_CHANNEL_VEC=1`, `MATOS_MH1_WRITE_THROUGH=0`.
 
 ### 3. MH-1 reverse harmonics (`e3nn_kokkos.cpp`)
 
@@ -79,33 +133,48 @@ round-2 标量回退环境变量。当前私有 build 正在编译；测速要�
 - Deterministic two-stage reduction: 16 consecutive `k` per thread write
   `raw_weight_adj` and a chunk partial; one thread per edge folds the chunks in
   ascending order and adds to `cutoff_adjoint_values`.
-- Fallback: `MATOS_CONV_CUTOFF_BACKEND=scalar`.
+- **Not the default:** the chunked version measured 2.87 ms vs 1.53 ms for the
+  serial per-edge loop. Scalar is the default; set
+  `MATOS_CONV_CUTOFF_BACKEND=chunked` to opt into the experiment.
 
-## Expected effect (not yet measured)
+### 8. `polar desc ab reverse` / `polar desc proj phase reverse` split
+(`mace_polar_impl.tpp`)
 
-| Slice | Current ms/eval | Planned saving |
-|---|---:|---:|
-| MH-1 reverse channels | 4.288 | 1.8–2.7 |
-| MH-1 forward + zero-fill | 3.337 (+0.25 memset) | 1.4–2.0 |
-| MH-1 harmonics | 3.097 | 0.9–1.4 |
-| UVU reverse x1/x2 | 6.759 | 2.4–3.4 |
-| Affine LN forward+reverse | 2.801 | 2.0–2.4 |
-| Reverse convolution cutoff | 1.532 | 1.0–1.2 |
+- Both per-k/per-node serial reductions are split into four contiguous chunks
+  with deterministic ascending folding. This is the next build (the current
+  measured binary still has the serial versions).
 
-Sum ≈ 9.5–13.1 ms kernel time. This is Stage A of
-`docs/design/KERNEL_ROUND3_TARGET.md`; Stage B/C are still required for
-≤30 ms.
+## Planned vs measured
+
+| Slice | Plan saving | Measured saving | Verdict |
+|---|---:|---:|---|
+| MH-1 reverse channels | 1.8–2.7 | **1.63** | keep |
+| MH-1 harmonics | 0.9–1.4 | **0.65** | keep |
+| Affine LN forward+reverse | 2.0–2.4 | **1.92** | keep |
+| UVU reverse x1+x2 | 2.4–3.4 | **0.46** (x1 only) | x2 neutral |
+| k-space ab / phase split | — | **1.59** | keep |
+| MH-1 forward | 1.4–2.0 | **0.11** | 4-channel regressed; scalar + write-through |
+| Reverse convolution cutoff | 1.0–1.2 | **-1.34** (regression) | scalar default |
+| UVU forward split | — | **0.11** | keep |
+| **Total GPU busy** | 9.5–13.1 | **6.06** | |
+
+The plan's Stage-A estimate was too optimistic for the MH-1 forward and the
+reverse cutoff. The measured Stage-A+B result is **49.79 ms**, not the planned
+41–45 ms. The remaining 5.88 ms host/launch gap and the large
+MH-1/UVU/gather/cuBLAS kernels are the path to ≤30 ms; 20–25 ms would require
+CUDA Graph/launch elimination plus tensor-core or work-removal changes that
+the round-3 plan itself flags as low confidence.
 
 ## Next steps
 
-1. Finish the private build and verify the kernel labels/grids with CUPTI.
-2. Interleaved A/B vs `bench/kernel_round2_2026-10-19/lmp_r5`.
-3. Run module 5–8, 32/32 end-to-end, LAMMPS 1-rank parity on a rebuilt Python
-   snapshot.
-4. Continue with Stage B: UVU forward/replay/LE split, e3 pack/unpack fusion,
-   gather fusion, and the low-coverage SCF/project kernels.
-5. Stage C: host-gap/launch reduction. CUDA Graph remains deferred per the
-   round-3 plan.
+1. Rebuild once more to activate the `polar rev phase and source` split
+   (implemented, not yet in the measured binary); expected ≈0.4 ms.
+2. e3-linear pack/unpack launch merge (488 launches → a few) to attack the
+   5.88 ms host gap; expected 1–2 ms wall.
+3. UVU reverse x2 shared-memory `mixed_bar` staging; expected 0.3–0.5 ms.
+4. Gather fusion into the MH-1 forward/reverse; expected 0.5–1.0 ms.
+5. Rebuild the Python snapshot and run module 5–8 / 32-frame gates.
+6. CUDA Graph only after the launch count and host syncs are reduced.
 
 ## Provenance
 
@@ -114,3 +183,7 @@ Sum ≈ 9.5–13.1 ms kernel time. This is Stage A of
 - Engine patch snapshot: `patches/symmetrix-xl-polar-support.patch`
   (includes the base polar support and the round-1/2/3 kernel edits)
 - Private build: `external-repos/symmetrix-xl/symmetrix/build-kernel-r3`
+- Measured binary: sha256 `936440bf69fef369f6de2e935bc5c5d8a9310ab82c22f75ba5080c60d84374e0`
+- Speed A/B: `bench/kernel_round3_2026-10-19/speed_ab_r3final1.json`
+- Trace: `bench/kernel_round3_2026-10-19/analysis_exact/r3c_full_*`
+- Parity gate: `bench/kernel_round3_2026-10-19/r3_gate_lammps_parity_build5.log`

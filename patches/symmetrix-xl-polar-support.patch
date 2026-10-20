@@ -11,7 +11,7 @@ index 17625ec..f535eb8 100644
          source/multivariate_polynomial_kokkos.cpp
          source/radial_function_set_kokkos.cpp
 diff --git a/libsymmetrix/source/affine_mlp_kokkos.cpp b/libsymmetrix/source/affine_mlp_kokkos.cpp
-index 56f3413..dccb716 100644
+index 56f3413..0da5fdc 100644
 --- a/libsymmetrix/source/affine_mlp_kokkos.cpp
 +++ b/libsymmetrix/source/affine_mlp_kokkos.cpp
 @@ -2,6 +2,7 @@
@@ -81,12 +81,13 @@ index 56f3413..dccb716 100644
              layer+=2;
              continue;
          }
-@@ -727,6 +773,88 @@ void AffineMLPKokkosT<Precision>::reverse_from_tape_impl(
+@@ -727,6 +773,89 @@ void AffineMLPKokkosT<Precision>::reverse_from_tape_impl(
              auto gamma=weights(layer-1);
              auto beta=biases(layer-1);
              const Precision epsilon=eps(layer-1);
 +            const char* ln_env=std::getenv("MATOS_AFFINE_LN_PARALLEL");
-+            const bool team_ln=!(ln_env!=nullptr&&std::atoi(ln_env)==0);
++            const bool team_ln=!(ln_env!=nullptr&&std::atoi(ln_env)==0)
++                &&source.extent(1)<=512;
 +            if(team_ln) {
 +                // Round-3 slice 4 (reverse): one team per row, deterministic
 +                // tree reductions for mean/variance and for the two LN
@@ -170,7 +171,7 @@ index 56f3413..dccb716 100644
              Kokkos::parallel_for(
                  "affine fused reverse layer norm silu",source.extent(0),
                  KOKKOS_LAMBDA(int sample) {
-@@ -765,6 +893,7 @@ void AffineMLPKokkosT<Precision>::reverse_from_tape_impl(
+@@ -765,6 +894,7 @@ void AffineMLPKokkosT<Precision>::reverse_from_tape_impl(
                              *(width*scaled-sum-normalized*sum_normalized)/width;
                      }
                  });
@@ -193,7 +194,7 @@ index a1e99a4..e1f79cc 100644
              || instruction.output < 0 || instruction.output >= static_cast<int>(output.blocks.size()))
              throw std::invalid_argument("MACE_Nonlinear linear instruction has an invalid irrep index.");
 diff --git a/libsymmetrix/source/e3nn_kokkos.cpp b/libsymmetrix/source/e3nn_kokkos.cpp
-index af51573..9af5721 100644
+index af51573..cd634fa 100644
 --- a/libsymmetrix/source/e3nn_kokkos.cpp
 +++ b/libsymmetrix/source/e3nn_kokkos.cpp
 @@ -2,6 +2,8 @@
@@ -409,7 +410,7 @@ index af51573..9af5721 100644
          return;
      }
      for (const auto& instruction:instructions) {
-@@ -1866,6 +1970,63 @@ E3TensorProductKokkosT<Precision>::E3TensorProductKokkosT(const nlohmann::json&
+@@ -1866,6 +1970,70 @@ E3TensorProductKokkosT<Precision>::E3TensorProductKokkosT(const nlohmann::json&
          mh1_cuda_channel_team_size_=mh1_cuda_team_size(mh1_multiplicity_);
          mh1_cuda_harmonic_team_size_=mh1_cuda_team_size(mh1_multiplicity_);
          mh1_instruction_count_=instructions.size();
@@ -423,7 +424,14 @@ index af51573..9af5721 100644
 +                if(end==raw||value<lower||value>upper) return fallback;
 +                return static_cast<int>(value);
 +            };
-+            mh1_channel_vec_=env_int("MATOS_MH1_CHANNEL_VEC",4,1,4);
++            const int shared_vec=env_int(
++                "MATOS_MH1_CHANNEL_VEC",4,1,4);
++            mh1_channel_vec_=env_int(
++                "MATOS_MH1_REV_CHANNEL_VEC",shared_vec,1,4);
++            // The four-channel forward kernel measured slower than the scalar
++            // path; keep scalar as the default while the reverse keeps vec=4.
++            mh1_forward_channel_vec_=env_int(
++                "MATOS_MH1_FWD_CHANNEL_VEC",1,1,4);
 +            mh1_harmonic_unroll_=env_int(
 +                "MATOS_MH1_HARMONIC_UNROLL",4,1,4);
 +            const std::size_t count=
@@ -473,7 +481,7 @@ index af51573..9af5721 100644
          set_kokkos_view(
              mh1_instruction_data,mh1_instruction_data_host,
              mh1_instruction_count_,7);
-@@ -2009,7 +2170,9 @@ void E3TensorProductKokkosT<Precision>::evaluate(Kokkos::View<const Precision**,
+@@ -2009,7 +2177,9 @@ void E3TensorProductKokkosT<Precision>::evaluate(Kokkos::View<const Precision**,
      ProfileRegion profile(mh1_fast_path
          ? "symmetrix/mh1/tensor_product/forward"
          : "symmetrix/generic/tensor_product/forward");
@@ -484,7 +492,7 @@ index af51573..9af5721 100644
      if(mh1_fast_path) {
          auto plan=mh1_instruction_data;
          auto paths=mh1_path_weights;
-@@ -2018,6 +2181,7 @@ void E3TensorProductKokkosT<Precision>::evaluate(Kokkos::View<const Precision**,
+@@ -2018,6 +2188,7 @@ void E3TensorProductKokkosT<Precision>::evaluate(Kokkos::View<const Precision**,
          auto component_offsets=mh1_component_offsets;
          const int instruction_count=mh1_instruction_count_;
          const int multiplicity=mh1_multiplicity_;
@@ -492,11 +500,11 @@ index af51573..9af5721 100644
  #ifdef KOKKOS_ENABLE_CUDA
          if constexpr(std::is_same_v<Precision,float>
              &&std::is_same_v<Kokkos::DefaultExecutionSpace,Kokkos::Cuda>) {
-@@ -2062,6 +2226,82 @@ void E3TensorProductKokkosT<Precision>::evaluate(Kokkos::View<const Precision**,
+@@ -2062,6 +2233,82 @@ void E3TensorProductKokkosT<Precision>::evaluate(Kokkos::View<const Precision**,
          return;
          }
  #endif
-+        if(mh1_channel_vec_==4) {
++        if(mh1_forward_channel_vec_==4) {
 +            // Round-3 slice 2: four channels per thread.  The instruction,
 +            // entry, component and per-channel accumulation order are all
 +            // unchanged; only the channel-invariant values/input_2 loads and
@@ -575,7 +583,7 @@ index af51573..9af5721 100644
          Kokkos::parallel_for(
              "e3 tensor product mh1 fused",
              Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
-@@ -2089,8 +2329,12 @@ void E3TensorProductKokkosT<Precision>::evaluate(Kokkos::View<const Precision**,
+@@ -2089,8 +2336,12 @@ void E3TensorProductKokkosT<Precision>::evaluate(Kokkos::View<const Precision**,
                                  *input_2(sample,input_2_offset+indices(entry,1));
                          const int output_index=output_offset
                              +channel*output_width+component;
@@ -590,7 +598,7 @@ index af51573..9af5721 100644
                      }
                  }
              });
-@@ -2112,8 +2356,13 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
+@@ -2112,8 +2363,13 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
          ? "symmetrix/mh1/tensor_product/reverse"
          : "symmetrix/generic/tensor_product/reverse");
      ordered_kokkos_deep_copy(input_1_adjoint,Precision(0));
@@ -606,7 +614,7 @@ index af51573..9af5721 100644
      auto mask=output_mask; auto fixed=internal_weights;
      if(mh1_fast_path) {
          auto plan=mh1_instruction_data;
-@@ -2214,73 +2463,266 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
+@@ -2214,73 +2470,266 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
          return;
          }
  #endif
@@ -933,10 +941,10 @@ index af51573..9af5721 100644
      }
      for(const auto instruction:instructions) { auto wigner=instruction.wigner;
 diff --git a/libsymmetrix/source/e3nn_kokkos.hpp b/libsymmetrix/source/e3nn_kokkos.hpp
-index 5543fbc..ae92afa 100644
+index 5543fbc..07f7fcb 100644
 --- a/libsymmetrix/source/e3nn_kokkos.hpp
 +++ b/libsymmetrix/source/e3nn_kokkos.hpp
-@@ -318,6 +318,15 @@ private:
+@@ -318,6 +318,16 @@ private:
      int input_1_dimension_=0,input_2_dimension_=0,output_dimension_=0,weight_size_=0;
      bool mh1_fast_path=false,mh1_direct_node_layout_=false,
          output_mask_is_identity_=false;
@@ -948,7 +956,8 @@ index 5543fbc..ae92afa 100644
 +    // zero-fill is removable.
 +    bool mh1_output_write_through_=false,
 +        mh1_weight_adjoint_fully_written_=false;
-+    int mh1_channel_vec_=4,mh1_harmonic_unroll_=4;
++    int mh1_channel_vec_=4,mh1_forward_channel_vec_=1,
++        mh1_harmonic_unroll_=4;
      int mh1_instruction_count_=0,mh1_multiplicity_=0,
          mh1_input_1_angular_dimension_=0,mh1_max_output_width_=0;
      int mh1_cuda_channel_team_size_=0,mh1_cuda_harmonic_team_size_=0;
@@ -1063,7 +1072,7 @@ index 80169b3..9bbf03a 100644
          explicit Readout(const nlohmann::json& data);
          double evaluate(const std::vector<double>& features) const;
 diff --git a/libsymmetrix/source/mace_nonlinear_kokkos.hpp b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
-index ffcdc1c..8bec16c 100644
+index ffcdc1c..258346d 100644
 --- a/libsymmetrix/source/mace_nonlinear_kokkos.hpp
 +++ b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
 @@ -2,11 +2,42 @@
@@ -1151,7 +1160,7 @@ index ffcdc1c..8bec16c 100644
      void set_e3_linear_backend(const std::string& backend);
      std::string e3_linear_backend() const;
      std::string selected_e3_linear_backend(std::size_t samples) const;
-@@ -336,16 +402,253 @@ public:
+@@ -336,16 +402,265 @@ public:
      std::size_t node_workspace_bytes() const;
      std::size_t precision_workspace_bytes() const;
      std::vector<int> atomic_numbers_host;
@@ -1297,8 +1306,6 @@ index ffcdc1c..8bec16c 100644
 +        polar_rev_nfeat_adjoint,polar_rev_nfeat_adjoint_storage,         // (N,2048) e3nn node-feat 伴
 +        polar_rev_fmix_adjoint,polar_rev_fmix_adjoint_storage,           // (N,2048)
 +        polar_rev_uvu_mixed_bar,polar_rev_uvu_mixed_bar_storage,         // (N,mul1) mode1
-+        polar_rev_uvu_partial_x1,polar_rev_uvu_partial_x1_storage,       // (S,N,mul1*d1)
-+        polar_rev_uvu_partial_x2,polar_rev_uvu_partial_x2_storage,       // (S,N,mul2*d1)
 +        polar_rev_le_mlp_out_bar,polar_rev_le_mlp_out_bar_storage,       // (N,1)
 +        polar_rev_le_invar_bar,polar_rev_le_invar_bar_storage,           // (N,1024)
 +        polar_rev_le_dot_q_bar,polar_rev_le_dot_q_bar_storage,           // (N,512)
@@ -1321,6 +1328,13 @@ index ffcdc1c..8bec16c 100644
 +        polar_rev_dp_adjoint,polar_rev_dp_adjoint_storage,               // (N,512)
 +        polar_rev_se_adjoint,polar_rev_se_adjoint_storage,               // (N,512)
 +        polar_rev_pe_adjoint,polar_rev_pe_adjoint_storage;               // (N,pe_w)
++    // round-3 UVU reverse split-reduction partials: (S,N,mul*d1)
++    Kokkos::View<Precision***,Kokkos::LayoutRight> polar_rev_uvu_partial_x1,
++        polar_rev_uvu_partial_x1_storage,
++        polar_rev_uvu_partial_x2,polar_rev_uvu_partial_x2_storage;
++    // round-3 forward/replay/LE UVU split-reduction partials: (S,N,mul1)
++    Kokkos::View<Precision***,Kokkos::LayoutRight> polar_fwd_uvu_partial,
++        polar_fwd_uvu_partial_storage;
 +    // 重放前向值(不触碰⑤导出视图):
 +    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_rev_step_potential,
 +        polar_rev_step_potential_storage,                                // (N,16)
@@ -1343,6 +1357,13 @@ index ffcdc1c..8bec16c 100644
 +    // k 空间反向暂存:
 +    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_rev_ab,
 +        polar_rev_ab_storage;                                            // (Nk,16)=[Ā|Ŷ] 投影反向
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_rev_ab_partial,
++        polar_rev_ab_partial_storage;                                    // (Nk,8*S*2) round-3 split
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_rev_phase_partial,
++        polar_rev_phase_partial_storage;                                 // (N,S*3) round-3 split
++    Kokkos::View<Precision**,Kokkos::LayoutRight>
++        polar_rev_phase_source_partial,
++        polar_rev_phase_source_partial_storage;                          // (N,S*7) round-3 split
 +    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_rev_acc_cos,
 +        polar_rev_acc_cos_storage,polar_rev_acc_sin,polar_rev_acc_sin_storage;
 +                                                                         // (Nk,4) assemble 反向
@@ -1406,7 +1427,7 @@ index ffcdc1c..8bec16c 100644
  
  private:
      struct SphericalHarmonicsState;
-@@ -430,17 +733,32 @@ private:
+@@ -430,17 +745,32 @@ private:
          Kokkos::View<const int*> neigh_types);
  public:
      struct Readout {
@@ -1440,7 +1461,7 @@ index ffcdc1c..8bec16c 100644
          void reverse(Kokkos::View<const Precision**,Kokkos::LayoutRight> input,Precision scale,
                       Kokkos::View<Precision**,Kokkos::LayoutRight> input_adjoint);
      };
-@@ -458,7 +776,8 @@ private:
+@@ -458,7 +788,8 @@ private:
              interaction_output_adj,skip_adj,gated_adj,pre_gate_adj,linear_adj,
              message_adj,up_adj,edge_message_adj,edge_up_adj,
              edge_harmonic_adj,weight_adj,raw_weight_adj,edge_feature_adj,
@@ -1450,7 +1471,7 @@ index ffcdc1c..8bec16c 100644
          Kokkos::View<Precision*> density_raw,density_base,densities,density_adj,
              normalization_inverse,execution_cutoff_adj,
              execution_graph_cutoff_adj;
-@@ -529,6 +848,13 @@ private:
+@@ -529,6 +860,13 @@ private:
      std::vector<int> mh1_spline_global_to_active_;
      Kokkos::View<int*> mh1_spline_node_types_;
      Kokkos::View<int*> mh1_spline_neigh_types_;
@@ -1464,7 +1485,7 @@ index ffcdc1c..8bec16c 100644
      int mh1_spline_type_count_=0;
      std::string mh1_edge_executor_="mlp_reference";
      std::string execution_mh1_node_arena_policy_="throughput-v1";
-@@ -690,6 +1016,73 @@ private:
+@@ -690,6 +1028,73 @@ private:
      std::vector<Interaction> interactions;
      std::vector<E3ProductBasisKokkosT<Precision>> products;
      std::vector<Readout> readouts;
@@ -1539,7 +1560,7 @@ index ffcdc1c..8bec16c 100644
      std::vector<ExecutionMH1NodeRuntime> execution_mh1_node_runtime;
      void prepare_execution_mh1_node_runtime_parameters();
 diff --git a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
-index 7514438..dca6307 100644
+index 7514438..2b79034 100644
 --- a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
 +++ b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
 @@ -4,6 +4,7 @@
@@ -2482,14 +2503,17 @@ index 7514438..dca6307 100644
  
          ensure_view(state.raw_weight_adj,state.raw_weight_adj_storage,edges,
              interaction.convolution.weight_size());
-@@ -6669,6 +7160,51 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6669,6 +7160,54 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
          auto weight_adj=state.weight_adj;
          auto raw_weights=state.raw_weights;
          if(!apply_cutoff) {
 +            const char* cutoff_env=std::getenv(
 +                "MATOS_CONV_CUTOFF_BACKEND");
-+            const bool chunked=!(cutoff_env!=nullptr
-+                &&std::strcmp(cutoff_env,"scalar")==0);
++            // The two-stage chunked reduction measured slower than the
++            // serial per-edge loop (2.87 vs 1.53 ms), so scalar is the
++            // default; the chunked experiment stays behind an opt-in.
++            const bool chunked=cutoff_env!=nullptr
++                &&std::strcmp(cutoff_env,"chunked")==0;
 +            const int weight_dim=static_cast<int>(weight_adj.extent(1));
 +            if(chunked&&weight_dim>64) {
 +                // Round-3 slice 5: deterministic two-stage reduction.  Stage
@@ -2534,7 +2558,7 @@ index 7514438..dca6307 100644
              Kokkos::parallel_for("reverse convolution cutoff",edges,
                  KOKKOS_LAMBDA(int edge) {
                      Precision cutoff_value=Precision(0);
-@@ -6678,6 +7214,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6678,6 +7217,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                      }
                      cutoff_adjoint_values(edge)+=cutoff_value;
                  });
@@ -2542,7 +2566,7 @@ index 7514438..dca6307 100644
          } else ordered_kokkos_deep_copy(raw_weight_adj,weight_adj);
  
          const int edge_feature_width=mh1_fast_path?num_bessel:state.edge_features.extent(1);
-@@ -6716,6 +7253,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6716,6 +7256,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                  radial_adjoint_values(edge,k)+=edge_feature_adj(edge,k)
                      +density_feature_adj(edge,k);
              });
@@ -2550,7 +2574,7 @@ index 7514438..dca6307 100644
          }
  
          if(generated_node_program) {
-@@ -6810,7 +7348,13 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6810,7 +7351,13 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
              auto previous=states[layer-1].layer_adjoint;
              interaction.linear_up.reverse(state.up_adj,previous,false);
              interaction.skip.reverse(state.skip_adj,previous,false);
@@ -2564,7 +2588,7 @@ index 7514438..dca6307 100644
      }
  
      ensure_view(node_forces,node_forces_storage,xyz.size());
-@@ -6867,6 +7411,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6867,6 +7414,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
              forces(coordinate)=-vector_adjoint;
          }
      });
@@ -2572,7 +2596,7 @@ index 7514438..dca6307 100644
  
      if(has_zbl) {
          ensure_view(zbl_energies,zbl_energies_storage,num_nodes);
-@@ -6899,6 +7444,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6899,6 +7447,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
          factorized_completed_evaluation_graph_generation=
              execution_graph_generation;
      }
@@ -2580,7 +2604,7 @@ index 7514438..dca6307 100644
  }
  
  template<typename Precision>
-@@ -6906,6 +7452,7 @@ void MaceNonlinearKokkosT<Precision>::reduce_node_forces(
+@@ -6906,6 +7455,7 @@ void MaceNonlinearKokkosT<Precision>::reduce_node_forces(
      const int num_nodes,Kokkos::View<const int*> edge_receivers,
      Kokkos::View<const int*> edge_sources)
  {
@@ -2588,7 +2612,7 @@ index 7514438..dca6307 100644
      if(num_nodes<0||edge_receivers.extent(0)!=edge_sources.extent(0))
          throw std::invalid_argument(
              "MH-1 atom-force reduction extents are inconsistent.");
-@@ -6934,6 +7481,26 @@ void MaceNonlinearKokkosT<Precision>::reduce_node_forces(
+@@ -6934,6 +7484,26 @@ void MaceNonlinearKokkosT<Precision>::reduce_node_forces(
                      &reduced_forces(3*receiver+component),-force);
              }
          });
@@ -2615,7 +2639,7 @@ index 7514438..dca6307 100644
  }
  
  template<typename Precision>
-@@ -6954,6 +7521,13 @@ template<typename Precision>
+@@ -6954,6 +7524,13 @@ template<typename Precision>
  void MaceNonlinearKokkosT<Precision>::reduce_stress(
      const double volume,Kokkos::View<const double*> xyz)
  {
@@ -2631,10 +2655,10 @@ index 7514438..dca6307 100644
              "MH-1 stress reduction inputs are inconsistent.");
 diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
 new file mode 100644
-index 0000000..0d1e842
+index 0000000..5e6d677
 --- /dev/null
 +++ b/libsymmetrix/source/mace_polar_impl.tpp
-@@ -0,0 +1,3717 @@
+@@ -0,0 +1,3932 @@
 +// mace_polar_impl.tpp — P3 极性静电场独立编译单元(2026-10-15)。
 +// 目的: polar 逻辑(②Fukui/③k网格+GTO/④势特征/⑤SCF; 及未来⑥⑦⑧)与主 tpp 分离,
 +//       之后 polar 改动只重编本 TU(单 TU ~数分钟)而非四个大 TU(20-40 分钟)。
@@ -2712,13 +2736,16 @@ index 0000000..0d1e842
 +template<class View>
 +void ensure_view(View& view,View& storage,int first,int second,int third)
 +{
++    // Do not subview the innermost dimension: a sliced LayoutRight view
++    // deduces LayoutStride and cannot be assigned back to a LayoutRight
++    // View.  Grow-only allocation keeps the layout identical; callers only
++    // index columns below their logical extent.
 +    if(storage.extent(0)!=static_cast<std::size_t>(first)
 +        ||storage.extent(1)!=static_cast<std::size_t>(second)
 +        ||storage.extent(2)<static_cast<std::size_t>(third))
 +        Kokkos::realloc(Kokkos::WithoutInitializing,storage,
 +            first,second,third);
-+    view=Kokkos::subview(storage,Kokkos::ALL,Kokkos::ALL,
-+        std::make_pair(0,third));
++    view=storage;
 +}
 +
 +// P3 模块⑤: sparse_uvu 路径表解析(镜像 field_blocks.py SparseUvuTensorProduct
@@ -3506,6 +3533,12 @@ index 0000000..0d1e842
 +                            /Kokkos::sqrt(Precision(d1));
 +                        if(mode==0) {
 +                            if(d1<=8) {
++                                const char* sweep_env=std::getenv(
++                                    "MATOS_UVU_FWD_SWEEP");
++                                int sweep=4;
++                                if(sweep_env!=nullptr)
++                                    sweep=std::atoi(sweep_env);
++                                if(sweep!=2&&sweep!=4&&sweep!=8) sweep=4;
 +                                const int tile_n=64,tile_m=4;
 +                                const int n_tiles=
 +                                    (num_nodes+tile_n-1)/tile_n;
@@ -3515,6 +3548,106 @@ index 0000000..0d1e842
 +                                    Kokkos::DefaultExecutionSpace::
 +                                        scratch_memory_space,
 +                                    Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
++                                if(sweep>1) {
++                                    // Round-3 forward UVU split: S teams per
++                                    // (node,u) tile, each owns a contiguous v
++                                    // chunk; a second kernel folds the
++                                    // partials in ascending chunk order.
++                                    const int chunks=sweep;
++                                    const int chunk_width=
++                                        (mul2+chunks-1)/chunks;
++                                    const int stride=chunk_width+1;
++                                    const std::size_t smem=
++                                        scratch_view::shmem_size(
++                                            tile_m*stride);
++                                    ensure_view(polar_fwd_uvu_partial,
++                                        polar_fwd_uvu_partial_storage,
++                                        chunks,num_nodes,mul1);
++                                    auto partial=polar_fwd_uvu_partial;
++                                    Kokkos::parallel_for(
++                                        "polar uvu mode0",
++                                        Kokkos::TeamPolicy<>(
++                                            n_tiles*m_tiles*chunks,
++                                            tile_n*tile_m)
++                                            .set_scratch_size(0,
++                                                Kokkos::PerTeam(smem)),
++                                        KOKKOS_LAMBDA(
++                                            const Kokkos::TeamPolicy<>::
++                                                member_type& team) {
++                                            const int tile=
++                                                team.league_rank();
++                                            const int chunk_index=
++                                                tile%chunks;
++                                            const int block=tile/chunks;
++                                            const int nt=block/m_tiles,
++                                                ut=block%m_tiles;
++                                            const int n0=nt*tile_n,
++                                                u0=ut*tile_m;
++                                            const int v_begin=
++                                                chunk_index*chunk_width;
++                                            const int v_end=Kokkos::min(
++                                                mul2,v_begin+chunk_width);
++                                            const int width=v_end-v_begin;
++                                            scratch_view s(
++                                                team.team_scratch(0),
++                                                tile_m*stride);
++                                            for(int idx=team.team_rank();
++                                                idx<tile_m*width;
++                                                idx+=team.team_size()) {
++                                                const int uu=idx/width,
++                                                    vv=idx%width;
++                                                const int u=u0+uu;
++                                                s(uu*stride+vv)=(u<mul1)
++                                                    ?weight_view(w_off
++                                                        +u*mul2+v_begin+vv)
++                                                    :Precision(0);
++                                            }
++                                            team.team_barrier();
++                                            const int tr=team.team_rank();
++                                            const int node=n0+tr/tile_m,
++                                                uu=tr%tile_m;
++                                            if(node<num_nodes
++                                                &&u0+uu<mul1) {
++                                                const int u=u0+uu;
++                                                Precision x1v[8];
++                                                for(int c=0;c<d1;++c)
++                                                    x1v[c]=x1(node,
++                                                        in1_off+u*d1+c);
++                                                Precision mixed=
++                                                    Precision(0);
++                                                for(int v=v_begin;v<v_end;
++                                                    ++v) {
++                                                    Precision pair=
++                                                        Precision(0);
++                                                    for(int c=0;c<d1;++c)
++                                                        pair+=x1v[c]
++                                                            *x2(node,
++                                                                in2_off
++                                                                    +v*d1+c);
++                                                    mixed+=pair
++                                                        *inv_sqrt_d1
++                                                        *s(uu*stride
++                                                            +v-v_begin);
++                                                }
++                                                partial(chunk_index,
++                                                    node,u)=mixed;
++                                            }
++                                        });
++                                    Kokkos::parallel_for(
++                                        "polar uvu mode0 reduce",
++                                        Kokkos::MDRangePolicy<
++                                            Kokkos::Rank<2>>(
++                                            {0,0},{num_nodes,mul1}),
++                                        KOKKOS_LAMBDA(int node,int u) {
++                                            Precision total=Precision(0);
++                                            for(int chunk_index=0;
++                                                chunk_index<chunks;
++                                                ++chunk_index)
++                                                total+=partial(chunk_index,
++                                                    node,u);
++                                            output(node,out_off+u)+=pw*total;
++                                        });
++                                } else {
 +                                const int stride2=mul2+1;
 +                                const std::size_t smem=
 +                                    scratch_view::shmem_size(
@@ -3569,6 +3702,7 @@ index 0000000..0d1e842
 +                                            output(node,out_off+u)+=pw*mixed;
 +                                        }
 +                                    });
++                                }
 +                            } else {
 +                            Kokkos::parallel_for("polar uvu mode0",
 +                                Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
@@ -5069,30 +5203,72 @@ index 0000000..0d1e842
 +                        -rho_bar_im(k)*dbre(k,m));
 +                }
 +            });
-+        Kokkos::parallel_for("polar rev phase and source",num_nodes,
-+            KOKKOS_LAMBDA(int node) {
-+                for(int m=0;m<4;++m) {
-+                    Precision q_bar=Precision(0);
-+                    for(int k=0;k<num_k;++k)
-+                        q_bar+=kcos(k,node)*acc_cos(k,m)
-+                            +ksin(k,node)*acc_sin(k,m);
-+                    Kokkos::atomic_add(&dest(node,dest_offset+m),q_bar);
-+                }
-+                Precision rx=Precision(0),ry=Precision(0),rz=Precision(0);
-+                for(int k=0;k<num_k;++k) {
-+                    Precision cos_bar=Precision(0),sin_bar=Precision(0);
-+                    for(int m=0;m<4;++m) {
-+                        const Precision q=source(node,section_offset+m);
-+                        cos_bar+=acc_cos(k,m)*q;
-+                        sin_bar+=acc_sin(k,m)*q;
++        {
++            const int source_chunks=4;
++            const int source_chunk_k=
++                (num_k+source_chunks-1)/source_chunks;
++            ensure_view(polar_rev_phase_source_partial,
++                polar_rev_phase_source_partial_storage,num_nodes,
++                source_chunks*7);
++            auto partial=polar_rev_phase_source_partial;
++            Kokkos::parallel_for(
++                "polar rev phase and source partial",
++                Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
++                    {0,0},{num_nodes,source_chunks}),
++                KOKKOS_LAMBDA(int node,int chunk) {
++                    const int k0=chunk*source_chunk_k;
++                    const int k1=Kokkos::min(
++                        num_k,k0+source_chunk_k);
++                    Precision q_bar[4]={Precision(0),Precision(0),
++                        Precision(0),Precision(0)};
++                    Precision rx=Precision(0),ry=Precision(0),
++                        rz=Precision(0);
++                    for(int k=k0;k<k1;++k) {
++                        const Precision c=kcos(k,node);
++                        const Precision s=ksin(k,node);
++                        for(int m=0;m<4;++m)
++                            q_bar[m]+=c*acc_cos(k,m)
++                                +s*acc_sin(k,m);
++                        Precision cos_bar=Precision(0),
++                            sin_bar=Precision(0);
++                        for(int m=0;m<4;++m) {
++                            const Precision q=
++                                source(node,section_offset+m);
++                            cos_bar+=acc_cos(k,m)*q;
++                            sin_bar+=acc_sin(k,m)*q;
++                        }
++                        const Precision inner=-s*cos_bar+c*sin_bar;
++                        rx+=kv(k,0)*inner;
++                        ry+=kv(k,1)*inner;
++                        rz+=kv(k,2)*inner;
 +                    }
-+                    // (d5): ∂cos/∂r[c]=−sin·k[c];∂sin/∂r[c]=cos·k[c]
-+                    const Precision inner=-ksin(k,node)*cos_bar
-+                        +kcos(k,node)*sin_bar;
-+                    rx+=kv(k,0)*inner;ry+=kv(k,1)*inner;rz+=kv(k,2)*inner;
-+                }
-+                pos_adj(node,0)+=rx;pos_adj(node,1)+=ry;pos_adj(node,2)+=rz;
-+            });
++                    for(int m=0;m<4;++m)
++                        partial(node,7*chunk+m)=q_bar[m];
++                    partial(node,7*chunk+4)=rx;
++                    partial(node,7*chunk+5)=ry;
++                    partial(node,7*chunk+6)=rz;
++                });
++            Kokkos::parallel_for("polar rev phase and source",
++                num_nodes,KOKKOS_LAMBDA(int node) {
++                    Precision q_bar[4]={Precision(0),Precision(0),
++                        Precision(0),Precision(0)};
++                    Precision rx=Precision(0),ry=Precision(0),
++                        rz=Precision(0);
++                    for(int chunk=0;chunk<source_chunks;++chunk) {
++                        for(int m=0;m<4;++m)
++                            q_bar[m]+=partial(node,7*chunk+m);
++                        rx+=partial(node,7*chunk+4);
++                        ry+=partial(node,7*chunk+5);
++                        rz+=partial(node,7*chunk+6);
++                    }
++                    for(int m=0;m<4;++m)
++                        Kokkos::atomic_add(&dest(node,dest_offset+m),
++                            q_bar[m]);
++                    pos_adj(node,0)+=rx;
++                    pos_adj(node,1)+=ry;
++                    pos_adj(node,2)+=rz;
++                });
++        }
 +    };
 +    // (2h) 描述符逐通道反向(feats̄(N,8) → q̄ + 相位伴;密度源=d_in)。
 +    const auto descriptor_reverse_channel=[&](const int channel,
@@ -5121,20 +5297,48 @@ index 0000000..0d1e842
 +                        -si_ov(j)*feats_bar(node,j));
 +            });
 +        // (ii) Ā/Ŷ = Σ_i cos/sin·proj_scale·feat̄(逆置换并入:j ↦ m=perm(j) 为双射)。
-+        Kokkos::parallel_for("polar desc ab reverse",num_k,
-+            KOKKOS_LAMBDA(int k) {
-+                const Precision w=kweight(k);   // P4 RBE: 确定性=1
-+                for(int j=0;j<8;++j) {
-+                    const int m=permutation(j);
++        // Round-3: split the node reduction into four contiguous chunks so
++        // the kernel uses (num_k*8*4) threads instead of one block; the
++        // chunks are folded in ascending order, so the result is
++        // deterministic.
++        {
++            const int ab_chunks=4;
++            const int ab_chunk_nodes=
++                (owned_nodes+ab_chunks-1)/ab_chunks;
++            ensure_view(polar_rev_ab_partial,
++                polar_rev_ab_partial_storage,num_k,8*ab_chunks*2);
++            auto ab_partial=polar_rev_ab_partial;
++            Kokkos::parallel_for("polar desc ab reverse partial",
++                Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
++                    {0,0},{num_k,8*ab_chunks}),
++                KOKKOS_LAMBDA(int k,int jc) {
++                    const int j=jc/ab_chunks,chunk=jc%ab_chunks;
++                    const int n0=chunk*ab_chunk_nodes;
++                    const int n1=Kokkos::min(
++                        owned_nodes,n0+ab_chunk_nodes);
++                    const Precision w=kweight(k);
 +                    Precision a=Precision(0),b=Precision(0);
-+                    for(int node=0;node<owned_nodes;++node) {
-+                        const Precision z=w*proj_scale*feats_bar(node,j);
++                    for(int node=n0;node<n1;++node) {
++                        const Precision z=w*proj_scale
++                            *feats_bar(node,j);
 +                        a+=kcos(k,node)*z;
 +                        b+=ksin(k,node)*z;
 +                    }
++                    ab_partial(k,2*(j*ab_chunks+chunk))=a;
++                    ab_partial(k,2*(j*ab_chunks+chunk)+1)=b;
++                });
++            Kokkos::parallel_for("polar desc ab reverse",num_k*8,
++                KOKKOS_LAMBDA(int index) {
++                    const int k=index/8,j=index%8;
++                    Precision a=Precision(0),b=Precision(0);
++                    for(int chunk=0;chunk<ab_chunks;++chunk) {
++                        a+=ab_partial(k,2*(j*ab_chunks+chunk));
++                        b+=ab_partial(k,2*(j*ab_chunks+chunk)+1);
++                    }
++                    const int m=permutation(j);
 +                    ab(k,m)=a;ab(k,8+m)=b;
-+                }
-+            });
++                });
++        }
 +        {
 +            Kokkos::View<Precision*> ab_flat(ab.data(),ab.size());
 +            polar_global_sum_view(ab_flat);
@@ -5203,35 +5407,70 @@ index 0000000..0d1e842
 +                polar_global_sum_view(rho_re);
 +                polar_global_sum_view(rho_im);
 +            }
-+            Kokkos::parallel_for("polar desc proj phase reverse",num_nodes,
-+                KOKKOS_LAMBDA(int node) {
-+                    Precision rx=Precision(0),ry=Precision(0),rz=Precision(0);
-+                    for(int k=0;k<num_k;++k) {
-+                        const Precision kfp=(k0m(k)>Precision(0))
-+                            ?Precision(0.5):Precision(1);
-+                        const Precision inv_k2=(k0m(k)>Precision(0))
-+                            ?Precision(0):Precision(polar_field_constant)/kn2(k);
-+                        const Precision pr=rho_re(k)*inv_k2;
-+                        const Precision pi=rho_im(k)*inv_k2;
-+                        const Precision w=kweight(k);   // P4 RBE: 确定性=1
-+                        Precision exp_c=Precision(0),exp_s=Precision(0);
-+                        for(int j=0;j<8;++j) {
-+                            const int m=permutation(j);
-+                            const Precision z=w*proj_scale*feats_bar(node,j);
-+                            exp_c+=z*fbre(k,m);
-+                            exp_s+=z*fbim(k,m);
++            {
++                const int phase_chunks=4;
++                const int phase_chunk_k=
++                    (num_k+phase_chunks-1)/phase_chunks;
++                ensure_view(polar_rev_phase_partial,
++                    polar_rev_phase_partial_storage,num_nodes,
++                    phase_chunks*3);
++                auto phase_partial=polar_rev_phase_partial;
++                Kokkos::parallel_for(
++                    "polar desc proj phase reverse partial",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
++                        {0,0},{num_nodes,phase_chunks}),
++                    KOKKOS_LAMBDA(int node,int chunk) {
++                        const int k0=chunk*phase_chunk_k;
++                        const int k1=Kokkos::min(
++                            num_k,k0+phase_chunk_k);
++                        Precision rx=Precision(0),ry=Precision(0),
++                            rz=Precision(0);
++                        for(int k=k0;k<k1;++k) {
++                            const Precision kfp=(k0m(k)>Precision(0))
++                                ?Precision(0.5):Precision(1);
++                            const Precision inv_k2=(k0m(k)>Precision(0))
++                                ?Precision(0)
++                                :Precision(polar_field_constant)/kn2(k);
++                            const Precision pr=rho_re(k)*inv_k2;
++                            const Precision pi=rho_im(k)*inv_k2;
++                            const Precision w=kweight(k);
++                            Precision exp_c=Precision(0),
++                                exp_s=Precision(0);
++                            for(int j=0;j<8;++j) {
++                                const int m=permutation(j);
++                                const Precision z=w*proj_scale
++                                    *feats_bar(node,j);
++                                exp_c+=z*fbre(k,m);
++                                exp_s+=z*fbim(k,m);
++                            }
++                            const Precision ex_c=
++                                kfp*(pr*exp_c+pi*exp_s);
++                            const Precision ex_s=
++                                kfp*(pr*exp_s-pi*exp_c);
++                            const Precision inner=-ksin(k,node)*ex_c
++                                +kcos(k,node)*ex_s;
++                            rx+=kv(k,0)*inner;
++                            ry+=kv(k,1)*inner;
++                            rz+=kv(k,2)*inner;
 +                        }
-+                        const Precision ex_c=kfp*(pr*exp_c+pi*exp_s);
-+                        const Precision ex_s=kfp*(pr*exp_s-pi*exp_c);
-+                        const Precision inner=-ksin(k,node)*ex_c
-+                            +kcos(k,node)*ex_s;
-+                        rx+=kv(k,0)*inner;ry+=kv(k,1)*inner;
-+                        rz+=kv(k,2)*inner;
-+                    }
-+                    Kokkos::atomic_add(&pos_adj(node,0),rx);
-+                    Kokkos::atomic_add(&pos_adj(node,1),ry);
-+                    Kokkos::atomic_add(&pos_adj(node,2),rz);
-+                });
++                        phase_partial(node,3*chunk)=rx;
++                        phase_partial(node,3*chunk+1)=ry;
++                        phase_partial(node,3*chunk+2)=rz;
++                    });
++                Kokkos::parallel_for("polar desc proj phase reverse",
++                    num_nodes,KOKKOS_LAMBDA(int node) {
++                        Precision rx=Precision(0),ry=Precision(0),
++                            rz=Precision(0);
++                        for(int chunk=0;chunk<phase_chunks;++chunk) {
++                            rx+=phase_partial(node,3*chunk);
++                            ry+=phase_partial(node,3*chunk+1);
++                            rz+=phase_partial(node,3*chunk+2);
++                        }
++                        Kokkos::atomic_add(&pos_adj(node,0),rx);
++                        Kokkos::atomic_add(&pos_adj(node,1),ry);
++                        Kokkos::atomic_add(&pos_adj(node,2),rz);
++                    });
++            }
 +        }
 +    };
 +    // (2i) 逐步前向重放(③④ + ⑤; 输入 d_in,输出写 rev 视图;与⑤已落码逐算子镜像)。
@@ -6361,7 +6600,7 @@ index 0000000..8460105
 +// mace_polar_kokkos.cpp — P3 极性场独立 TU(2026-10-15)。
 +#include "mace_polar_impl.tpp"
 diff --git a/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp b/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp
-index 5b28ef1..f9fb1fe 100644
+index 5b28ef1..a9e1d9d 100644
 --- a/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp
 +++ b/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp
 @@ -35,6 +35,8 @@
@@ -6891,7 +7130,7 @@ index 5b28ef1..f9fb1fe 100644
          Kokkos::parallel_reduce(
            Kokkos::TeamThreadRange(team_member, d_numneigh(i)),
            [&] (const int jj, int& num_neigh_ii) {
-@@ -1126,36 +1476,76 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1126,36 +1476,53 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
    if (stable_execution && !rebuild_topology)
      execution_geometry_only_update_count += 1.0;
  
@@ -6904,29 +7143,6 @@ index 5b28ef1..f9fb1fe 100644
 -      execution_graph_rebuild_count += 1.0;
 -    }
 -    if (mace->has_field_coupling)
-+  if (mpi_profile) {
-+    int bad_sources = 0;
-+    double chk_idx = 0.0, chk_xyz = 0.0, chk_r = 0.0;
-+    int chk_nn = 0;
-+    Kokkos::parallel_reduce(
-+      "PairSymmetrixMACEKokkos::default_profile_check_sources", num_edges,
-+      KOKKOS_LAMBDA (const int e, int &bad, double &sidx, double &sxyz,
-+                     double &sr) {
-+        const int j = neigh_indices(e);
-+        if (j < 0 || j >= num_nodes) bad += 1;
-+        sidx += static_cast<double>(j);
-+        sxyz += xyz(3*e) + 2.0*xyz(3*e+1) + 3.0*xyz(3*e+2);
-+        sr += r(e);
-+      }, bad_sources, chk_idx, chk_xyz, chk_r);
-+    Kokkos::parallel_reduce(
-+      "PairSymmetrixMACEKokkos::default_profile_check_nn", num_nodes,
-+      KOKKOS_LAMBDA (const int n, int &s) { s += num_neigh(n); }, chk_nn);
-+    std::fprintf(stderr,
-+      "[mpi-profile default] graph nodes=%d edges=%d sum_nn=%d sum_idx=%.1f "
-+      "sum_xyz=%.6f sum_r=%.6f bad=%d\n",
-+      num_nodes, num_edges, chk_nn, chk_idx, chk_xyz, chk_r, bad_sources);
-+  }
-+
 +  Kokkos::View<double*> node_energies;
 +  Kokkos::View<double*> node_forces;
 +  bool polar_enabled = false;
@@ -6993,7 +7209,7 @@ index 5b28ef1..f9fb1fe 100644
      double energy;
      Kokkos::parallel_reduce("PairSymmetrixMACEKokkos::energy_reduction",
        num_nodes,
-@@ -1167,7 +1557,6 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1167,7 +1534,6 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
  
    if (eflag_atom) {
      auto d_eatom = k_eatom.template view<DeviceType>();
@@ -7001,7 +7217,7 @@ index 5b28ef1..f9fb1fe 100644
      Kokkos::parallel_for("PairSymmetrixMACEKokkos::extract_atomic_energies", num_nodes, KOKKOS_LAMBDA (const int ii) {
          d_eatom(node_indices(ii)) += node_energies(ii);
      });
-@@ -1175,7 +1564,7 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1175,7 +1541,7 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
      k_eatom.sync_host();
    }
  
@@ -7010,7 +7226,7 @@ index 5b28ef1..f9fb1fe 100644
    Kokkos::parallel_for("PairSymmetrixMACEKokkos::force_reduction",
      Kokkos::TeamPolicy<>(num_nodes, Kokkos::AUTO),
      KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
-@@ -1201,6 +1590,18 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1201,6 +1567,18 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
          });
      });
  
@@ -7029,7 +7245,7 @@ index 5b28ef1..f9fb1fe 100644
    if (vflag_global) {
      Kokkos::View<double*,Kokkos::LayoutRight> v("v", 6);
      Kokkos::deep_copy(v, 0.0);
-@@ -1237,6 +1638,28 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+@@ -1237,6 +1615,28 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
            Kokkos::atomic_add(&v(5), v_5);
          });
        });
@@ -7058,7 +7274,7 @@ index 5b28ef1..f9fb1fe 100644
      auto h_v = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), v);
      virial[0] += h_v(0);
      virial[1] += h_v(1);
-@@ -1256,6 +1679,10 @@ template<class DeviceType, typename Precision>
+@@ -1256,6 +1656,10 @@ template<class DeviceType, typename Precision>
  void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_mpi_message_passing(int eflag, int vflag)
  {
    ev_init(eflag, vflag, 0);
@@ -7069,7 +7285,7 @@ index 5b28ef1..f9fb1fe 100644
  
    if (eflag_atom && k_eatom.view<DeviceType>().extent(0)<maxeatom) {
       memoryKK->destroy_kokkos(k_eatom,eatom);
-@@ -1276,10 +1703,10 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_mpi_message_passing
+@@ -1276,10 +1680,10 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_mpi_message_passing
    auto tag = atomKK->k_tag.view<DeviceType>();
  
    const bool stable_execution =
@@ -7082,7 +7298,7 @@ index 5b28ef1..f9fb1fe 100644
    const double r_cut_squared = r_cut*r_cut;
    const int num_nodes = k_list->inum;
    const auto num_feature_nodes_size = static_cast<std::size_t>(atom->nlocal)
-@@ -1907,10 +2334,698 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_mpi_message_passing
+@@ -1907,10 +2311,666 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_mpi_message_passing
  
  /* ---------------------------------------------------------------------- */
  
@@ -7226,14 +7442,6 @@ index 5b28ef1..f9fb1fe 100644
 +
 +  mace_nonlinear->set_polar_owned_nodes(nlocal);
 +  mace_nonlinear->set_polar_global_rank(comm->me);
-+  if (mpi_profile) {
-+    std::fprintf(stderr,
-+      "[mpi-profile rank=%d] polar_mpi nodes=%d local=%d edges=%d "
-+      "edge_ws=%.3f GiB mlp_ws=%.3f GiB\n",
-+      comm->me, num_nodes, nlocal, num_edges,
-+      mace_nonlinear->edge_workspace_bytes() / 1073741824.0,
-+      mace_nonlinear->conditioned_mlp_workspace_bytes() / 1073741824.0);
-+  }
 +  mace_nonlinear->compute_node_energies_forces(
 +    num_nodes, node_types, num_neigh, neigh_indices, neigh_types, xyz, r,
 +    0, polar_total_charge, polar_total_spin, positions, cell_view);
@@ -7420,8 +7628,7 @@ index 5b28ef1..f9fb1fe 100644
 +  // One rank has no cross-rank exchange; periodic images are folded back onto
 +  // their owner with the atom map so the engine only sees the nlocal graph.
 +  // Multi-rank keeps local rows followed by ghost source rows.
-+  const bool single_rank = (comm->nprocs == 1)
-+    && (std::getenv("MATOS_MPI_KEEP_GHOSTS") == nullptr);
++  const bool single_rank = (comm->nprocs == 1);
 +  const int num_nodes = single_rank ? nlocal : nlocal + atom->nghost;
 +  auto map_style = atom->map_style;
 +  auto k_map_array = atomKK->k_map_array;
@@ -7535,29 +7742,6 @@ index 5b28ef1..f9fb1fe 100644
 +      }
 +    });
 +  mark(mpi_profile_graph_ms);
-+  if (prof) {
-+    int bad_sources = 0;
-+    double chk_idx = 0.0, chk_xyz = 0.0, chk_r = 0.0;
-+    int chk_nn = 0;
-+    Kokkos::parallel_reduce(
-+      "PairSymmetrixMACEKokkos::mpi_profile_check_sources", num_edges,
-+      KOKKOS_LAMBDA (const int e, int &bad, double &sidx, double &sxyz,
-+                     double &sr) {
-+        const int j = neigh_indices(e);
-+        if (j < 0 || j >= num_nodes) bad += 1;
-+        sidx += static_cast<double>(j);
-+        sxyz += xyz(3*e) + 2.0*xyz(3*e+1) + 3.0*xyz(3*e+2);
-+        sr += r(e);
-+      }, bad_sources, chk_idx, chk_xyz, chk_r);
-+    Kokkos::parallel_reduce(
-+      "PairSymmetrixMACEKokkos::mpi_profile_check_nn", num_nodes,
-+      KOKKOS_LAMBDA (const int n, int &s) { s += num_neigh(n); }, chk_nn);
-+    std::fprintf(stderr,
-+      "[mpi-profile rank=%d] graph nodes=%d edges=%d sum_nn=%d sum_idx=%.1f "
-+      "sum_xyz=%.6f sum_r=%.6f bad=%d\n",
-+      comm->me, num_nodes, num_edges, chk_nn, chk_idx, chk_xyz, chk_r,
-+      bad_sources);
-+  }
 +
 +  // Per-layer feature/adjoint exchange hooks (H1-style MPI).  The Kokkos
 +  // pack/unpack kernels read and write the engine view directly, so no
@@ -7781,7 +7965,7 @@ index 5b28ef1..f9fb1fe 100644
  
    if (eflag_atom && k_eatom.view<DeviceType>().extent(0)<maxeatom) {
       memoryKK->destroy_kokkos(k_eatom,eatom);
-@@ -1929,7 +3044,7 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_mpi_message_pass
+@@ -1929,7 +2989,7 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_mpi_message_pass
    auto f = atomKK->k_f.view<DeviceType>();
    auto type = atomKK->k_type.view<DeviceType>();
  
