@@ -18,8 +18,12 @@ because another GPU job is currently holding the shared A100.
   over all 384 force components (bitwise).
 - Clean single A/B round (before contention):
   **49.25 → 48.63 ms** (≈0.6 ms, ≈1.3%).
-- Official interleaved A/B (2 rounds × 12) is queued; round 0 was contaminated
-  by the other GPU job (145 ms/eval), so it is not used.
+- Official interleaved A/B (2 rounds × 12) was attempted, but all rounds were
+  contaminated by another GPU job (base 137.7 ms, candidate 147.9 ms, i.e.
+  ~3× the normal 49 ms); the raw file is kept as
+  `speed_ab_r3gather2_INVALID_contended.json` and is **not** used. A clean
+  interleaved A/B will be rerun when the A100 is idle. The clean single-round
+  result above is the current evidence for this slice.
 
 ## How to reproduce
 
