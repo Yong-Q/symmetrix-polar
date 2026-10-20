@@ -5,6 +5,10 @@
 - `kernel_round3_summary.json` — 48.74 ms at 128 atoms (32 NH3),
   312.1 ms at 1024 atoms (256 NH3), speedup ladder, RBE p=800 check,
   parity numbers, final binary hash.
+- `engine_compare_round3.json` — same-box engine comparison with explicit
+  gate status: round-3 full PolarMACE 48.74 ms (LAMMPS parity PASS), round-2
+  56.50 ms (full suite PASS), round-2 backbone 27.7 ms, and the v30 linear
+  MACE-OFF23 reference rows (different model).
 
 **Historical evidence:**
 

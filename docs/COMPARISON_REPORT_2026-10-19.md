@@ -1,9 +1,10 @@
 # Symmetrix-Polar: Consolidated Speed and Accuracy Comparison
 
-> **HISTORICAL (pre-round-3).** This report's headline speed is round 2
-> (56.5 ms at 128 atoms). The final round-3 numbers, RBE decision, and the
-> 1024-atom measurement are in
-> [results/KERNEL_ROUND3_FINAL.md](results/KERNEL_ROUND3_FINAL.md).
+> **HISTORICAL — NOT THE LATEST.** The **183.5 ms** Full PolarMACE row below
+> is v29 history, not the best result. The latest full PolarMACE is
+> **48.74 ms** (round 3, LAMMPS parity PASS); the latest **complete-gate-suite**
+> result is **56.50 ms** (round 2). The 1024-atom latest is **312 ms**.
+> See [../results/KERNEL_ROUND3_FINAL.md](../results/KERNEL_ROUND3_FINAL.md).
 
 **Date:** 2026-10-19 (v29 / v30 evidence cut-off, ~08:20 UTC; later measured
 rows are marked with their source logs)
@@ -255,11 +256,20 @@ v28/v29 rows use the same measurement definition.
 Source: `results/engine_compare.json` (LAMMPS single-step `Loop time`,
 128-atom NH3 box, one A100).
 
+> **NOT THE LATEST.** The 87.24 / 183.50 ms rows are v29 history. The latest
+> full PolarMACE is **48.74 ms** (round 3, 128 atoms = 32 NH3, LAMMPS parity
+> PASS); the latest backbone is **27.7 ms** (round 2, full suite PASS), so the
+> latest same-model polar increment is **1.76×**, not 2.10×. Latest 1024-atom
+> (256 NH3) is **312 ms**. See
+> [../results/KERNEL_ROUND3_FINAL.md](../results/KERNEL_ROUND3_FINAL.md).
+
 | Configuration | Model | ms/eval | Relative to backbone |
 |---|---|---:|---:|
-| Nonlinear backbone only (polar blocks off) | `polar_symmetrix_probe_polaroff.json` | **87.24** | 1.00x |
-| Full PolarMACE v29 | `polar_symmetrix_probe.json` | **183.50** | **2.10x** |
-| Polar layer increment (full - backbone) | same model, polar on vs off | **96.26** | 52.5% of full |
+| **Latest (round 3): Full PolarMACE** | `polar_symmetrix_probe.json` | **48.74** | **1.76×** |
+| **Latest (round 2): backbone, polar off** | `polar_symmetrix_probe_polaroff.json` | **27.70** | 1.00× |
+| v29 backbone (historical) | `polar_symmetrix_probe_polaroff.json` | 87.24 | 1.00x |
+| v29 full PolarMACE (historical) | `polar_symmetrix_probe.json` | 183.50 | 2.10x |
+| v29 polar layer increment (historical) | same model, polar on vs off | 96.26 | 52.5% of full |
 | leoff variant | `polar_symmetrix_probe_leoff.json` | **pending** | model exists (397,979,620 B); no timing JSON yet |
 
 This is the clean same-model isolation: the nonlinear backbone is 87.2 ms and

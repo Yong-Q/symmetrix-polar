@@ -118,6 +118,15 @@ opt-in (`MATOS_E3_LINEAR_MERGED_UNPACK=1`) and disabled by default.
 | Full module 5–8 / 32-frame gates | require a rebuilt Python snapshot; not rerun on the round-3 build |
 | Teardown | pre-existing `cudaErrorCudartUnloading` abort (rc 134) after `GATE PASS`, as in every prior round |
 
+**Gate-status distinction for the headline numbers:**
+
+- **Latest complete gate suite:** round 2, **56.50 ms** — module 5–8, 32/32
+  end-to-end, and LAMMPS 1-rank parity all PASS on one clean build.
+- **Latest parity/force-gated:** round 3 build 8, **48.74 ms** — LAMMPS
+  1-rank parity PASS; module 5–8 / 32-frame not rerun on the round-3 Python
+  snapshot. This is the number to use when the requirement is the force/parity
+  gate; use 56.50 ms when the requirement is the complete suite.
+
 ## 6. RBE final status
 
 There are two different gates and they must not be conflated:

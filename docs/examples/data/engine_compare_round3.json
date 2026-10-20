@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-20",
+  "system": "128-atom NH3 (32 NH3 molecules), same box, one A100",
+  "linear_mace_off23_medium": {
+    "materialized_ms": 6.61,
+    "generic_streamed_ms": 19.29,
+    "auto_ms": 7.22,
+    "source": "v30 (2026-10-19); not re-measured with round-3 kernels",
+    "note": "different model: 37 MB, 10 elements, r_cut 5 A, linear readout"
+  },
+  "polar_mace": {
+    "backbone_polar_off_ms": 27.66,
+    "backbone_source": "round 2 accepted; round 3 did not re-measure polar-off",
+    "backbone_gate_status": "round-2 full suite PASS",
+    "full_polar_ms": 48.74,
+    "full_source": "round 3 build 8 final (docs/results/KERNEL_ROUND3_FINAL.md)",
+    "full_gate_status": "LAMMPS 1-rank parity PASS; module 5-8 / 32-frame gates pending on the round-3 Python snapshot",
+    "last_full_suite_ms": 56.50,
+    "last_full_suite_source": "round 2 accepted (module 5-8, 32/32 end-to-end, LAMMPS parity)",
+    "model": "270 MB, 83 elements, r_cut 6 A, 512-channel nonlinear readout + polar SCF/Ewald"
+  },
+  "ratios": {
+    "full_polar_over_linear_materialized": 7.38,
+    "polar_layer_over_backbone": 1.76
+  }
+}
