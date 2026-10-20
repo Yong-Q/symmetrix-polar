@@ -35,10 +35,12 @@ All accepted gates pass: module 5–8, 32/32 end-to-end frames, and LAMMPS
 1-rank parity. See [`testing/GATES.md`](testing/GATES.md) for the exact
 input/metric/tolerance/command/result of each gate.
 
-**MPI is not a one-GPU speedup.** The H1 1-rank path has a measured defect:
-1042 periodic ghosts (1170 nodes vs 128), giving 4.87x overhead. H1 2-rank /
-H1 1-rank is 1.79x, better than the upstream linear MACE’s 3.38x; the first fix
-attempt failed the gate and is not accepted. See
+**MPI:** the H1 one-rank defect is fixed. H1 1-rank is **418.64 -> 50.20 ms**
+(default 50.84; **0.99x**); the same-binary A/B is **3.24x**, and the 1-rank
+parity/NVT gates pass. The two-rank path is **blocked by engine workspace
+sizing**: six 2.0-5.4 GiB workspaces per rank (~21 GiB/rank, peak
+80,966 MiB) make exact 2-hop OOM and H1 SIGSEGV. A dedicated fix is in
+progress; no 2-rank speed claim until it passes parity. See
 [`results/MPI_H1.md`](results/MPI_H1.md).
 
 ## 3. Report map
@@ -72,12 +74,13 @@ attempt failed the gate and is not accepted. See
 | 12 | LAMMPS parity | dE 2.9e-11 eV, max dF 2.6e-14 eV/Å |
 | 13 | NVT MD stability | 50 steps, no lost atoms, Etot span 0.21 eV |
 | 14 | MPI status | Correctness achieved; no one-GPU speedup |
-| 15 | MPI H1 diagnosis | 1042 ghosts; H1 1-rank 4.87x; 2-rank/H1-1rank 1.79x |
+| 15 | MPI H1 pre-fix diagnosis | Historical: 1042 ghosts, 4.87x; fixed by the one-rank fold |
 | 16 | H1 exchange schematic | Forward H1, reverse adjoints |
-| 17 | Top kernels (pre-round-2) | Starting point: polar + e3 scalar linear |
-| 18 | Stage spans vs GPU busy | Host stages vs measured kernel time |
-| 19 | Polar-specific kernel delta | What the polar layer adds |
-| 20 | Remaining kernels + SM coverage | Red <50%; tensor products 100% covered but instruction/store-bound |
+| 17 | MPI H1 final + 2-rank blocker | H1 1-rank 0.99x default; 2-rank blocked by ~21 GiB/rank workspaces |
+| 18 | Top kernels (pre-round-2) | Starting point: polar + e3 scalar linear |
+| 19 | Stage spans vs GPU busy | Host stages vs measured kernel time |
+| 20 | Polar-specific kernel delta | What the polar layer adds |
+| 21 | Remaining kernels + SM coverage | Red <50%; tensor products 100% covered but instruction/store-bound |
 
 Equations in the PDF gallery:
 

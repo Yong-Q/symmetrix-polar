@@ -1,0 +1,154 @@
+{
+ "task": "MPI/H1 optimization for pair_style symmetrix/mace/kk",
+ "date": "2026-10-20",
+ "system": {
+  "molecule": "NH3",
+  "molecules": 32,
+  "atoms": 128,
+  "box_A": 14.736125994561544,
+  "model": "mlip/models/mace-polar/polar_symmetrix_probe.json",
+  "r_cut_A": 6.0,
+  "skin_A": 2.0
+ },
+ "protocol": {
+  "warmup": "one `run 1` in the same process",
+  "samples": "separate one-step `run 1` loops (median)",
+  "reps": 2,
+  "baseline_reps": 3,
+  "note": "multi-step loops are pathologically slower in every binary (old and new); one-step loops are used to match the kernel-round protocol"
+ },
+ "lmp": {
+  "final_sha256": "08cb7847ffb1a804306907c56fcee800fd795e15da63105ed6cc296f8a7a69c8",
+  "baseline_snapshot_sha256": "7e9c6beca113722205954e8dceb3a394b75a6e3997d4408df4d57402de340a09",
+  "same_engine_ab_sha256": "5d2bdc944c74c7a5a4d0b1aee8eaaf48072d27723a4750a73ac64cb535d58ef4",
+  "path": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-lammps-aacd036df381800a/lmp"
+ },
+ "one_rank_ms_per_step": {
+  "baseline_snapshot": {
+   "default": 122.804,
+   "default_reps": [
+    122.804,
+    132.77499999999998,
+    122.1585
+   ],
+   "h1": 418.639,
+   "h1_reps": [
+    418.639,
+    487.17699999999996,
+    417.007
+   ],
+   "h1_over_default": 3.4090013354613857
+  },
+  "final_binary": {
+   "default": 50.837125,
+   "default_reps": [
+    51.2682,
+    50.40605
+   ],
+   "h1": 50.203875000000004,
+   "h1_reps": [
+    50.69285,
+    49.71490000000001
+   ],
+   "h1_over_default": 0.9875435520793122
+  },
+  "same_engine_ab": {
+   "sha256": "5d2bdc944c74c7a5a4d0b1aee8eaaf48072d27723a4750a73ac64cb535d58ef4",
+   "default": 53.71365,
+   "h1_folded_graph": 54.6206,
+   "h1_pre_fix_ghost_graph": 176.774,
+   "speedup_of_fix": 3.236397989037103
+  }
+ },
+ "two_rank_ms_per_step": {
+  "baseline_snapshot_h1": 794.7016666666668,
+  "baseline_snapshot_h1_reps": [
+   830.2466666666668,
+   759.1566666666668
+  ],
+  "baseline_snapshot_exact_2hop": 2536.29,
+  "final_binary_h1": null,
+  "final_binary_default": null,
+  "final_binary_exact_2hop": null,
+  "blocker": "current engine source is not runnable on 2 ranks: 2.0-5.4 GiB/rank workspaces on the 2-hop graph (peak 80,966 MiB on an 80 GB A100) and SIGSEGV on the H1 graph in my builds; kernel round-3 build 86bb29b1 aborts both paths with cudaErrorIllegalAddress. Reproduced with the pre-change pair style, engine-side"
+ },
+ "decomposition_ms_per_compute": {
+  "before_1rank": {
+   "default_128_nodes": {
+    "entry": 2.015,
+    "fwd_backbone_and_syncs": 10.699,
+    "polar_forward": 19.205,
+    "polar_reverse": 62.439,
+    "backbone_reverse_and_sync": 29.568
+   },
+   "h1_1170_nodes": {
+    "entry": 2.194,
+    "fwd_backbone_and_syncs": 42.926,
+    "polar_forward": 95.649,
+    "polar_reverse": 225.63899999999998,
+    "backbone_reverse_and_sync": 57.765
+   },
+   "delta": {
+    "entry": 0.17899999999999983,
+    "fwd_backbone_and_syncs": 32.227000000000004,
+    "polar_forward": 76.444,
+    "polar_reverse": 163.2,
+    "backbone_reverse_and_sync": 28.197
+   }
+  },
+  "after_1rank": {
+   "default_128_nodes": {
+    "entry": 2.049,
+    "fwd_backbone_and_syncs": 0.02,
+    "polar_forward": 8.453,
+    "polar_reverse": 20.306999999999995,
+    "backbone_reverse_and_sync": 15.244000000000002
+   },
+   "h1_128_nodes": {
+    "entry": 1.85,
+    "fwd_backbone_and_syncs": 0.02,
+    "polar_forward": 7.655,
+    "polar_reverse": 20.315999999999992,
+    "backbone_reverse_and_sync": 15.212
+   },
+   "delta": {
+    "entry": -0.19899999999999984,
+    "fwd_backbone_and_syncs": 0.0,
+    "polar_forward": -0.7979999999999992,
+    "polar_reverse": 0.008999999999996788,
+    "backbone_reverse_and_sync": -0.032000000000001805
+   }
+  }
+ },
+ "gates": {
+  "parity_h1_1rank_vs_default": {
+   "dE_eV": 0.0,
+   "max_dF_eV_per_A": 1.4130832128153975e-15,
+   "pass": true
+  },
+  "parity_exact_2hop_1rank": {
+   "dE_eV": 0.0,
+   "max_dF_eV_per_A": 1.536632116047091e-15,
+   "pass": true
+  },
+  "parity_h1_2rank": {
+   "rc": 11,
+   "note": "engine-side SIGSEGV, see blocker"
+  },
+  "parity_exact_2hop_2rank": {
+   "rc": 1,
+   "note": "engine-side OOM, see blocker"
+  },
+  "nvt_20_steps_1rank": {
+   "atoms": 128,
+   "lost_atoms": false,
+   "max_pos_drift_vs_default_A": 4.738e-14,
+   "max_dF_vs_default_eV_per_A": 4.702e-14,
+   "thermo_identical": true,
+   "loop_time_s": {
+    "h1": 6.80984,
+    "default": 4.85299
+   }
+  }
+ }
+}

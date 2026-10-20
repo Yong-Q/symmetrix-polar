@@ -92,39 +92,32 @@ dE 2.9e-11 eV, dF 2.6e-14 eV/Å). RBE is still rejected by the force gate.
 
 ![v28 vs v29 performance](results/polar_perf_v28_vs_v29.png)
 
-### MPI status (H1 diagnosis, 2026-10-19)
+### MPI status (H1 one-rank fix accepted, 2026-10-20)
 
-Multi-rank support is functionally complete for two ranks: the engine uses an
-optional `MPI_Allreduce` callback for every global polar quantity, and the pair
-style runs a local+ghost graph. Exact 2-rank single-point parity passes
-(dE 2.9e-11 eV, max dF 1.7e-6 eV/Å) and a 20-step NVT run is stable. It is
-**not a speedup on one GPU**, and the H1 path has a concrete, measured defect:
+- **H1 1-rank defect fixed.** The H1 mode had built a 1170-node local+ghost
+  graph even on one rank (1042 periodic images, 9.14x node work). The graph is
+  now folded onto local atoms through the atom map; the comm-cutoff extension
+  is skipped on one rank; the exchange hooks are zero-sized when no ghost rows
+  exist; the exchange uses device-side Kokkos pack/unpack.
+  - H1 1-rank: **418.64 → 50.20 ms**; default 1-rank 50.84 ms; **H1/default
+    3.41x → 0.99x**.
+  - Same-binary A/B of the fold: 176.77 → 54.62 ms (**3.24x**).
+  - Gates: H1 1-rank vs default dE = 0.0, max dF 1.41e-15 eV/A; 20-step NVT
+    stable (drift 4.74e-14 A / 4.70e-14 eV/A).
+- **2-rank is blocked by an engine-side workspace defect.** The current engine
+  allocates six 2.0–5.4 GiB workspaces per rank (≈21 GiB/rank; peak
+  80,966 MiB) in `compute_node_energies_forces` / `AffineMLPKokkosT::prepare`;
+  exact 2-hop OOMs and H1 2-rank SIGSEGVs. A dedicated fix round is sizing
+  these by owned/local rows and local edges and adding extent assertions.
+- **One GPU remains a hardware floor.** Both ranks share 108 SMs; the upstream
+  linear MACE is also 3.38x slower at 2 ranks on one A100. True scaling needs
+  one rank per GPU (queue3 2/4-GPU) on 432/1024 atoms, after the 2-rank fix.
 
-- **H1 1-rank diagnostic:** 128 local atoms but **1042 periodic ghosts**
-  (`Nghost: 1042`), i.e. the model runs on 1170 nodes instead of 128 (9.14×).
-  Cause: the H1 mode extends the LAMMPS comm cutoff to `r_cut + skin = 8 Å`,
-  which exceeds the 14.7 Å box half-length (7.37 Å), creating periodic images
-  even without MPI. Observed H1 1-rank: **894.6 ms** vs 183.6 ms production
-  (4.87×).
-- **H1 2-rank:** 1600.5 ms vs exact 2-hop 5155.5 ms (3.22× faster) but 8.7×
-  slower than the same-build production 1-rank. Relative to our own H1 1-rank,
-  the 2-rank scaling is **1.79×**, better than the upstream linear MACE's
-  **3.38×**; the headline is dominated by the 1-rank H1 baseline, not the
-  exchange.
-- **Fix status:** the first attempt (skip cutoff/ghost graph on 1 rank +
-  device-side staging) **failed the gate** (dE 756.6 eV, 2-rank abort) and is
-  not accepted. The rework is in progress; no MPI speed number is claimed until
-  the H1 2-rank parity gate passes again.
-- **One GPU is a hardware floor:** both ranks share the same 108 SMs. The
-  upstream linear MACE is also 3.38× slower at 2 ranks on one A100. True scaling
-  needs one rank per GPU (queue3 2/4-GPU), with 432/1024-atom systems where the
-  ghost ratio is smaller.
-
-Details, formulas, and the failed-attempt table:
+Details, formulas, and the blocker evidence:
 [docs/results/MPI_H1.md](docs/results/MPI_H1.md) and
 [docs/theory/MPI_H1.md](docs/theory/MPI_H1.md).
 
-![H1 diagnosis](docs/figures/17_mpi_h1_diagnosis.png)
+![H1 final result](docs/figures/19_mpi_h1_final.png)
 
 ### Engine comparison (v30, same 128-atom box, one A100)
 

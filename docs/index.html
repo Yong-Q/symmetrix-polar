@@ -152,8 +152,12 @@ completed artifact exists yet. No pending result is included as a performance cl
 <td><strong>rejected by the force/energy gates</strong> (max dF 4.116e-3 eV/A, dE 7.94e-5 eV)</td>
 </tr>
 <tr>
-<td>MPI H1 exact 2 rank</td>
-<td><strong>PASS on the pre-fix binary</strong> (dE 2.91e-11 eV, max dF 1.41e-15 eV/A); 3.22x faster than exact 2-hop, 8.7x slower than the same-build 1 rank. Diagnosis: the H1 <strong>1-rank</strong> path creates 1042 periodic ghosts (1170 nodes vs 128, 4.87x overhead); H1 2-rank/H1 1-rank is 1.79x (better than upstream linear MACE's 3.38x). The first fix attempt failed the gate; see Section 5.8</td>
+<td>MPI H1 one-rank fix</td>
+<td><strong>PASS (2026-10-20)</strong>: H1 1-rank <strong>418.64 -&gt; 50.20 ms</strong> (default 50.84; <strong>0.99x</strong>), same-binary A/B <strong>3.24x</strong>; dE = 0.0, max dF 1.41e-15 eV/A; 20-step NVT stable. The old 1042-ghost/4.87x defect is removed.</td>
+</tr>
+<tr>
+<td>MPI H1 2-rank</td>
+<td><strong>BLOCKED by the engine</strong>: six 2.0-5.4 GiB workspaces per rank (~21 GiB/rank; peak 80,966 MiB), exact 2-hop OOM and H1 SIGSEGV. A dedicated workspace-sizing fix is in progress; no 2-rank speed claim until it passes parity.</td>
 </tr>
 <tr>
 <td>MH-1/direct/JIT fast path</td>
@@ -817,35 +821,56 @@ Kokkos/CUDA.</p>
 </thead>
 <tbody>
 <tr>
-<td>1 rank optimized</td>
-<td style="text-align: right;"><strong>183.59</strong></td>
+<td>1 rank optimized (round 2)</td>
+<td style="text-align: right;"><strong>50.84</strong></td>
 <td style="text-align: right;">1.00x</td>
 <td>PASS</td>
 <td>production path</td>
 </tr>
 <tr>
+<td>H1 1 rank, final</td>
+<td style="text-align: right;"><strong>50.20</strong></td>
+<td style="text-align: right;"><strong>0.99x</strong></td>
+<td>dE 0.0, max dF 1.41e-15 eV/A, PASS</td>
+<td>accepted</td>
+</tr>
+<tr>
+<td>H1 1 rank, pre-fix</td>
+<td style="text-align: right;">418.64</td>
+<td style="text-align: right;">3.41x slower than default (pre-round-2)</td>
+<td>PASS</td>
+<td>historical</td>
+</tr>
+<tr>
 <td>2 rank exact (2-hop ghost)</td>
-<td style="text-align: right;"><strong>5167.05</strong></td>
-<td style="text-align: right;"><strong>0.036x (28.1x slower)</strong></td>
-<td>max dF 1.687e-6 eV/A, PASS</td>
-<td>functionally correct</td>
+<td style="text-align: right;"><strong>blocked</strong> (engine OOM)</td>
+<td style="text-align: right;">n/a</td>
+<td>pre-fix 2536 ms</td>
+<td>needs workspace fix</td>
+</tr>
+<tr>
+<td>2 rank H1</td>
+<td style="text-align: right;"><strong>blocked</strong> (engine SIGSEGV)</td>
+<td style="text-align: right;">n/a</td>
+<td>pre-fix 794.7 ms</td>
+<td>needs workspace fix</td>
 </tr>
 <tr>
 <td>2 rank 1-hop ghost</td>
-<td style="text-align: right;"><strong>1809.30</strong></td>
-<td style="text-align: right;"><strong>0.102x (9.85x slower)</strong></td>
+<td style="text-align: right;">1809.30 (pre-fix)</td>
+<td style="text-align: right;">9.85x slower</td>
 <td>max dF 4.116e-3 eV/A, FAIL</td>
 <td>rejected</td>
 </tr>
 <tr>
-<td>Upstream linear MACE H1 message passing, 1 rank</td>
+<td>Upstream linear MACE H1, 1 rank</td>
 <td style="text-align: right;">13.586</td>
 <td style="text-align: right;">1.00x</td>
 <td>n/a (linear model)</td>
 <td>reference</td>
 </tr>
 <tr>
-<td>Upstream linear MACE H1 message passing, 2 rank</td>
+<td>Upstream linear MACE H1, 2 rank</td>
 <td style="text-align: right;">45.878</td>
 <td style="text-align: right;"><strong>3.38x slower</strong></td>
 <td>n/a</td>
@@ -853,11 +878,14 @@ Kokkos/CUDA.</p>
 </tr>
 </tbody>
 </table>
-<p>The exact 2-hop nonlinear path is ~113x slower than the upstream linear H1
-message-passing path (5167.05 vs 45.878 ms), but they are different models and
-different algorithms. On one shared A100, even the mature upstream linear MPI
-path is 3.38x slower at 2 ranks. True scaling requires a local graph with
-per-layer H1 feature exchange plus multiple GPUs.</p>
+<p>The one-rank H1 defect is fixed: the 1-rank graph is folded onto local atoms,
+so H1 matches the default path (50.20 vs 50.84 ms; same-binary A/B 3.24x).
+The two-rank path is currently blocked by engine workspace sizing, not by the
+pair-style exchange: six workspaces of 2.0-5.4 GiB/rank exhaust an 80 GB A100
+at 2 ranks. A dedicated fix round is sizing them by owned/local rows and local
+edges and adding extent assertions. On one shared A100, even the mature
+upstream linear MPI path is 3.38x slower at 2 ranks; true scaling requires one
+rank per GPU plus this fix.</p>
 <h3 id="35-homogeneous-216-molecule-per-step-timings-and-extrapolations">3.5 Homogeneous 216-molecule per-step timings and extrapolations</h3>
 <p>Source: <code>mlip/bench/lammps_parity/homog_timing/homog_timing.json</code>
 (216 molecules, molecular density 0.006 A^-3, 0.5 fs timestep, 10-step
@@ -1434,60 +1462,55 @@ launches, 14.8% coverage), UVU reverse 6.76 ms (39.5%), and narrow
 affine/convolution kernels 4.33 ms (3%). Replay is no longer a major target:
 the UVU rewrite reduced it from 5.77 to 1.20 ms, so eliminating replay now
 saves at most ~1.5 ms.</p>
-<h3 id="57-mpi-h1-diagnosis-not-yet-accepted">5.7 MPI H1 diagnosis (not yet accepted)</h3>
-<p>The H1 path is numerically exact on 2 ranks but has a measured 1-rank defect.
-No MPI speedup is claimed on one GPU.</p>
+<h3 id="57-mpi-h1-one-rank-fix-accepted-two-rank-engine-blocker">5.7 MPI H1: one-rank fix accepted, two-rank engine blocker</h3>
+<p>The H1 path is numerically exact. The old one-rank defect (1042 periodic
+ghosts, 1170 nodes vs 128) is fixed by folding the one-rank graph onto local
+atoms, skipping the comm-cutoff extension, zero-sizing the exchange hooks when
+there are no ghost rows, and using device-side pack/unpack.</p>
 <table>
 <thead>
 <tr>
 <th>Metric</th>
-<th style="text-align: right;">Value</th>
+<th style="text-align: right;">Before</th>
+<th style="text-align: right;">After</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>H1 1-rank diagnostic</td>
-<td style="text-align: right;">894.6 / 990.6 ms</td>
+<td>default 1-rank</td>
+<td style="text-align: right;">122.80 ms</td>
+<td style="text-align: right;">50.84 ms</td>
 </tr>
 <tr>
-<td>Production 1-rank (pre-round-2)</td>
-<td style="text-align: right;">183.6 ms</td>
+<td>H1 1-rank</td>
+<td style="text-align: right;">418.64 ms</td>
+<td style="text-align: right;"><strong>50.20 ms</strong></td>
 </tr>
 <tr>
-<td>H1 1-rank / production</td>
-<td style="text-align: right;"><strong>4.87x</strong></td>
+<td>H1 / default</td>
+<td style="text-align: right;"><strong>3.41x slower</strong></td>
+<td style="text-align: right;"><strong>0.99x</strong></td>
 </tr>
 <tr>
-<td>H1 2-rank (one A100)</td>
-<td style="text-align: right;">1600.5 ms</td>
-</tr>
-<tr>
-<td>H1 2-rank / H1 1-rank</td>
-<td style="text-align: right;"><strong>1.79x</strong></td>
-</tr>
-<tr>
-<td>Exact 2-hop 2-rank</td>
-<td style="text-align: right;">5155.5 ms</td>
-</tr>
-<tr>
-<td>Upstream linear MACE H1 1→2 rank</td>
-<td style="text-align: right;">13.586 → 45.878 ms (<strong>3.38x</strong>)</td>
+<td>same-binary A/B of the fold</td>
+<td style="text-align: right;">176.77 ms</td>
+<td style="text-align: right;">54.62 ms (<strong>3.24x</strong>)</td>
 </tr>
 </tbody>
 </table>
-<p>The H1 1-rank diagnostic reports <code>Nghost: 1042</code> for 128 local atoms: the model
-runs on 1170 nodes instead of 128 (9.14x). The H1 mode extends the comm cutoff
-to 8 A, above the 7.37 A half-box, so LAMMPS creates periodic ghost images even
-without MPI. The communication volume is only ~4.27 MB per exchange
-(1042 x 512 x 8 bytes), ~17 MB for four exchanges; the overhead is ghost
-<strong>compute</strong>, not bytes.</p>
-<p>The first fix (skip the cutoff extension + device-side staging) <strong>failed the
-gate</strong>: H1 1-rank dE 756.6 eV / max dF 2.79e4 eV/A, H1 2-rank rc=11, exact
-2-hop control OOM while the GPU was shared. It is not accepted. The rework must
-bypass the H1 callbacks on one rank (production local path) or use a comm cutoff
-below the half-box with the correct local graph, then pass the H1 2-rank parity
-gate again.</p>
-<p><img alt="H1 diagnosis" src="figures/17_mpi_h1_diagnosis.png" /></p>
+<p>Gates: H1 1-rank vs default dE = 0.0 eV, max dF = 1.41e-15 eV/A; 20-step NVT
+stable (drift 4.74e-14 A / 4.70e-14 eV/A). The default-path gain (122.8 -&gt;
+50.8) is the concurrent kernel round, not this work.</p>
+<p><strong>Two-rank blocker.</strong> The current engine allocates six workspaces of
+2.0-5.4 GiB per rank (2.03 + 2.13 + 3.20 + 3.36 + 5.12 + 5.37 ~= 21 GiB/rank,
+peak 80,966 MiB) in <code>compute_node_energies_forces</code> -&gt; <code>ensure_view</code> and
+<code>AffineMLPKokkosT::prepare</code> / <code>forward_impl</code>. The 2-rank graph has
+2481/2581 nodes and 74,472/78,156 edges. Exact 2-hop OOMs; H1 2-rank SIGSEGVs.
+A dedicated fix round is sizing these workspaces by owned/local rows and local
+edges and adding extent assertions. Until it passes 2-rank parity, no 2-rank
+speed number is claimed.</p>
+<p><img alt="H1 pre-fix diagnosis" src="figures/17_mpi_h1_diagnosis.png" /></p>
+<p><img alt="H1 one-rank final and two-rank blocker" src="figures/19_mpi_h1_final.png" /></p>
 <p>Details: <a href="results/MPI_H1.md"><code>results/MPI_H1.md</code></a> and
 <a href="theory/MPI_H1.md"><code>theory/MPI_H1.md</code></a>.</p>
 <h3 id="58-still-pending">5.8 Still pending</h3>

@@ -1,13 +1,16 @@
 # Module 4 — MPI, Ghost Atoms, and the H1 Feature Exchange
 
-**中文摘要：** H1 交换是“第一层隐藏态换 ghost”，数学上精确；但当前 1-rank
-H1 模式因为把通信截断设到 8 Å（大于 7.37 Å 半盒）而造出 1042 个周期 ghost，
-模型实际跑在 1170 个节点上，造成 4.87× 开销。单卡多 rank 共享同一组 SM，
-不会增加算力；真正的 scaling 需要一 rank 一卡。
+**中文摘要：** H1 交换是“第一层隐藏态换 ghost”，数学上精确；1-rank H1 模式
+曾因把通信截断设到 8 Å（大于 7.37 Å 半盒）造出 1042 个周期 ghost，模型跑在
+1170 个节点上，造成 4.87× 开销。该缺陷已修复：1-rank 图折叠到 local atoms，
+H1 1-rank **418.64 → 50.20 ms**，与默认路径 50.84 ms 持平（0.99×）；
+1-rank parity dE=0、max dF 1.41e-15 eV/Å。2-rank 目前被引擎侧 workspace
+分配阻塞，需要先修复才能做 2/4 卡 scaling。单卡多 rank 共享 SM，不会增加算力；
+真正的 scaling 需要一 rank 一卡。
 
 This module explains the multi-rank design, the exactness condition, and the
-measured one-GPU behaviour. It also records the 1042-ghost diagnosis that
-dominates the current H1 overhead.
+measured one-GPU behaviour. It records the 1042-ghost diagnosis and the accepted
+one-rank fold, then the engine-side two-rank blocker.
 
 ## 4.1 Domain decomposition vocabulary
 
@@ -102,11 +105,32 @@ LAMMPS creates periodic ghost images even on one rank. The correct 1-rank path
 should either use the production local graph or set the comm cutoff to
 \(r_c=6\) Å (< 7.37 Å) and bypass the H1 callbacks.
 
-**First fix attempt (2026-10-19):** skipping the cutoff extension alone gave
-the wrong energy (dE 756.6 eV, max dF 2.79e4 eV/Å); the 2-rank path aborted
-(rc=11); the exact 2-hop control hit a GPU OOM while another agent was using
-the card. The fix is **not accepted**; it is being reworked. See
+**Accepted fix (2026-10-20):** the one-rank graph is folded onto local atoms
+through the atom map (same trick as `no_domain_decomposition`), the comm-cutoff
+extension is skipped on one rank, and the exchange hooks remain installed but
+are zero-sized when there are no ghost rows. LAMMPS performs periodic
+*self*-swaps even on one rank; the zero-sized hooks avoid writing ghost rows
+that no longer exist. The H1 exchange itself uses device-side Kokkos
+pack/unpack with `reverse_comm_device = 1`.
+
+| metric (128-atom NH3, 1 rank) | before | after |
+|---|---:|---:|
+| default `no_domain_decomposition` | 122.80 ms | 50.84 ms |
+| H1 `polar_mpi_message_passing` | 418.64 ms | **50.20 ms** |
+| **H1 / default** | **3.41x slower** | **0.99x** |
+| same-binary A/B of the fold | 176.77 ms | 54.62 ms (**3.24x**) |
+
+The default-path gain (122.8 → 50.8 ms) is the concurrent kernel round; the
+MPI change is the 3.41x → 0.99x ratio and the same-binary 3.24x. Gates: H1
+1-rank vs default dE = 0.0 eV, max dF = 1.41e-15 eV/Å; 20-step NVT stable
+(no lost atoms, drift 4.74e-14 Å / 4.70e-14 eV/Å). See
 [`../results/MPI_H1.md`](../results/MPI_H1.md).
+
+**Two-rank blocker (engine-side):** the current engine allocates six
+2.0–5.4 GiB workspaces per rank (≈21 GiB/rank; peak 80,966 MiB) in
+`compute_node_energies_forces` / `AffineMLPKokkosT::prepare`, so exact 2-hop
+OOMs; the H1 2-rank path SIGSEGVs. A dedicated fix round is sizing these
+workspaces by owned/local rows and local edges and adding extent assertions.
 
 ## 4.5 One GPU with multiple ranks vs one GPU per rank
 
@@ -144,23 +168,25 @@ This is why:
 
 ## 4.6 Comparison with the upstream linear engine
 
-| Metric | Upstream linear MACE-OFF23 | PolarMACE (pre-round-2) |
-|---|---:|---:|
-| materialized 1-rank | 6.6 ms | 183.6 ms |
-| H1 1-rank | 13.586 ms | **894.6 ms** |
-| H1 1-rank / materialized | 2.06× | **4.87×** |
-| H1 2-rank (one GPU) | 45.878 ms | 1600.5 ms |
-| H1 2-rank / H1 1-rank | 3.38× | **1.79×** |
-| H1 2-rank / materialized | 6.95× | 8.72× |
+| Metric | Upstream linear MACE-OFF23 | PolarMACE (pre-fix, pre-round-2) | PolarMACE (final 1-rank) |
+|---|---:|---:|---:|
+| materialized 1-rank | 6.6 ms | 183.6 ms | 50.84 ms |
+| H1 1-rank | 13.586 ms | 894.6 ms | **50.20 ms** |
+| H1 1-rank / materialized | 2.06x | **4.87x** | **0.99x** |
+| H1 2-rank (one GPU) | 45.878 ms | 1600.5 ms | blocked (engine workspace) |
+| H1 2-rank / H1 1-rank | 3.38x | **1.79x** | n/a until the 2-rank fix |
 
-The last-but-one row is the key: **our 2-rank ghost/communication scaling is
-actually better than the mature linear engine's** (1.79× vs 3.38×). The 8.7×
-headline is dominated by the H1 1-rank baseline (4.87× vs 2.06×), i.e. the
-1042-ghost problem, not by the 2-rank exchange.
+The historical H1 2-rank/H1 1-rank ratio was 1.79x, better than the mature
+linear engine's 3.38x. The old 8.7x headline was dominated by the 1-rank H1
+baseline (4.87x), which the one-rank fold has now removed (0.99x). The 2-rank
+path is currently blocked by engine workspace sizing, not by the pair-style
+exchange.
 
 ## 4.7 What to measure next
 
-1. On the fixed 1-rank path, H1 1-rank should approach the production 1-rank.
+1. Fix the engine-side 2-rank workspace sizing (owned/local rows and local
+   edges) and re-run 2-rank default + H1 parity on one GPU. This is a
+   prerequisite for any multi-GPU test.
 2. On 2 GPUs (one rank per GPU), measure wall vs 1 GPU on 432 and 1024 atoms;
    the expected speedup is below \(r\) because of \(W_g\) and \(W_{\rm comm}\).
 3. On 4 GPUs, repeat; watch \(W_{\rm global}\) (polar allreduce) and load

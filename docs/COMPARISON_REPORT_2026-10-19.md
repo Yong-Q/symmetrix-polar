@@ -29,7 +29,8 @@ was modified while preparing this document.
 | LAMMPS NVT MD, 50 steps | **PASS**, no lost atoms, Etot span 0.21295 eV |
 | RBE production use | **rejected by the force gate** (RMS_F 4.10e-2 to 1.03e-2 eV/A; 33 A p=800 is 1.23e-2, all >> 1e-4 eV/A) |
 | 1-hop MPI mode | **rejected by the force/energy gates** (max dF 4.116e-3 eV/A, dE 7.94e-5 eV) |
-| MPI H1 exact 2 rank | **PASS on the pre-fix binary** (dE 2.91e-11 eV, max dF 1.41e-15 eV/A); 3.22x faster than exact 2-hop, 8.7x slower than the same-build 1 rank. Diagnosis: the H1 **1-rank** path creates 1042 periodic ghosts (1170 nodes vs 128, 4.87x overhead); H1 2-rank/H1 1-rank is 1.79x (better than upstream linear MACE's 3.38x). The first fix attempt failed the gate; see Section 5.8 |
+| MPI H1 one-rank fix | **PASS (2026-10-20)**: H1 1-rank **418.64 -> 50.20 ms** (default 50.84; **0.99x**), same-binary A/B **3.24x**; dE = 0.0, max dF 1.41e-15 eV/A; 20-step NVT stable. The old 1042-ghost/4.87x defect is removed. |
+| MPI H1 2-rank | **BLOCKED by the engine**: six 2.0-5.4 GiB workspaces per rank (~21 GiB/rank; peak 80,966 MiB), exact 2-hop OOM and H1 SIGSEGV. A dedicated workspace-sizing fix is in progress; no 2-rank speed claim until it passes parity. |
 | MH-1/direct/JIT fast path | **architecturally blocked**; the upstream linear engine cannot load `MACE_Nonlinear` |
 | PyTorch MACE-Polar reference speed | **94.0 ms/eval** median vs round-2 engine **56.5 ms** -> engine **1.66x faster** (round 1: 1.30x slower; v29: 1.95x slower) for the full model |
 
@@ -288,17 +289,23 @@ Sources: `results/polar_time_mpi1.json`, `polar_time_mpi2.json`,
 
 | Mode | 128-atom eval (ms) | Relative to 1 rank | Force gate | Verdict |
 |---|---:|---:|---|---|
-| 1 rank optimized | **183.59** | 1.00x | PASS | production path |
-| 2 rank exact (2-hop ghost) | **5167.05** | **0.036x (28.1x slower)** | max dF 1.687e-6 eV/A, PASS | functionally correct |
-| 2 rank 1-hop ghost | **1809.30** | **0.102x (9.85x slower)** | max dF 4.116e-3 eV/A, FAIL | rejected |
-| Upstream linear MACE H1 message passing, 1 rank | 13.586 | 1.00x | n/a (linear model) | reference |
-| Upstream linear MACE H1 message passing, 2 rank | 45.878 | **3.38x slower** | n/a | reference |
+| 1 rank optimized (round 2) | **50.84** | 1.00x | PASS | production path |
+| H1 1 rank, final | **50.20** | **0.99x** | dE 0.0, max dF 1.41e-15 eV/A, PASS | accepted |
+| H1 1 rank, pre-fix | 418.64 | 3.41x slower than default (pre-round-2) | PASS | historical |
+| 2 rank exact (2-hop ghost) | **blocked** (engine OOM) | n/a | pre-fix 2536 ms | needs workspace fix |
+| 2 rank H1 | **blocked** (engine SIGSEGV) | n/a | pre-fix 794.7 ms | needs workspace fix |
+| 2 rank 1-hop ghost | 1809.30 (pre-fix) | 9.85x slower | max dF 4.116e-3 eV/A, FAIL | rejected |
+| Upstream linear MACE H1, 1 rank | 13.586 | 1.00x | n/a (linear model) | reference |
+| Upstream linear MACE H1, 2 rank | 45.878 | **3.38x slower** | n/a | reference |
 
-The exact 2-hop nonlinear path is ~113x slower than the upstream linear H1
-message-passing path (5167.05 vs 45.878 ms), but they are different models and
-different algorithms. On one shared A100, even the mature upstream linear MPI
-path is 3.38x slower at 2 ranks. True scaling requires a local graph with
-per-layer H1 feature exchange plus multiple GPUs.
+The one-rank H1 defect is fixed: the 1-rank graph is folded onto local atoms,
+so H1 matches the default path (50.20 vs 50.84 ms; same-binary A/B 3.24x).
+The two-rank path is currently blocked by engine workspace sizing, not by the
+pair-style exchange: six workspaces of 2.0-5.4 GiB/rank exhaust an 80 GB A100
+at 2 ranks. A dedicated fix round is sizing them by owned/local rows and local
+edges and adding extent assertions. On one shared A100, even the mature
+upstream linear MPI path is 3.38x slower at 2 ranks; true scaling requires one
+rank per GPU plus this fix.
 
 ### 3.5 Homogeneous 216-molecule per-step timings and extrapolations
 
@@ -652,36 +659,36 @@ affine/convolution kernels 4.33 ms (3%). Replay is no longer a major target:
 the UVU rewrite reduced it from 5.77 to 1.20 ms, so eliminating replay now
 saves at most ~1.5 ms.
 
-### 5.7 MPI H1 diagnosis (not yet accepted)
+### 5.7 MPI H1: one-rank fix accepted, two-rank engine blocker
 
-The H1 path is numerically exact on 2 ranks but has a measured 1-rank defect.
-No MPI speedup is claimed on one GPU.
+The H1 path is numerically exact. The old one-rank defect (1042 periodic
+ghosts, 1170 nodes vs 128) is fixed by folding the one-rank graph onto local
+atoms, skipping the comm-cutoff extension, zero-sizing the exchange hooks when
+there are no ghost rows, and using device-side pack/unpack.
 
-| Metric | Value |
-|---|---:|
-| H1 1-rank diagnostic | 894.6 / 990.6 ms |
-| Production 1-rank (pre-round-2) | 183.6 ms |
-| H1 1-rank / production | **4.87x** |
-| H1 2-rank (one A100) | 1600.5 ms |
-| H1 2-rank / H1 1-rank | **1.79x** |
-| Exact 2-hop 2-rank | 5155.5 ms |
-| Upstream linear MACE H1 1→2 rank | 13.586 → 45.878 ms (**3.38x**) |
+| Metric | Before | After |
+|---|---:|---:|
+| default 1-rank | 122.80 ms | 50.84 ms |
+| H1 1-rank | 418.64 ms | **50.20 ms** |
+| H1 / default | **3.41x slower** | **0.99x** |
+| same-binary A/B of the fold | 176.77 ms | 54.62 ms (**3.24x**) |
 
-The H1 1-rank diagnostic reports `Nghost: 1042` for 128 local atoms: the model
-runs on 1170 nodes instead of 128 (9.14x). The H1 mode extends the comm cutoff
-to 8 A, above the 7.37 A half-box, so LAMMPS creates periodic ghost images even
-without MPI. The communication volume is only ~4.27 MB per exchange
-(1042 x 512 x 8 bytes), ~17 MB for four exchanges; the overhead is ghost
-**compute**, not bytes.
+Gates: H1 1-rank vs default dE = 0.0 eV, max dF = 1.41e-15 eV/A; 20-step NVT
+stable (drift 4.74e-14 A / 4.70e-14 eV/A). The default-path gain (122.8 ->
+50.8) is the concurrent kernel round, not this work.
 
-The first fix (skip the cutoff extension + device-side staging) **failed the
-gate**: H1 1-rank dE 756.6 eV / max dF 2.79e4 eV/A, H1 2-rank rc=11, exact
-2-hop control OOM while the GPU was shared. It is not accepted. The rework must
-bypass the H1 callbacks on one rank (production local path) or use a comm cutoff
-below the half-box with the correct local graph, then pass the H1 2-rank parity
-gate again.
+**Two-rank blocker.** The current engine allocates six workspaces of
+2.0-5.4 GiB per rank (2.03 + 2.13 + 3.20 + 3.36 + 5.12 + 5.37 ~= 21 GiB/rank,
+peak 80,966 MiB) in `compute_node_energies_forces` -> `ensure_view` and
+`AffineMLPKokkosT::prepare` / `forward_impl`. The 2-rank graph has
+2481/2581 nodes and 74,472/78,156 edges. Exact 2-hop OOMs; H1 2-rank SIGSEGVs.
+A dedicated fix round is sizing these workspaces by owned/local rows and local
+edges and adding extent assertions. Until it passes 2-rank parity, no 2-rank
+speed number is claimed.
 
-![H1 diagnosis](figures/17_mpi_h1_diagnosis.png)
+![H1 pre-fix diagnosis](figures/17_mpi_h1_diagnosis.png)
+
+![H1 one-rank final and two-rank blocker](figures/19_mpi_h1_final.png)
 
 Details: [`results/MPI_H1.md`](results/MPI_H1.md) and
 [`theory/MPI_H1.md`](theory/MPI_H1.md).
