@@ -45,8 +45,12 @@ kernel. No model, precision, or gate tolerance changed.
   vs build 8 on the 128-atom input gives PE identical and
   **max |dF| = 0.0** over all 384 force components (bitwise).
 - Revert switch: `MATOS_UVU_X2_MB_SMEM=0` restores the build-9 x2 kernel.
-- Build 10 compiled successfully; bitwise verification **PASS**. The clean
-  interleaved speed A/B is queued behind another GPU job.
+- Build 10 compiled successfully; bitwise verification **PASS**.
+- The queued 2×12 A/B completed while two other GPU jobs were active:
+  base **145.8 ms**, candidate **142.4 ms** (≈3× the normal 49 ms). This is
+  **contended and not used**; the candidate was 2.4% faster in the noisy data,
+  consistent with a small positive gain but not a valid measurement. A clean
+  A/B will be rerun when the A100 is idle.
 
 ## Next nonlinear slices
 
