@@ -84,3 +84,17 @@ Same stable main-team binary, only the env changes:
 The 128-atom conclusion holds at 1,296: the defaults (smem off, sweep off)
 are the best. No further runtime-knob gain is available; the stable best is
 **407.75 ms / 314.6 µs/atom**.
+
+## 1,296-atom MH-1 team-size check
+
+Same stable main-team binary; `MATOS_MH1_TEAM_SIZE` overrides both channel
+and harmonic team sizes (default 128 for multiplicity 512):
+
+| team size | median ms/eval | µs/atom |
+|---|---:|---:|
+| default 128 | 408.06 | 315.0 |
+| **64** | **403.97** | **311.3** |
+| 256 | 418.31 | 322.8 |
+
+Team size 64 is consistently ~4.1 ms faster. The stable best at 1,296 H₂O is
+now **403.97 ms / 311.3 µs/atom** (main team, parity-gated MH-1 path).
