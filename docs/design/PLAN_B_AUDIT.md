@@ -1,10 +1,25 @@
 # Plan B — separate audit of the 20–25 ms rewrite
 
-**Status:** audit only. No engine change was made for this document.
+**Status:** audit only. **Not an accepted result.** No Plan B engine change is
+in the accepted binary, and no Plan B projection may replace the accepted
+headline. The accepted result remains build 8: **48.74 ms/eval, full gate
+suite PASS**.
 **Date:** 2026-10-20
 **Question:** under the existing FP64, exact-physics, full-gate contract, what
 would it take to reach 20–25 ms/eval on 128 atoms (32 NH3 molecules), and is
 that credible?
+
+## Result contract
+
+1. This document contains **projections and effort estimates**, not measured
+   results. Do not quote the 33–38 ms / 36–40 ms ranges as achieved numbers.
+2. No Plan B change is enabled in the accepted build. The headline remains
+   build 8: 48.74 ms, module 5–8 + 32/32 end-to-end + LAMMPS parity PASS.
+3. No Plan B result will be claimed until the complete gate suite passes on a
+   clean build. A failed or contended B slice is reverted and documented, not
+   merged into the accepted headline.
+4. Do not overwrite the remote accepted results or headline tables with B
+   projections. Update them only after a gated B build exists.
 
 ## 0. Executive answer
 
