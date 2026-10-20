@@ -216,30 +216,48 @@ polar irrep layout is a separate engineering project, not a runtime switch.
 
 ![Engine comparison](results/polar_engine_compare.png)
 
-### Paper benchmark comparison (all values in µs/atom/step)
+### Paper comparison (A100 80 GB, µs/atom/step; lower is better)
 
-A100 80 GB unless marked. The paper's rows are arXiv:2610.01036 Figure 1b /
-capacity table; our rows are measured in this repository.
+**Matched system — 5,184-atom MACE-OFF23 water, the paper's OFF23 workload:**
 
-| Workload | Model / precision | Atoms | Path | µs/atom/step |
-|---|---|---|---:|---|---:|
-| OMAT-0 SrTiO₃ (paper) | MACE-OMAT-0 / FP32 | 5,000 | ML-IAP + cuEq | 19.34 |
-| OMAT-0 SrTiO₃ (paper) | MACE-OMAT-0 / FP32 | 5,000 | standard streaming | **5.80** |
-| OFF23 water (paper) | MACE-OFF23 / FP32 | 5,184 | ML-IAP + cuEq | 13.99 |
-| OFF23 water (paper) | MACE-OFF23 / FP32 | 5,184 | standard streaming | **4.50** |
-| **OFF23 water (this work)** | **MACE-OFF23 medium / FP32** | **5,184** | **direct/JIT** | **4.47–4.53 min** |
-| OFF23 NH₃ (this work) | MACE-OFF23 medium / FP32 | 6,144 | direct/JIT | 3.72 median |
-| OFF23 NH₃ (this work) | MACE-OFF23 medium / FP64 | 6,144 | materialized | 12.26 |
-| PolarMACE (this work) | nonlinear polar / FP64 | 128 | materialized | 380.8 (48.74 ms) |
-| PolarMACE (this work) | nonlinear polar / FP64 | 1,024 | materialized | 304.8 (312.1 ms) |
-| **PolarMACE + replay cache (this work)** | **nonlinear polar / FP64** | **128** | **materialized + cache** | **352.5 (45.12 ms, main tree)** |
+| Implementation | Precision | Path | Atoms | µs/atom/step |
+|---|---|---:|---:|---:|
+| ML-IAP + cuEquivariance (paper) | FP32 | baseline | 5,184 | 13.99 |
+| Symmetrix-XL standard streaming (paper) | FP32 | direct/JIT | 5,184 | **4.50** |
+| **This work: MACE-OFF23 medium** | **FP32** | **direct/JIT** | **5,184** | **4.47–4.53 (clean floor)** |
 
-The paper's 4.50 is reproduced on the **linear** MACE-OFF23 model at the same
-5,184-atom water scale. PolarMACE is a different, much heavier model
-(nonlinear readout + polar SCF/Ewald, FP64); its 380.8 µs/atom is not
-comparable with the paper's linear FP32 throughput. See
-[docs/results/PAPER_COMPARABILITY.md](docs/results/PAPER_COMPARABILITY.md)
-for the full table, caveats, and the direct/JIT measurement details.
+The clean floor is the minimum of 10 measured `run 1` samples in each of three
+fresh processes. The per-trial medians are 6.37 / 4.49 / 5.43 µs/atom because
+the shared local A100 had other tenants (0.3–2 s outliers); a dedicated A100
+is required for a qualification-grade median, but the steady-state kernel
+cost matches the paper's 4.50.
+
+**Paper's 5,000-atom MACE-OMAT-0 SrTiO₃ (A100):** ML-IAP + cuEquivariance
+19.34, standard streaming 5.80 µs/atom/step. We have **not** measured
+MACE-OMAT-0 on this engine, so no matched row is claimed.
+
+**PolarMACE — a different model, not paper-comparable:**
+
+| Configuration | Precision | Atoms | Path | µs/atom/step | ms/eval |
+|---|---|---:|---|---:|---:|
+| Full PolarMACE | FP64 | 128 | materialized | 380.8 | 48.74 |
+| Full PolarMACE | FP64 | 1,024 | materialized | 304.8 | 312.1 |
+| **PolarMACE + replay cache** | **FP64** | **128** | **materialized + cache** | **352.5** | **45.12 (parity PASS)** |
+
+The polar model is not a slower version of the paper's linear model: the
+same-box linear → polar ratio is **7.4×**, FP64 adds ~2×, materialized vs
+direct/JIT adds ~3.3×, and the 128-atom box is launch-bound compared with the
+paper's 5,184 atoms. The polar SCF/Ewald is graph-wide and the MH-1 JIT fast
+path rejects the polar irrep layout
+(`MH-1 node, edge, and hidden irreps are inconsistent`), so direct/JIT cannot
+be used for PolarMACE today.
+
+**Scaling context for the linear model (same engine, same model):** 128 atoms
+materialized FP64 51.6 → 1,536 atoms 14.17 → 6,144 atoms 12.26 µs/atom; at
+6,144 atoms the direct/JIT FP32 path is 3.72 µs/atom. This is why the
+5,184-atom comparison is the correct one and why 128-atom per-atom numbers are
+not comparable. Full table and caveats:
+[docs/results/PAPER_COMPARABILITY.md](docs/results/PAPER_COMPARABILITY.md).
 
 
 
