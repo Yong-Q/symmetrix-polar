@@ -43,6 +43,24 @@ same-binary fallback protocol disables every round-3 slice through its
 documented env switch, so the ratio is not confounded by a different
 LAMMPS/Kokkos build.
 
+### Plan B-lite final result (2026-10-20)
+
+| Item | Value |
+|---|---:|
+| 128 atoms (32 NH3), full PolarMACE | **40.95 ms/eval** |
+| Replay-cache-only (B1) | 45.09 ms/eval |
+| Round-3 build 8 (pre-Plan-B) | 48.74 ms/eval |
+| Speedup vs build 8 | **1.190×** |
+| Speedup vs v29 | **4.49×** |
+| Final binary sha256 | `18d5fc94fda3df98837520b885de48956afa59fb4c81223f9fe5d3f2e7833c64` |
+| Gates | module 5–8, 32/32 end-to-end, LAMMPS 1-rank and 2-rank exact: **PASS** |
+
+Slices: B1 replay cache **+3.39 ms**, B4 reverse-gather fusion **+4.01 ms**
+(same-binary A/B); B3 merged unpack is exact but **−5.97 ms** (rejected,
+opt-in); B5 is neutral. Defaults: `MATOS_REPLAY_CACHE=1`,
+`MATOS_REV_GATHER_FUSE=1`, `MATOS_UVU_X2_MB_SMEM=0`. Artifacts:
+`bench/plan_b_lite_2026-10-20/` and `docs/results/PLAN_B_LITE_FINAL.md`.
+
 The interleaved A/B is deliberate: absolute times are contention-sensitive,
 while same-run ratios are stable. A speed claim without an interleaved baseline
 is not accepted.

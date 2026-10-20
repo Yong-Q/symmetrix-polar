@@ -1,0 +1,151 @@
+{
+ "date": "2026-10-20",
+ "isolation": "external-repos/symmetrix-xl-b + lammps-b/build-b; accepted shared tree untouched",
+ "binary": {
+  "path": "/workspace/group/shared/bza/external-repos/lammps-b/build-b/lmp",
+  "sha256": "18d5fc94fda3df98837520b885de48956afa59fb4c81223f9fe5d3f2e7833c64",
+  "bytes": 197929688
+ },
+ "python_module_sha256": "509daed05b54db5d4c0a0bba72fc1379283dc0d9bc1db0acf7e1e43279e74ac8",
+ "prior_binary_sha256": "043511b3e35cf6acffc8d5c8683ae14e3ef6240961c99c9f92fe4af1dde0eeb6",
+ "protocol": {
+  "system": "128-atom NH3 (32 molecules)",
+  "precision": "FP64",
+  "warmup": 1,
+  "measured": 12,
+  "rounds": 2,
+  "statistic": "median of per-round medians of LAMMPS Loop time",
+  "interleaved": true,
+  "order": "alternating",
+  "gpu_lock": "/workspace/group/shared/bza/.tmp/gpu.lock"
+ },
+ "config": {
+  "MATOS_REPLAY_CACHE": "default on (0 = legacy replay)",
+  "MATOS_UVU_X2_MB_SMEM": "default off",
+  "MATOS_REV_GATHER_FUSE": "default on (0 = legacy gather)",
+  "MATOS_E3_LINEAR_MERGED_UNPACK": "opt-in, default off (rejected: +5.97 ms)",
+  "MATOS_POLAR_SMALL_FUSE": "opt-in, default off (neutral)"
+ },
+ "headline_ms": 40.94907500000001,
+ "headline_crosscheck_ms": 41.32555,
+ "accepted_build8_ms": 48.74,
+ "slices": {
+  "B1": {
+   "status": "accepted",
+   "before_ms": 48.480824999999996,
+   "after_ms": 45.089000000000006,
+   "saving_ms": 3.39182499999999,
+   "correctness": "full gate suite PASS; replay marks absent"
+  },
+  "B3": {
+   "status": "rejected",
+   "before_ms": 40.92615000000001,
+   "after_ms": 46.89135,
+   "saving_ms": -5.965199999999996,
+   "correctness": "dPE=0, max dF=6.66e-16 after stable-sort plan fix; kept opt-in",
+   "note": "block-plan sort fixed the illegal access and numerics; merged path is 5.97 ms slower"
+  },
+  "B4": {
+   "status": "accepted",
+   "before_ms": 44.962625,
+   "after_ms": 40.94907500000001,
+   "saving_ms": 4.013549999999995,
+   "correctness": "dPE=0, max dF<=1e-15 vs prior"
+  },
+  "B5": {
+   "status": "rejected-neutral",
+   "before_ms": 41.069849999999995,
+   "after_ms": 41.055225,
+   "saving_ms": 0.014624999999995225,
+   "correctness": "dPE=0, max dF<=1e-15; kept opt-in"
+  }
+ },
+ "cross_checks": {
+  "polar_off_128": {
+   "prior_ms": 23.691325,
+   "final_ms": 19.92765,
+   "saving_ms": 3.763674999999999,
+   "note": "both rounds stable; GPU memory flags were the other job between evals"
+  },
+  "n2_432_first_10_steps": {
+   "prior_ms": 87.82245,
+   "final_clean_round0_ms": 83.4717,
+   "final_round1_contended_ms": 95.8594,
+   "note": "final round 1 externally contended; clean round 0 is 83.47 vs prior 87.46/88.19"
+  }
+ },
+ "remaining_gap_ms": 10.949075000000008,
+ "remaining_gap_from_build8_ms": 7.790924999999994,
+ "artifacts": {
+  "ab_dir": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_b_lite_2026-10-20/ab",
+  "gates": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_b_lite_2026-10-20/gates/final",
+  "trace": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_b_lite_2026-10-20/trace/final_fused",
+  "figure": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_b_lite_2026-10-20/plan_b_lite_speed.png"
+ },
+ "headline_crosscheck_note": "clean round 0 of final_full (41.33 vs prior 44.96); round 1 of final_full was externally contended (median 279.98) and is excluded",
+ "gates_final": {
+  "module5": {
+   "verdict": "PASS",
+   "dens_abs": 6.689189646635896e-08,
+   "dens_rel": 4.217663712453119e-08,
+   "stage_rel": 7.126771349152317e-08
+  },
+  "module6": {
+   "verdict": "PASS",
+   "rho_rel": 1.2697694585698573e-15,
+   "dE_rel": 1.0176003207113077e-15,
+   "dE_abs_eV": 7.771561172376096e-16
+  },
+  "module7": {
+   "verdict": "PASS",
+   "n_configs": 16,
+   "out_abs": 4.546e-07
+  },
+  "module8": {
+   "verdict": "PASS",
+   "fd_max": 0.0005783,
+   "parity_max": 7.191e-07
+  },
+  "endtoend": {
+   "verdict": "PASS",
+   "n_frames": 32,
+   "n_pass": 32,
+   "dE_abs_max_eV": 1.034321030601859e-06,
+   "dF_max_eVA": 1.6236539224223634e-07
+  },
+  "lammps_parity_1rank": {
+   "verdict": "PASS",
+   "dE_eV": 2.9103830456733704e-11,
+   "max_dF_eVA": 2.5944118807868156e-14
+  },
+  "lammps_parity_2rank": {
+   "verdict": "PASS",
+   "dE_eV": 2.9103830456733704e-11,
+   "max_dF_eVA": 1.6874754348629605e-06
+  }
+ },
+ "kernel_attribution": {
+  "r3c_build8": {
+   "launches": 1228,
+   "kokkos_launches": 916,
+   "gpu_busy_ms": 43.91
+  },
+  "cache1": {
+   "launches": 1079,
+   "kokkos_launches": 807,
+   "gpu_busy_ms": 40.74,
+   "replay_marks": "absent"
+  },
+  "final": {
+   "launches": 1077,
+   "kokkos_launches": 805,
+   "gpu_busy_ms": 33.92,
+   "replay_marks": "absent",
+   "gather_kernel": "absent"
+  },
+  "launch_delta_vs_build8": -151,
+  "note": "final-trace GPU busy is session/clock variant; launch counts and kernel presence are the attribution"
+ },
+ "figure": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_b_lite_2026-10-20/plan_b_lite_speed.png",
+ "report": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_b_lite_2026-10-20/FINAL_REPORT.md"
+}

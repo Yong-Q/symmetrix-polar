@@ -1,10 +1,11 @@
 # Reading Guide — Symmetrix-Polar Report
 
-> **Start with the final round-3 report:**
-> [results/KERNEL_ROUND3_FINAL.md](results/KERNEL_ROUND3_FINAL.md)
-> (48.74 ms at 128 atoms = 32 NH3 molecules; 312 ms at 1024 atoms = 256 NH3;
-> RBE rejected by the production force gate). The consolidated comparison
-> below is historical (round-2 headline).
+> **Start with the latest gated result:**
+> [results/PLAN_B_LITE_FINAL.md](results/PLAN_B_LITE_FINAL.md)
+> (**40.95 ms** at 128 atoms = 32 NH3 molecules, full PolarMACE, FP64;
+> round-3 build 8 was 48.74 ms; 312 ms at 1024 atoms; all gates PASS,
+> including 2-rank exact parity; RBE rejected by the production force gate).
+> The consolidated comparison below is historical (round-2 headline).
 
 This is the English reading guide for the consolidated comparison report. The
 Chinese guide is [`阅读说明.md`](阅读说明.md); the theory and test modules are in
@@ -22,7 +23,8 @@ Chinese guide is [`阅读说明.md`](阅读说明.md); the theory and test modul
 | Run or audit a gate | [`testing/GATES.md`](testing/GATES.md) |
 | Reproduce a speed number | [`testing/BENCHMARKS.md`](testing/BENCHMARKS.md) |
 | See the round-2 result and stale-binary lesson | [`results/KERNEL_ROUND2.md`](results/KERNEL_ROUND2.md) |
-| See the MPI H1 diagnosis and pending fix | [`results/MPI_H1.md`](results/MPI_H1.md) |
+| See the MPI one-rank and two-rank fixes | [`results/MPI_H1.md`](results/MPI_H1.md) |
+| See the Plan B-lite result (40.95 ms) | [`results/PLAN_B_LITE_FINAL.md`](results/PLAN_B_LITE_FINAL.md) |
 | See the round-3 implementation plan and 20–30 ms target | [`design/KERNEL_ROUND3_PLAN.md`](design/KERNEL_ROUND3_PLAN.md), [`design/KERNEL_ROUND3_TARGET.md`](design/KERNEL_ROUND3_TARGET.md) |
 
 ## 2. Key results at a glance
@@ -33,6 +35,14 @@ Chinese guide is [`阅读说明.md`](阅读说明.md); the theory and test modul
 | NH3 128 atoms, polar-off | 40.58 ms/eval | **27.66 ms/eval** | 1.47x |
 | N2 432 atoms, full PolarMACE | 294.39 ms/step | **126.59 ms/step** | 2.33x |
 | GPU busy (CUPTI, 128 atoms) | 116.66 ms | **49.97 ms** | 2.33x |
+
+**Latest (Plan B-lite, 2026-10-20): 40.95 ms/eval** at 128 atoms, full
+PolarMACE, all gates PASS including 2-rank exact parity. That is **1.190x**
+over round-3 build 8 (48.74), **4.49x** over v29 (183.8), and **2.30x** faster
+than the PyTorch reference (94.0). Polar-off 19.93 ms. The two accepted slices
+are B1 replay cache (+3.39 ms) and B4 reverse-gather fusion (+4.01 ms); B3
+merged unpack is exact but slower (+5.97 ms) and stays opt-in. The remaining
+gap to 30 ms is ~10.95 ms; host-gap/launch elimination is the current target.
 
 Cumulative: **3.25x vs v29**, **123x vs v28**. The PyTorch reference for the
 same 128-atom frame is 94.0 ms/eval; the engine is now **1.66x faster**.

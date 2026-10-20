@@ -55,8 +55,17 @@ module 7 **PASS** (16/16, out 4.55e-7); module 8 **PASS**
 (FD 5.783e-4 ≤1e-3, parity 7.191e-7 ≤1e-3); end-to-end **32/32 PASS**;
 LAMMPS 1-rank parity **PASS** (dE 2.910e-11 eV, max dF 2.628e-14 eV/Å).
 The rc-134 lines in the logs are the pre-existing teardown abort after
-`GATE PASS`. This makes round 3 (48.74 ms) the **latest full-gate-passing
-version**.
+`GATE PASS`. Round 3 (48.74 ms) was the latest full-gate-passing version
+until Plan B-lite.
+
+**Plan B-lite full suite (2026-10-20, final binary `18d5fc94…`):** module 5
+**PASS** (dens 6.689e-8 / rel 4.218e-8, stage 7.127e-8); module 6 **PASS**
+(ρ̂ rel 1.270e-15, ΔE rel 1.018e-15, abs 7.772e-16 eV); module 7 **PASS**
+(16/16, out 4.546e-7); module 8 **PASS** (FD 5.783e-4, parity 7.191e-7);
+end-to-end **32/32 PASS** (dE abs 1.034e-6 eV, dF 1.624e-7 eV/Å); LAMMPS
+1-rank **PASS** (dE 2.910e-11 eV, max dF 2.594e-14 eV/Å); 2-rank exact-2-hop
+**PASS** (dE 2.910e-11 eV, max dF 1.6874754349e-6 eV/Å). This makes Plan B-lite
+(40.95 ms) the **latest full-gate-passing version**.
 
 The two RBE rows are deliberately separate: the P4 implementation/statistics
 gate passes, while the production force gate is rejected. The p-scan and the

@@ -101,7 +101,7 @@ class Report(FPDF):
             return
         self.set_font("NotoSansSC", "", 7.5)
         self.set_text_color(*MUTED)
-        self.cell(0, 5, "Symmetrix-Polar · 技术报告 · round 3 final", align="L")
+        self.cell(0, 5, "Symmetrix-Polar · 技术报告 · round 3 + Plan B-lite", align="L")
         self.ln(5)
         self.set_draw_color(*RULE)
         self.line(18, self.get_y(), 192, self.get_y())
@@ -289,10 +289,10 @@ def cover(pdf: Report):
     pdf.ln(14)
     pdf.set_font("NotoSansSC", "", 11)
     metrics = [
-        ("128 原子（32 NH3），full PolarMACE", "48.74 ms/eval"),
+        ("128 原子（32 NH3），full PolarMACE", "40.95 ms/eval"),
         ("1024 原子（256 NH3），full PolarMACE", "312.1 ms/eval"),
-        ("相对 round 2 / v29 Kokkos 引擎", "1.159× / 3.77×"),
-        ("全套数值门", "PASS"),
+        ("相对 round-3 build 8 / v29 引擎", "1.190× / 4.49×"),
+        ("全套数值门（含 2-rank）", "PASS"),
         ("RBE 生产精度门", "REJECTED"),
     ]
     for label, value in metrics:
@@ -311,7 +311,7 @@ def cover(pdf: Report):
     pdf.set_x(24)
     pdf.set_font("NotoSansSC", "", 9)
     pdf.set_text_color(*MUTED)
-    pdf.multi_cell(160, 5, "版本：round 3 final · 2026-10-20\n"
+    pdf.multi_cell(160, 5, "版本：round 3 + Plan B-lite · 2026-10-20\n"
                            "模型：MACE_Nonlinear + PolarMACE，FP64，单张 A100-80GB\n"
                            "本 PDF 由 Markdown 源文件自动生成，可直接续写。")
 

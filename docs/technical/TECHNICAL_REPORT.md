@@ -2,13 +2,15 @@
 
 ## 摘要
 
-**版本：** round 3 final · 2026-10-20  
+**版本：** round 3 + Plan B-lite · 2026-10-20  
 **适用读者：** 第一次接触 PolarMACE / Symmetrix-XL / GPU 内核优化的研究者与工程师
 
 在 128 原子（32 个 NH3 分子）的 full PolarMACE 上，单张 A100 的能量+力评估从
-round-2 的 56.50 ms 降到 **48.74 ms**，全部数值门 PASS；1024 原子（256 个
-NH3 分子）为 **312.1 ms/eval**。20–30 ms 的目标尚未达到，剩余瓶颈和未完成项
-在第 7 节明确列出。
+round-2 的 56.50 ms 降到 **40.95 ms**（Plan B-lite：replay cache + gather
+fusion），全部数值门 PASS（含 2-rank exact parity）；round-3 build 8 的
+48.74 ms 是 Plan B 之前的基线。1024 原子（256 个 NH3 分子）为
+**312.1 ms/eval**（未在 Plan B-lite 下重测）。20–30 ms 的目标尚未达到，
+剩余瓶颈和未完成项在第 7 节明确列出。
 
 ---
 
@@ -225,7 +227,8 @@ round-2 的教训：一个“已验收”的二进制可能链接了旧 object�
 | v29 | 引擎功能/正确性完成 | 183.8 ms |
 | Round 1 | e3nn linear packed GEMM、polar dense reverse | 122.2 ms |
 | Round 2 | UVU/team kernels、project kernels、stale object 修复 | 56.50 ms |
-| **Round 3** | MH-1/UVU/affine/k-space 细化、gate 全套复跑 | **48.74 ms** |
+| Round 3 | MH-1/UVU/affine/k-space 细化、gate 全套复跑 | 48.74 ms |
+| **Plan B-lite** | replay cache（B1）+ reverse-gather fusion（B4） | **40.95 ms** |
 
 ### 4.3 Round 3 切片：哪些有效，哪些无效
 
@@ -273,9 +276,9 @@ gather（约 3.6 ms）、cuBLAS/external（约 3.8 ms）、e3-linear pack/unpack
 
 | 配置 | ms/eval |
 |---|---:|
-| **Round-3 最终（latest full-gate PASS）** | **48.74** |
-| 同二进制、全部 round-3 开关回退 | 53.54 |
-| 同二进制提升 | **1.0985×** |
+| **Plan B-lite 最终（latest full-gate PASS）** | **40.95** |
+| Replay cache only（B1） | 45.09 |
+| Round-3 build 8（Plan B 前基线） | 48.74 |
 | Round-2 验收 | 56.50 |
 | v29 Kokkos 引擎 | 183.8 |
 | v28 初始 polar | 6951.7 |
@@ -285,10 +288,30 @@ gather（约 3.6 ms）、cuBLAS/external（约 3.8 ms）、e3-linear pack/unpack
 
 | 基线 | 倍率 |
 |---|---:|
-| Round-2 | **1.159×** |
-| v29 Kokkos 引擎 | **3.77×** |
-| v28 初始 polar | **142.6×** |
-| PyTorch 参考 | **1.93×** |
+| Round-3 build 8 | **1.190×** |
+| Round-2 | **1.380×** |
+| v29 Kokkos 引擎 | **4.49×** |
+| v28 初始 polar | **169.8×** |
+| PyTorch 参考 | **2.30×** |
+
+![Plan B-lite speed](figures/fig_07_plan_b_lite.png)
+
+*图：同二进制 A/B。左：prior B tree 49.69、round-3 build 8 48.74、
+B1 replay cache 45.09、B1+B4 40.95 ms/eval；右：切片节省 B1 +3.39、
+B4 +4.01、B3 −5.97（数值正确但更慢，保持 opt-in）、B5 +0.01 ms。
+所有数字都来自 `bench/plan_b_lite_2026-10-20/summary.json`。*
+
+**Plan B-lite 的两个有效切片（同二进制 A/B）：**
+
+| 切片 | 关闭 | 开启 | 节省 |
+|---|---:|---:|---:|
+| B1 replay cache（缓存 forward SCF 状态） | 48.48 | 45.09 | **+3.39 ms** |
+| B4 reverse-gather fusion（gather 融进 MH-1 reverse） | 44.96 | 40.95 | **+4.01 ms** |
+
+B3 merged unpack 修复后数值正确但慢 5.97 ms，保持 opt-in；B5 小 polar
+zero-fill 融合中性（+0.01 ms），也保持 opt-in。两个默认开关是
+`MATOS_REPLAY_CACHE=1`、`MATOS_REV_GATHER_FUSE=1`；UVU x2 smem 默认关闭
+（build-10 staging 是 regression）。
 
 ### 5.2 系统尺寸
 
@@ -296,7 +319,7 @@ gather（约 3.6 ms）、cuBLAS/external（约 3.8 ms）、e3-linear pack/unpack
 
 | 体系 | 原子 | 分子 | ms/eval |
 |---|---:|---:|---:|
-| NH3 1×1×1 | 128 | 32 | **48.74** |
+| NH3 1×1×1 | 128 | 32 | **40.95** |
 | NH3 2×2×2 | 1024 | **256** | **312.1** |
 | NH3 2×4×4 | 4096 | ~1024 | ~1200–1300（外推，未完成实测） |
 
@@ -310,7 +333,8 @@ gather（约 3.6 ms）、cuBLAS/external（约 3.8 ms）、e3-linear pack/unpack
 
 ### 5.3 引擎比较（最新测量）
 
-**执行模式：** 非线性 PolarMACE 的两行（48.74 / 27.7 ms）都是
+**执行模式：** 非线性 PolarMACE 的两行（40.95 / 19.93 ms，Plan B-lite）
+都是
 **materialized** 执行（模型加载日志为 `streamed_edges='materialized'`）。
 generic streamed（19.3 ms）只适用于线性/compact-radial 引擎族；非线性
 PolarMACE 不能用 direct/JIT/streamed 执行族，但它的 **MH-1 tensor-product
@@ -322,8 +346,8 @@ kernel 仍然在 materialized 路径里运行**（CUPTI trace 中的
 
 | 配置（最新测量） | 1-rank eval |
 |---|---:|
-| **Full PolarMACE**（128 原子 = 32 NH3） | **48.74 ms** |
-| Nonlinear backbone（polar off） | 27.7 ms |
+| **Full PolarMACE**（128 原子 = 32 NH3） | **40.95 ms** |
+| Nonlinear backbone（polar off） | 19.93 ms |
 | Linear MACE-OFF23 medium, materialized（Symmetrix 线性路径；不同模型） | 6.6 ms |
 | Linear MACE-OFF23 medium, generic streamed（Symmetrix 通用流式路径；不同模型） | 19.3 ms |
 
@@ -332,14 +356,14 @@ kernel 仍然在 materialized 路径里运行**（CUPTI trace 中的
 引擎的线性路径可以很快；Full PolarMACE 是 270 MB、83 元素、r_cut 6 Å、512 通道
 非线性 readout，二者不可直接比较。
 
-**48.74/6.6 = 7.4× 的分解（哪些是模型本身，哪些是引擎）：**
+**40.95/6.6 = 6.2× 的分解（哪些是模型本身，哪些是引擎）：**
 
 | 部分 | 时间 | 倍率 | 性质 |
 |---|---:|---:|---|
 | Linear MACE-OFF23 medium | 6.6 ms | 1.00× | 小模型、线性 readout |
-| → Nonlinear PolarMACE backbone | 27.7 ms | **4.2×** | **模型本身**更大/更复杂：270 MB vs 37 MB、83 vs 10 元素、r_cut 6 vs 5 Å、512 通道、2 interactions、非线性 readout |
-| → Full PolarMACE | 48.74 ms | **1.76×** | **模型物理**：polar 长程层（SCF + Ewald） |
-| 引擎/内核可优化余量 | GPU-busy ≈43.9 ms，静态 SM-weighted ≈22.9 ms；host/launch gap ≈5 ms | — | **引擎效率**，不是模型规模 |
+| → Nonlinear PolarMACE backbone | 19.93 ms | **3.0×** | **模型本身**更大/更复杂：270 MB vs 37 MB、83 vs 10 元素、r_cut 6 vs 5 Å、512 通道、2 interactions、非线性 readout |
+| → Full PolarMACE | 40.95 ms | **2.05×** | **模型物理**：polar 长程层（SCF + Ewald） |
+| 引擎/内核可优化余量 | GPU-busy ≈33.9 ms；host/launch gap ≈7 ms | — | **引擎效率**，不是模型规模 |
 
 所以 7.4× 主要是“这个非线性极化模型更大 + 多了一个长程极化层”，不是同一个模型被引擎拖慢了 7.4×。若要单独测“非线性 readout”的代价，需要一个与 PolarMACE backbone 同规模、只把 readout 改成线性的模型，当前没有这个对照。
 
