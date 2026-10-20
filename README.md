@@ -174,6 +174,15 @@ same-model isolation is nonlinear backbone 27.7 ms → full PolarMACE 48.74 ms
 “Kokkos vs ours” comparison. Data:
 `docs/examples/data/engine_compare_round3.json`.
 
+**Execution mode:** the nonlinear PolarMACE rows (48.74 / 27.7 ms) are
+**materialized** — the model-load log reports `streamed_edges='materialized'`.
+The generic streamed path (19.3 ms) is only available to the linear /
+compact-radial engine family; the nonlinear PolarMACE model cannot use the
+direct/JIT/streamed execution family, but its **MH-1 tensor-product kernels
+are active inside the materialized path** (`e3 tensor product mh1 fused`,
+`e3 tensor reverse mh1 fused channels/harmonics` in the CUPTI trace). "Cannot
+use streamed" is not the same as "cannot use materialized".
+
 ![Engine comparison](results/polar_engine_compare.png)
 
 

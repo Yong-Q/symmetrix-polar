@@ -310,6 +310,14 @@ gather（约 3.6 ms）、cuBLAS/external（约 3.8 ms）、e3-linear pack/unpack
 
 ### 5.3 引擎比较（最新测量）
 
+**执行模式：** 非线性 PolarMACE 的两行（48.74 / 27.7 ms）都是
+**materialized** 执行（模型加载日志为 `streamed_edges='materialized'`）。
+generic streamed（19.3 ms）只适用于线性/compact-radial 引擎族；非线性
+PolarMACE 不能用 direct/JIT/streamed 执行族，但它的 **MH-1 tensor-product
+kernel 仍然在 materialized 路径里运行**（CUPTI trace 中的
+`e3 tensor product mh1 fused`、`e3 tensor reverse mh1 fused channels/harmonics`）。
+“不能用 streamed”不等于“不能用 materialized”。
+
 ![Engine comparison](../figures/05_engine_compare.png)
 
 | 配置（最新测量） | 1-rank eval |
