@@ -246,17 +246,17 @@ on one A100 80 GB):
 |---|---|---:|---:|---:|---:|
 | This work: MACE-OFF23 medium (linear) | FP32 | direct/JIT | 1,296 | **6.31 min; 9.69 clean median** | 8.2 / 12.6 |
 | This work: full PolarMACE | FP64 | materialized + cache + team cutoff, fused MH-1 | 1,296 | 462.6 | 599.54 |
-| **This work: full PolarMACE** | **FP64** | **materialized + cache + team cutoff + team MH-1 (team size 64)** | **1,296** | **311.3** | **403.97** |
-| Ratio polar / linear | | | | **~32–49×** | |
+| This work: full PolarMACE | FP64 | materialized + cache + team cutoff + team MH-1 (team size 64) | 1,296 | 311.3 | 403.97 |
+| **This work: full PolarMACE** | **FP64** | **+ B4 reverse-gather fusion (main tree)** | **1,296** | **261.6** | **339.00** |
+| Ratio polar / linear | | | | **~27–41×** | |
 
-The current polar best is the **team-MH-1** candidate (`MATOS_REPLAY_CACHE=1`,
-UVU x2 smem off, forward sweep off, team cutoff, FP64 team MH-1,
-`MATOS_MH1_TEAM_SIZE=64`). It is **32.0% faster** than the fused-MH-1 result
-(462.6 → 314.6 µs/atom) and the team-size-64 setting adds another ~1%
-(314.6 → 311.3). The LAMMPS 1-rank parity gate passes (dE 2.91e-11,
-max dF 2.57e-14). The linear direct/JIT numbers are the measured minimum and
-the cleanest trial median; the shared A100 produced outliers. The 4.5 µs/atom
-target is ~69× away; see
+The current polar best is the **B4 + team** candidate in the main tree
+(`MATOS_REPLAY_CACHE=1`, UVU x2 smem off, forward sweep off, team cutoff,
+FP64 team MH-1, `MATOS_MH1_TEAM_SIZE=64`, B4 default on). It is **43.5%
+faster** than the fused-MH-1 result (462.6 → 261.6 µs/atom) and **16.3%**
+faster than team without B4. The linear direct/JIT numbers are the measured
+minimum and the cleanest trial median; the shared A100 produced outliers. The
+4.5 µs/atom target is ~58× away; see
 [docs/results/MH1_TEAM_FP64.md](docs/results/MH1_TEAM_FP64.md).
 
 **PolarMACE — a different model, not paper-comparable:**

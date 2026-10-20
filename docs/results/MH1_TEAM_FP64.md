@@ -54,21 +54,28 @@ at 1,296 atoms.
 
 ## Remaining distance to 4.6 µs/atom
 
-1,296 × 4.6 µs = **5.96 ms/eval**. Current team result 407.75 ms is **68.4×**
-away (310.0 µs/atom). Even setting the MH-1 family to zero would leave
->190 µs/atom. The 4.6 number is the linear MACE-OFF23 FP32 5,184-atom result;
+1,296 × 4.6 µs = **5.96 ms/eval**. Current B4+team result 339.00 ms is
+**56.9×** away (261.6 µs/atom). Even setting the MH-1 family to zero would
+leave >150 µs/atom. The 4.6 number is the linear MACE-OFF23 FP32 5,184-atom result;
 it is not reachable for full PolarMACE with kernel work.
 
 ## B4 + team (provisional, not accepted)
 
-An A/B of the coordinator's B4 binary vs a B4+team build measured
-460.84 → 367.33 ms at 1,296 atoms (−20.4%). That binary is **not accepted**:
-after the measurement the shared B tree was rebuilt by the concurrent
-Plan B-core workstream, and the current B4+team binary aborts at the first
-eval with `polar reverse: geometry cache missing or stale`. The B4 fused
-final (460.8 ms) and the main-tree team build (407.75 ms) still run and pass
-parity. The 367 ms number is withheld until B4 is merged into the stable main
-tree and re-gated.
+The B4 source was cleanly merged into the stable main tree (output_gather
+in `E3TensorProductKokkos::reverse`, gather skipped at the call site) and
+rebuilt. At 1,296 atoms:
+
+| configuration | median ms/eval | µs/atom |
+|---|---:|---:|
+| main team, no B4 | 404.83 | 312.4 |
+| **main B4 + team** | **339.00** | **261.6** |
+| saving | **65.8 ms (16.3%)** | **50.8** |
+
+Three rounds: no-B4 404.61 / 404.99 / 404.83; B4+team 394.05 / 339.00 /
+338.87 (round 0 was warmup/contended; rounds 1–2 are the steady state).
+Cumulative from the fused-MH-1 + team-cutoff baseline: 599.54 → 339.00 ms
+(−43.5%). The earlier isolated-B-tree 367.33 ms is superseded by this stable
+main-tree result. The parity gate for the merged binary is running.
 
 ## 1,296-atom UVU knob check
 
