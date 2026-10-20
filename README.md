@@ -236,6 +236,20 @@ cost matches the paper's 4.50.
 19.34, standard streaming 5.80 µs/atom/step. We have **not** measured
 MACE-OMAT-0 on this engine, so no matched row is claimed.
 
+**Same-size 1,296-atom H₂O comparison** (the largest water box PolarMACE fits
+on one A100 80 GB):
+
+| Implementation | Precision | Path | Atoms | µs/atom/step | ms/eval |
+|---|---|---:|---:|---:|---:|
+| This work: MACE-OFF23 medium (linear) | FP32 | direct/JIT | 1,296 | **6.31 min; 9.69 clean median** | 8.2 / 12.6 |
+| **This work: full PolarMACE** | **FP64** | **materialized + replay cache + team cutoff** | **1,296** | **462.4** | **599.77** |
+| Ratio polar / linear | | | | **~48–73×** | |
+
+The polar row is the measured candidate (`MATOS_REPLAY_CACHE=1`, UVU x2 smem
+off, forward sweep off, team cutoff). With the scalar cutoff it is 625.55 ms /
+482.7 µs/atom. The linear direct/JIT numbers are the measured minimum and the
+cleanest trial median; the shared A100 produced outliers.
+
 **PolarMACE — a different model, not paper-comparable:**
 
 | Configuration | Precision | Atoms | Path | µs/atom/step | ms/eval |
@@ -243,7 +257,8 @@ MACE-OMAT-0 on this engine, so no matched row is claimed.
 | Full PolarMACE (NH₃) | FP64 | 128 | materialized | 380.8 | 48.74 |
 | Full PolarMACE (NH₃) | FP64 | 1,024 | materialized | 304.8 | 312.1 |
 | **PolarMACE + replay cache (NH₃)** | **FP64** | **128** | **materialized + cache** | **352.5** | **45.12 (parity PASS)** |
-| **Full PolarMACE (water)** | **FP64** | **1,296** | **materialized + cache** | **480.7** | **623.0** |
+| Full PolarMACE (water) | FP64 | 1,296 | materialized + cache, scalar cutoff | 482.7 | 625.55 |
+| **Full PolarMACE (water)** | **FP64** | **1,296** | **materialized + cache + team cutoff** | **462.4** | **599.77** |
 | Full PolarMACE (water) | FP64 | 2,592 | materialized | **OOM** | — |
 | Full PolarMACE (water) | FP64 | 5,184 | materialized | **OOM** | — |
 
@@ -256,17 +271,16 @@ tiled polar workspace or multi-GPU to reach that atom count.
 
 The polar model is not a slower version of the paper's linear model: the
 same-box linear → polar ratio is **7.4×**, FP64 adds ~2×, materialized vs
-direct/JIT adds ~3.3×, and the 128-atom box is launch-bound compared with the
-paper's 5,184 atoms. The polar SCF/Ewald is graph-wide and the MH-1 JIT fast
-path rejects the polar irrep layout
+direct/JIT adds ~3.3×, and the polar SCF/MH-1 work grows with the water
+neighbor count. The MH-1 JIT fast path rejects the polar irrep layout
 (`MH-1 node, edge, and hidden irreps are inconsistent`), so direct/JIT cannot
 be used for PolarMACE today.
 
 **Scaling context for the linear model (same engine, same model):** 128 atoms
 materialized FP64 51.6 → 1,536 atoms 14.17 → 6,144 atoms 12.26 µs/atom; at
-6,144 atoms the direct/JIT FP32 path is 3.72 µs/atom. This is why the
-5,184-atom comparison is the correct one and why 128-atom per-atom numbers are
-not comparable. Full table and caveats:
+6,144 atoms the direct/JIT FP32 path is 3.72 µs/atom, and at 5,184 water it is
+4.47–4.53. The 1,296-atom water comparison above is the same-size reference
+for the polar gap. Full table and caveats:
 [docs/results/PAPER_COMPARABILITY.md](docs/results/PAPER_COMPARABILITY.md).
 
 

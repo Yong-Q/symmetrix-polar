@@ -170,6 +170,31 @@ kernel cost is aligned.
 
 ![water direct/JIT per-step samples](../../bench/paper_scale_2026-10-20/direct_water.png)
 
+## Same-size 1,296-atom H₂O comparison
+
+The 5,184-atom water box exceeds the materialized PolarMACE workspace on one
+A100 80 GB (2,592 already OOMs on a 2.0 GiB request). The largest fitting
+water box is 1,296 atoms; this is the same-size reference for the polar gap:
+
+| Implementation | Precision | Path | µs/atom/step | ms/eval |
+|---|---|---|---:|---:|
+| Linear MACE-OFF23 medium | FP32 | direct/JIT | **6.31 min; 9.69 clean median** | 8.2 / 12.6 |
+| Full PolarMACE | FP64 | materialized + replay cache + team cutoff | **462.4** | **599.77** |
+| Polar / linear ratio | | | **~48–73×** | |
+
+PolarMACE scalar cutoff at the same size: 625.55 ms / 482.7 µs/atom.
+
+## Long-range Ewald fraction (CUPTI trace, actual)
+
+| system | GPU busy | long-range total | % GPU busy | strict Coulomb reciprocal | % GPU busy |
+|---|---:|---:|---:|---:|---:|
+| 128-atom NH₃ | 40.35 ms | 2.19 ms | **5.43%** | 0.12 ms | 0.30% |
+| 1,296-atom H₂O | 573.80 ms | 9.56 ms | **1.67%** | 1.09 ms | 0.19% |
+
+The long-range Coulomb/Ewald is **not** the bottleneck; at 1,296 atoms the
+MH-1 tensor product is **274.96 ms = 44.1%** of GPU busy, the backbone
+nonlinear 112.49 ms = 18.0%, and the whole polar pipeline 111.15 ms = 17.8%.
+
 ## What this means for the headline
 
 - **48.74 ms at 128 atoms (32 NH3) is the correct number for full PolarMACE,
