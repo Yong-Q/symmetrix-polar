@@ -5,6 +5,31 @@
 Symmetrix-XL paper's numbers (3.1–5.0× vs ML-IAP + cuEquivariance,
 single-digit µs/atom/step). Is our baseline wrong?
 
+## Consolidated per-atom table (all entries in µs/atom/step)
+
+| Workload (A100 80 GB unless noted) | Model | Precision | Atoms | Path | µs/atom/step | Source |
+|---|---|---|---:|---|---:|---|
+| OMAT-0 SrTiO3 | MACE-OMAT-0 | FP32 | 5,000 | ML-IAP + cuEq | 19.34 | paper |
+| OMAT-0 SrTiO3 | MACE-OMAT-0 | FP32 | 5,000 | standard streaming | 5.80 | paper |
+| OFF23 water | MACE-OFF23 | FP32 | 5,184 | ML-IAP + cuEq | 13.99 | paper |
+| OFF23 water | MACE-OFF23 | FP32 | 5,184 | standard streaming | 4.50 | paper |
+| **OFF23 water** | **MACE-OFF23 medium** | **FP32** | **5,184** | **direct/JIT** | **4.47–4.53 min; 4.49–6.37 median** | **this work** |
+| OFF23 NH3 | MACE-OFF23 medium | FP32 | 6,144 | direct/JIT | 3.72 median; 2.72 min | this work |
+| OFF23 NH3 | MACE-OFF23 medium | FP64 | 6,144 | materialized | 12.26 clean; 16.06 contended | this work |
+| OFF23 NH3 | MACE-OFF23 medium | FP64 | 6,144 | generic | 15.29 (unstable) | this work |
+| PolarMACE NH3 | nonlinear polar | FP64 | 128 | materialized | 380.8 (48.74 ms) | this work |
+| PolarMACE NH3 | nonlinear polar | FP64 | 1,024 | materialized | 304.8 (312.1 ms) | this work |
+| PolarMACE NH3, Plan B cache | nonlinear polar | FP64 | 128 | materialized + replay cache | 351.7 (45.02 ms) | this work, parity gate PASS |
+| OMAT-0 capacity | MACE-OMAT-0 | FP32 | 24,565 | ML-IAP + cuEq | 25.69 | paper |
+| OMAT-0 capacity | MACE-OMAT-0 | FP32 | 1,250,235 | standard streaming | 6.15 | paper |
+| OMAT-0 capacity | MACE-OMAT-0 | FP32 | 11,240,455 | tiled streaming | 6.41 | paper |
+| OMAT-0 SrTiO3 (RTX 5090) | MACE-OMAT-0 | FP32 | 5,000 | ML-IAP + cuEq | 12.81 | paper |
+| OMAT-0 SrTiO3 (RTX 5090) | MACE-OMAT-0 | FP32 | 5,000 | standard streaming | 2.56 | paper |
+
+Notes: the paper's capacity rows are at different system sizes and are not
+matched-size comparisons. The PolarMACE rows are a different model and must
+not be compared with the MACE-OMAT-0/OFF23 rows.
+
 ## Short answer
 
 No measurement error was found. The two sets of numbers answer different

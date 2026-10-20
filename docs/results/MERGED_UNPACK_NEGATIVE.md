@@ -33,10 +33,10 @@ Fixes required:
 
 Interleaved A/B, 2 rounds x 12 measured `run 1` samples, same binary:
 
-| variant | median ms/eval |
-|---|---:|
-| baseline (merged off) | **49.00** |
-| merged unpack | **54.69** |
+| variant | median ms/eval | µs/atom/step (128 atoms) |
+|---|---:|---:|
+| baseline (merged off) | **49.00** | 382.8 |
+| merged unpack | **54.69** | 427.3 |
 
 The merged path is **5.69 ms slower (11.6%)**, not the 1.5–2.2 ms faster that
 the Plan B audit projected.

@@ -40,6 +40,9 @@ LAMMPS 1-rank parity 全部 PASS**（round-3 Python snapshot，rc 134 只是
 | v28 initial polar implementation | 6951.7 |
 | PyTorch `mace_polar` reference | 94.0 |
 
+Per-atom normalization: **48.74 ms / 128 atoms = 380.8 µs/atom/step**;
+the 1,024-atom result is 312.1 ms / 1,024 = **304.8 µs/atom/step**.
+
 Speedups of the final 48.74 ms:
 
 | Baseline | Speedup |
