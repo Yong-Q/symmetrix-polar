@@ -23,17 +23,40 @@ from fpdf.enums import XPos, YPos  # noqa: E402
 
 DOC = REPO / "docs/technical"
 MD = DOC / "TECHNICAL_REPORT.md"
-FONT = DOC / "fonts/NotoSansSC-Regular.ttf"
+# The downloaded Noto Sans SC is a variable font whose default weight is 100
+# (Thin); at 10 pt it looks washed out. Instantiate a static Medium (wght=500)
+# and use that for all text. Both files are local (docs/technical/fonts/ is
+# gitignored and recreated by ensure_font()).
+FONT_VF = DOC / "fonts/NotoSansSC-Regular.ttf"
+FONT = DOC / "fonts/NotoSansSC-Medium-static.ttf"
 OUT = DOC / "SYMMETRIX_POLAR_TECHNICAL_REPORT.pdf"
 FONT_URL = ("https://gh-proxy.com/https://raw.githubusercontent.com/"
             "notofonts/noto-cjk/main/Sans/Variable/TTF/Subset/"
             "NotoSansSC-VF.ttf")
 
+
+def ensure_font() -> None:
+    """Download the variable font if needed and instantiate a static Medium."""
+    FONT.parent.mkdir(parents=True, exist_ok=True)
+    if not FONT_VF.exists():
+        import urllib.request
+        urllib.request.urlretrieve(FONT_URL, FONT_VF)
+    if FONT.exists():
+        return
+    try:
+        from fontTools.ttLib import TTFont
+        from fontTools.varLib.instancer import instantiateVariableFont
+        variable = TTFont(FONT_VF)
+        instantiateVariableFont(variable, {"wght": 500}).save(FONT)
+    except Exception as exc:  # noqa: BLE001 - keep the report renderable
+        print("warning: could not instantiate Medium font:", exc)
+        FONT.write_bytes(FONT_VF.read_bytes())
+
 BLUE = (31, 111, 235)
 INK = (36, 41, 47)
-MUTED = (87, 96, 106)
-GREEN = (45, 164, 78)
-RED = (207, 34, 46)
+MUTED = (60, 68, 78)
+GREEN = (20, 120, 60)
+RED = (180, 25, 35)
 LIGHT = (246, 248, 250)
 RULE = (208, 215, 222)
 
@@ -174,6 +197,30 @@ class Report(FPDF):
         self.set_font("NotoSansSC", "", 10)
         self.ln(2)
 
+    def _table_heights(self, texts, widths):
+        """Measure the real rendered height of a row (Chinese + English)."""
+        heights = []
+        for j, txt in enumerate(texts):
+            self.set_font("NotoSansSC", "", 8.6)
+            try:
+                lines = self.multi_cell(
+                    widths[j], 4.6, txt, border=0, align="L",
+                    dry_run=True, output="LINES")
+                n = max(1, len(lines))
+            except Exception:
+                n = max(1, math.ceil(len(txt) / max(4, int(widths[j] / 2.1))))
+            heights.append(n * 4.6 + 1.2)
+        return heights
+
+    def _draw_table_row(self, texts, widths, y0):
+        x0 = self.l_margin
+        self.set_font("NotoSansSC", "", 8.6)
+        self.set_text_color(*INK)
+        for j, txt in enumerate(texts):
+            self.set_xy(x0 + sum(widths[:j]), y0)
+            self.multi_cell(widths[j], 4.6, txt, border=1, align="L")
+        return y0 + max(self._table_heights(texts, widths))
+
     def table(self, rows):
         if not rows:
             return
@@ -185,24 +232,25 @@ class Report(FPDF):
             widths[0] = 172 * 0.38
             rest = (172 - widths[0]) / (ncols - 1)
             widths[1:] = [rest] * (ncols - 1)
-        for index, row in enumerate(rows):
+
+        def normalize(row):
             row = row + [""] * (ncols - len(row))
-            texts = [clean_inline(c) for c in row]
-            heights = []
-            for j, txt in enumerate(texts):
-                self.set_font("NotoSansSC", "", 8.6)
-                chars = max(4, int(widths[j] / 2.1))
-                lines = max(1, math.ceil(len(txt) / chars))
-                heights.append(lines * 4.6 + 1.2)
-            row_h = max(heights)
-            if self.get_y() + row_h > self.page_break_trigger:
+            return [clean_inline(c) for c in row]
+
+        header = normalize(rows[0])
+        header_h = max(self._table_heights(header, widths))
+        body = [normalize(r) for r in rows[1:]]
+        first_h = max(self._table_heights(body[0], widths)) if body else 0
+        if self.get_y() + header_h + first_h > self.page_break_trigger:
+            self.add_page()
+        y = self._draw_table_row(header, widths, self.get_y())
+        for texts in body:
+            row_h = max(self._table_heights(texts, widths))
+            if y + row_h > self.page_break_trigger:
                 self.add_page()
-            x0, y0 = self.get_x(), self.get_y()
-            self.set_font("NotoSansSC", "", 8.6)
-            for j, txt in enumerate(texts):
-                self.set_xy(x0 + sum(widths[:j]), y0)
-                self.multi_cell(widths[j], 4.6, txt, border=1, align="L")
-            self.set_xy(x0, y0 + row_h)
+                y = self._draw_table_row(header, widths, self.get_y())
+            y = self._draw_table_row(texts, widths, y)
+        self.set_xy(self.l_margin, y)
         self.ln(2)
         self.set_font("NotoSansSC", "", 10)
 
@@ -250,12 +298,16 @@ def cover(pdf: Report):
     for label, value in metrics:
         pdf.set_x(24)
         pdf.set_font("NotoSansSC", "", 10)
-        pdf.set_text_color(*MUTED)
+        pdf.set_text_color(*INK)
         pdf.cell(88, 6.5, label)
         pdf.set_font("NotoSansSC", "", 10.5)
         pdf.set_text_color(*(GREEN if value == "PASS" else RED if value == "REJECTED" else BLUE))
         pdf.cell(0, 6.5, value, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.set_y(238)
+    pdf.set_y(232)
+    pdf.set_draw_color(*RULE)
+    pdf.set_line_width(0.3)
+    pdf.line(24, pdf.get_y(), 186, pdf.get_y())
+    pdf.ln(4)
     pdf.set_x(24)
     pdf.set_font("NotoSansSC", "", 9)
     pdf.set_text_color(*MUTED)
@@ -265,11 +317,7 @@ def cover(pdf: Report):
 
 
 def main():
-    if not FONT.exists():
-        raise SystemExit(
-            "Missing CJK font: " + str(FONT) + "\n"
-            "Download it once with:\n  mkdir -p " + str(FONT.parent) +
-            "\n  curl -L -o " + str(FONT) + " '" + FONT_URL + "'")
+    ensure_font()
     text = MD.read_text(encoding="utf-8").replace("\r\n", "\n")
     lines = text.split("\n")
     pdf = Report()
