@@ -143,8 +143,11 @@ FIG_GROUPS = [
          "H1 forward/adjoint exchange schematic",
          "Forward fills ghost rows with H1; reverse sums ghost adjoints back to the owner."),
         (F / "19_mpi_h1_final.png",
-         "MPI H1 final: one-rank fix and two-rank blocker",
-         "H1 1-rank 50.20 ms vs default 50.84 (0.99x); 2-rank is blocked by six 2.0-5.4 GiB/rank workspaces (peak 80,966 MiB)."),
+         "MPI H1 final: one-rank fix accepted",
+         "H1 1-rank 50.20 ms vs default 50.84 (0.99x); the old 1042-ghost defect is gone."),
+        (F / "20_mpi_2rank_fix.png",
+         "MPI 2-rank fix: memory and parity",
+         "Default OOM 80,966 -> 63,088 MiB; H1 SIGSEGV -> 6,120 MiB; both 2-rank parity gates PASS."),
     ]),
     ("Kernel profile", [
         (F / "09_kernel_top_labels.png",

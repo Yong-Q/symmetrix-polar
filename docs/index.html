@@ -163,8 +163,8 @@ completed artifact exists yet. No pending result is included as a performance cl
 <td><strong>PASS (2026-10-20)</strong>: H1 1-rank <strong>418.64 -&gt; 50.20 ms</strong> (default 50.84; <strong>0.99x</strong>), same-binary A/B <strong>3.24x</strong>; dE = 0.0, max dF 1.41e-15 eV/A; 20-step NVT stable. The old 1042-ghost/4.87x defect is removed.</td>
 </tr>
 <tr>
-<td>MPI H1 2-rank</td>
-<td><strong>BLOCKED by the engine</strong>: six 2.0-5.4 GiB workspaces per rank (~21 GiB/rank; peak 80,966 MiB), exact 2-hop OOM and H1 SIGSEGV. A dedicated workspace-sizing fix is in progress; no 2-rank speed claim until it passes parity.</td>
+<td>MPI 2-rank engine fix</td>
+<td><strong>PASS</strong>: default exact 2-hop 80,966 MiB (OOM) -&gt; <strong>63,088 MiB</strong> (~30.8 GiB/rank), dE=0, max dF <strong>1.687e-6 eV/Å</strong>; H1 2-rank SIGSEGV -&gt; <strong>6,120 MiB</strong> (~3 GiB/rank), dE=0, max dF <strong>1.01e-14 eV/Å</strong>; 20-step NVT passes. No engine blocker for the 2-GPU test.</td>
 </tr>
 <tr>
 <td>MH-1/direct/JIT fast path</td>
@@ -1528,16 +1528,20 @@ there are no ghost rows, and using device-side pack/unpack.</p>
 <p>Gates: H1 1-rank vs default dE = 0.0 eV, max dF = 1.41e-15 eV/A; 20-step NVT
 stable (drift 4.74e-14 A / 4.70e-14 eV/A). The default-path gain (122.8 -&gt;
 50.8) is the concurrent kernel round, not this work.</p>
-<p><strong>Two-rank blocker.</strong> The current engine allocates six workspaces of
-2.0-5.4 GiB per rank (2.03 + 2.13 + 3.20 + 3.36 + 5.12 + 5.37 ~= 21 GiB/rank,
-peak 80,966 MiB) in <code>compute_node_energies_forces</code> -&gt; <code>ensure_view</code> and
-<code>AffineMLPKokkosT::prepare</code> / <code>forward_impl</code>. The 2-rank graph has
-2481/2581 nodes and 74,472/78,156 edges. Exact 2-hop OOMs; H1 2-rank SIGSEGVs.
-A dedicated fix round is sizing these workspaces by owned/local rows and local
-edges and adding extent assertions. Until it passes 2-rank parity, no 2-rank
-speed number is claimed.</p>
+<p><strong>Two-rank fix (accepted).</strong> The default exact 2-hop OOM was caused by two
+full-size reverse buffers whose live ranges do not overlap their forward
+counterparts: <code>edge_message_adj</code> (reuses <code>edge_messages_storage</code> now) and
+<code>raw_weight_adj</code> (aliases <code>weight_adj</code> now). Peak <strong>80,966 MiB (OOM) -&gt;
+63,088 MiB (~30.8 GiB/rank)</strong>, rc=0; dE=0, max dF <strong>1.687e-6 eV/Å</strong>. The H1
+SIGSEGV was a communication-width mismatch: <code>node_feature_width()</code> returned
+512 while layer-1 exchanges 2048, overrunning LAMMPS' comm buffers; it now
+returns the product-block width and adds extent guards. H1 2-rank peak
+<strong>6,120 MiB (~3 GiB/rank)</strong>, dE=0, max dF <strong>1.01e-14 eV/Å</strong>. Both 2-rank
+paths pass 20-step NVT; the 2-GPU test has no engine blocker. Final
+2-rank-fixed binary <code>2a999fe6…</code>.</p>
 <p><img alt="H1 pre-fix diagnosis" src="figures/17_mpi_h1_diagnosis.png" /></p>
-<p><img alt="H1 one-rank final and two-rank blocker" src="figures/19_mpi_h1_final.png" /></p>
+<p><img alt="H1 one-rank final" src="figures/19_mpi_h1_final.png" /></p>
+<p><img alt="2-rank memory/parity fix" src="figures/20_mpi_2rank_fix.png" /></p>
 <p>Details: <a href="results/MPI_H1.md"><code>results/MPI_H1.md</code></a> and
 <a href="theory/MPI_H1.md"><code>theory/MPI_H1.md</code></a>.</p>
 <h3 id="58-still-pending">5.8 Still pending</h3>
@@ -1570,8 +1574,12 @@ speed number is claimed.</p>
 <td>now low payoff (~1.5 ms); deprioritized</td>
 </tr>
 <tr>
-<td>MPI H1 1-rank fix + 2-rank parity re-gate</td>
-<td>in progress; first attempt failed</td>
+<td>MPI 1-rank / 2-rank engine fixes</td>
+<td><strong>accepted</strong>; 2-GPU test pending queue capacity</td>
+</tr>
+<tr>
+<td>Stage-2 kernel work toward 20–30 ms</td>
+<td>in progress (post-round-3 follow-up)</td>
 </tr>
 <tr>
 <td>multi-GPU 2/4-rank scaling (432/1024 atoms)</td>

@@ -129,7 +129,7 @@ dE 2.9e-11 eV, dF 2.6e-14 eV/Å). RBE is still rejected by the force gate.
 
 ![v28 vs v29 performance](results/polar_perf_v28_vs_v29.png)
 
-### MPI status (H1 one-rank fix accepted, 2026-10-20)
+### MPI status (one-rank and two-rank fixes accepted, 2026-10-20)
 
 - **H1 1-rank defect fixed.** The H1 mode had built a 1170-node local+ghost
   graph even on one rank (1042 periodic images, 9.14x node work). The graph is
@@ -141,20 +141,28 @@ dE 2.9e-11 eV, dF 2.6e-14 eV/Å). RBE is still rejected by the force gate.
   - Same-binary A/B of the fold: 176.77 → 54.62 ms (**3.24x**).
   - Gates: H1 1-rank vs default dE = 0.0, max dF 1.41e-15 eV/A; 20-step NVT
     stable (drift 4.74e-14 A / 4.70e-14 eV/A).
-- **2-rank is blocked by an engine-side workspace defect.** The current engine
-  allocates six 2.0–5.4 GiB workspaces per rank (≈21 GiB/rank; peak
-  80,966 MiB) in `compute_node_energies_forces` / `AffineMLPKokkosT::prepare`;
-  exact 2-hop OOMs and H1 2-rank SIGSEGVs. A dedicated fix round is sizing
-  these by owned/local rows and local edges and adding extent assertions.
+- **2-rank engine blockers fixed.**
+  - Default exact 2-hop: duplicate edge workspaces removed (adjoint reuses
+    `edge_messages_storage`; `raw_weight_adj` aliases `weight_adj`). Peak
+    **80,966 MiB (OOM) → 63,088 MiB (~30.8 GiB/rank)**, rc=0;
+    dE = 0.0, max dF **1.687e-6 eV/Å**.
+  - H1 2-rank: `node_feature_width()` returns the 2048-wide product block
+    (not the 512 embedding), matching LAMMPS' comm buffers; extent guards
+    added. Peak **6,120 MiB (~3 GiB/rank)**, rc=0; dE = 0.0, max dF
+    **1.01e-14 eV/Å**.
+  - 20-step NVT passes for both 2-rank paths; 1-rank regression modules 5–8
+    PASS. Final 2-rank-fixed binary `2a999fe6…`.
 - **One GPU remains a hardware floor.** Both ranks share 108 SMs; the upstream
   linear MACE is also 3.38x slower at 2 ranks on one A100. True scaling needs
-  one rank per GPU (queue3 2/4-GPU) on 432/1024 atoms, after the 2-rank fix.
+  one rank per GPU (queue3 2/4-GPU) on 432/1024 atoms. The 2-GPU test now has
+  **no engine blocker**; only queue capacity/pending reservation remain.
 
-Details, formulas, and the blocker evidence:
+Details, formulas, and the evidence:
 [docs/results/MPI_H1.md](docs/results/MPI_H1.md) and
 [docs/theory/MPI_H1.md](docs/theory/MPI_H1.md).
 
 ![H1 final result](docs/figures/19_mpi_h1_final.png)
+![2-rank fix](docs/figures/20_mpi_2rank_fix.png)
 
 ### Engine comparison (latest measured, same 128-atom box, one A100)
 

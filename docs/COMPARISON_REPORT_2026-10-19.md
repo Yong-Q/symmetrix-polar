@@ -36,7 +36,7 @@ was modified while preparing this document.
 | RBE production use | **rejected by the force gate** (RMS_F 4.10e-2 to 1.03e-2 eV/A; 33 A p=800 is 1.23e-2, all >> 1e-4 eV/A) |
 | 1-hop MPI mode | **rejected by the force/energy gates** (max dF 4.116e-3 eV/A, dE 7.94e-5 eV) |
 | MPI H1 one-rank fix | **PASS (2026-10-20)**: H1 1-rank **418.64 -> 50.20 ms** (default 50.84; **0.99x**), same-binary A/B **3.24x**; dE = 0.0, max dF 1.41e-15 eV/A; 20-step NVT stable. The old 1042-ghost/4.87x defect is removed. |
-| MPI H1 2-rank | **BLOCKED by the engine**: six 2.0-5.4 GiB workspaces per rank (~21 GiB/rank; peak 80,966 MiB), exact 2-hop OOM and H1 SIGSEGV. A dedicated workspace-sizing fix is in progress; no 2-rank speed claim until it passes parity. |
+| MPI 2-rank engine fix | **PASS**: default exact 2-hop 80,966 MiB (OOM) -> **63,088 MiB** (~30.8 GiB/rank), dE=0, max dF **1.687e-6 eV/Å**; H1 2-rank SIGSEGV -> **6,120 MiB** (~3 GiB/rank), dE=0, max dF **1.01e-14 eV/Å**; 20-step NVT passes. No engine blocker for the 2-GPU test. |
 | MH-1/direct/JIT fast path | **architecturally blocked**; the upstream linear engine cannot load `MACE_Nonlinear` |
 | PyTorch MACE-Polar reference speed | **94.0 ms/eval** median vs round-2 engine **56.5 ms** -> engine **1.66x faster** (round 1: 1.30x slower; v29: 1.95x slower) for the full model |
 
@@ -692,18 +692,23 @@ Gates: H1 1-rank vs default dE = 0.0 eV, max dF = 1.41e-15 eV/A; 20-step NVT
 stable (drift 4.74e-14 A / 4.70e-14 eV/A). The default-path gain (122.8 ->
 50.8) is the concurrent kernel round, not this work.
 
-**Two-rank blocker.** The current engine allocates six workspaces of
-2.0-5.4 GiB per rank (2.03 + 2.13 + 3.20 + 3.36 + 5.12 + 5.37 ~= 21 GiB/rank,
-peak 80,966 MiB) in `compute_node_energies_forces` -> `ensure_view` and
-`AffineMLPKokkosT::prepare` / `forward_impl`. The 2-rank graph has
-2481/2581 nodes and 74,472/78,156 edges. Exact 2-hop OOMs; H1 2-rank SIGSEGVs.
-A dedicated fix round is sizing these workspaces by owned/local rows and local
-edges and adding extent assertions. Until it passes 2-rank parity, no 2-rank
-speed number is claimed.
+**Two-rank fix (accepted).** The default exact 2-hop OOM was caused by two
+full-size reverse buffers whose live ranges do not overlap their forward
+counterparts: `edge_message_adj` (reuses `edge_messages_storage` now) and
+`raw_weight_adj` (aliases `weight_adj` now). Peak **80,966 MiB (OOM) ->
+63,088 MiB (~30.8 GiB/rank)**, rc=0; dE=0, max dF **1.687e-6 eV/Å**. The H1
+SIGSEGV was a communication-width mismatch: `node_feature_width()` returned
+512 while layer-1 exchanges 2048, overrunning LAMMPS' comm buffers; it now
+returns the product-block width and adds extent guards. H1 2-rank peak
+**6,120 MiB (~3 GiB/rank)**, dE=0, max dF **1.01e-14 eV/Å**. Both 2-rank
+paths pass 20-step NVT; the 2-GPU test has no engine blocker. Final
+2-rank-fixed binary `2a999fe6…`.
 
 ![H1 pre-fix diagnosis](figures/17_mpi_h1_diagnosis.png)
 
-![H1 one-rank final and two-rank blocker](figures/19_mpi_h1_final.png)
+![H1 one-rank final](figures/19_mpi_h1_final.png)
+
+![2-rank memory/parity fix](figures/20_mpi_2rank_fix.png)
 
 Details: [`results/MPI_H1.md`](results/MPI_H1.md) and
 [`theory/MPI_H1.md`](theory/MPI_H1.md).
@@ -717,7 +722,8 @@ Details: [`results/MPI_H1.md`](results/MPI_H1.md) and
 | UVU reverse further widening / x1+x2 fusion | proposed |
 | narrow affine / convolution kernels (3% coverage) | proposed |
 | polar replay elimination | now low payoff (~1.5 ms); deprioritized |
-| MPI H1 1-rank fix + 2-rank parity re-gate | in progress; first attempt failed |
+| MPI 1-rank / 2-rank engine fixes | **accepted**; 2-GPU test pending queue capacity |
+| Stage-2 kernel work toward 20–30 ms | in progress (post-round-3 follow-up) |
 | multi-GPU 2/4-rank scaling (432/1024 atoms) | waiting for queue3 capacity; 1-GPU remote probe queued on queue004 |
 | leoff timing | model exists; no timing JSON |
 

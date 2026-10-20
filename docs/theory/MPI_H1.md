@@ -126,11 +126,15 @@ MPI change is the 3.41x → 0.99x ratio and the same-binary 3.24x. Gates: H1
 (no lost atoms, drift 4.74e-14 Å / 4.70e-14 eV/Å). See
 [`../results/MPI_H1.md`](../results/MPI_H1.md).
 
-**Two-rank blocker (engine-side):** the current engine allocates six
-2.0–5.4 GiB workspaces per rank (≈21 GiB/rank; peak 80,966 MiB) in
-`compute_node_energies_forces` / `AffineMLPKokkosT::prepare`, so exact 2-hop
-OOMs; the H1 2-rank path SIGSEGVs. A dedicated fix round is sizing these
-workspaces by owned/local rows and local edges and adding extent assertions.
+**Two-rank fix (accepted):** the default 2-hop OOM was caused by two full-size
+reverse buffers (`edge_message_adj`, `raw_weight_adj`) whose live ranges do not
+overlap their forward counterparts; they now reuse the forward storage /
+alias `weight_adj`. Peak **80,966 MiB (OOM) → 63,088 MiB (~30.8 GiB/rank)**;
+parity dE=0, max dF **1.687e-6 eV/Å**. The H1 SIGSEGV was a communication-width
+mismatch: `node_feature_width()` returned 512, while layer-1 exchanges 2048;
+it now returns the product-block width and adds extent guards. H1 2-rank peak
+**6,120 MiB (~3 GiB/rank)**, parity dE=0, max dF **1.01e-14 eV/Å**. Both
+2-rank paths pass 20-step NVT; the 2-GPU test has no engine blocker.
 
 ## 4.5 One GPU with multiple ranks vs one GPU per rank
 

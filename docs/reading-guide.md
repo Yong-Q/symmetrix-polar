@@ -82,11 +82,12 @@ progress; no 2-rank speed claim until it passes parity. See
 | 14 | MPI status | Correctness achieved; no one-GPU speedup |
 | 15 | MPI H1 pre-fix diagnosis | Historical: 1042 ghosts, 4.87x; fixed by the one-rank fold |
 | 16 | H1 exchange schematic | Forward H1, reverse adjoints |
-| 17 | MPI H1 final + 2-rank blocker | H1 1-rank 0.99x default; 2-rank blocked by ~21 GiB/rank workspaces |
-| 18 | Top kernels (pre-round-2) | Starting point: polar + e3 scalar linear |
-| 19 | Stage spans vs GPU busy | Host stages vs measured kernel time |
-| 20 | Polar-specific kernel delta | What the polar layer adds |
-| 21 | Remaining kernels + SM coverage | Red <50%; tensor products 100% covered but instruction/store-bound |
+| 17 | MPI H1 final one-rank | H1 1-rank 0.99x default after the one-rank fold |
+| 18 | MPI 2-rank fix | Default OOM 80,966 -> 63,088 MiB; H1 SIGSEGV -> 6,120 MiB; both parity PASS |
+| 19 | Top kernels (pre-round-2) | Starting point: polar + e3 scalar linear |
+| 20 | Stage spans vs GPU busy | Host stages vs measured kernel time |
+| 21 | Polar-specific kernel delta | What the polar layer adds |
+| 22 | Remaining kernels + SM coverage | Red <50%; tensor products 100% covered but instruction/store-bound |
 
 Equations in the PDF gallery:
 

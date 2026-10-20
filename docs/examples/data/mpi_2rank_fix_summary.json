@@ -1,0 +1,284 @@
+{
+ "task": "2-rank engine workspace/sizing fix for Symmetrix-Polar",
+ "date": "2026-10-19",
+ "binary": {
+  "path": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-lammps-aacd036df381800a/lmp",
+  "fixed_sha256": "2a999fe6202ca612a79762b9ec0a711b41431eaffdc2a6d956be1baab3de6857",
+  "fixed_size_bytes": 197800320,
+  "intermediate_fixed_sha256": "e45978103287837117d3251f4b97e7530414756f130ef410480b67f28134d42e",
+  "baseline_snapshot": "lmp_2rank_baseline",
+  "baseline_sha256": "08cb7847ffb1a804306907c56fcee800fd795e15da63105ed6cc296f8a7a69c8",
+  "src_baseline_snapshot": "lmp_src_baseline",
+  "src_baseline_sha256": "bdb2ec19e925d337a15bb1215e1e028f21faf74fe50efd283b7220a6416d5ca5"
+ },
+ "root_causes": {
+  "default_2rank_oom": [
+   "Exact 2-hop multi-rank graph is large by design: 2481/2581 nodes, 74472/78156 edges per rank.",
+   "The materialized reverse kept a second [edges,message_width] buffer (edge_message_adj) while the forward edge_messages storage was dead, and a second [edges,weight_size] buffer (raw_weight_adj) that is just weight_adj scaled by the cutoff.",
+   "Those duplicates added 8.9 GiB/rank and pushed the 2-rank peak to 80,966 MiB on an 80 GiB A100."
+  ],
+  "h1_2rank_segv": [
+   "node_feature_width() returned the 512-wide embedding only; the pair style copies it into comm_forward/comm_reverse and LAMMPS sizes its buffers once in Comm::init.",
+   "The layer-1 H1 hook exchanges the 2048-wide product-block output, so pack/unpack overran the 512-wide LAMMPS buffers; the same defect surfaced as SIGSEGV on one build and cudaErrorIllegalAddress on the round-3 build."
+  ]
+ },
+ "source_hashes_final_build": {
+  "mace_nonlinear_kokkos.hpp": "1bf0f36fdb9336ff2be49a568ad207c214b9bf1c6cb2b99b93e966ecec182a9f",
+  "mace_nonlinear_kokkos_impl.tpp": "546efe04da021031e546e3a7641c045e38ca850b0b215d5c1f2ccebf6f7e3b69",
+  "mace_polar_impl.tpp": "c094fe492549820677f4c8249f8de7d0d7c2130be01c7fcc91bd9fb3a6a55f64",
+  "e3nn_kokkos.cpp": "b91ee03fb13baafdf060ac1600ee8b5b23c8b8d904115a1df6ebec90bb55db35",
+  "e3nn_kokkos.hpp": "8d9e83d795d0a9c982a48f1e817d71e0003db2163e4075b1692446d4bd406e92"
+ },
+ "source_drift_note": "e3nn_kokkos.cpp changed twice after the validated build (b91ee03f -> 366bc331 -> 03973af9) while the round-3 agent integrated; the shared lmp was restored to the validated 2a999fe6 binary. The 2-rank fix source blocks are unchanged.",
+ "changes": [
+  "mace_nonlinear_kokkos.hpp:379-395 node_feature_width() = max(embedding, product outputs).",
+  "mace_nonlinear_kokkos_impl.tpp:4237-4279 multi-rank workspace extent guard + per-layer sync width guard (calls at 4474-4477 and 7490-7493).",
+  "mace_nonlinear_kokkos_impl.tpp:7210-7216 reverse edge_message_adj reuses edge_messages_storage (same invariant as the streamed path).",
+  "mace_nonlinear_kokkos_impl.tpp:7287-7293 raw_weight_adj aliases weight_adj in place; MLP reverse consumes weight_adj at 7360-7363."
+ ],
+ "memory": {
+  "default_2hop_2rank_before": {
+   "peak_mib_mpi_report": 80966,
+   "peak_mib_reproduced": 78818,
+   "outcome": "OOM on a 1.279/1.343 GiB allocation",
+   "six_workspaces_gib_per_rank": [
+    2.03,
+    2.13,
+    3.2,
+    3.36,
+    5.12,
+    5.37
+   ]
+  },
+  "default_2hop_2rank_after": {
+   "first_mib": 4,
+   "peak_mib": 63088,
+   "delta_mib": 63084
+  },
+  "h1_2rank_after": {
+   "first_mib": 4,
+   "peak_mib": 6120,
+   "delta_mib": 6116
+  },
+  "default_1rank_after": {
+   "first_mib": 4,
+   "peak_mib": 2193,
+   "delta_mib": 2189
+  },
+  "h1_1rank_after_under_load": {
+   "first_mib": 6205,
+   "peak_mib": 8944,
+   "delta_mib": 2739
+  },
+  "h1_1rank_accepted_08cb_under_load": {
+   "first_mib": 6197,
+   "peak_mib": 9326,
+   "delta_mib": 3129
+  },
+  "note": "final_clean_* runs started with the GPU idle (4 MiB); the H1 1-rank runs shared ~6.2 GiB of external usage and show the fixed binary below the accepted 08cb binary."
+ },
+ "wall_one_step_s": {
+  "fixed_default_1rank": 0.136403,
+  "fixed_h1_1rank": 0.13599499999999998,
+  "fixed_default_2rank": 1.479455,
+  "fixed_h1_2rank": 0.5157434999999999,
+  "src_default_1rank": 0.14836749999999999,
+  "src_h1_1rank": 0.151356,
+  "accepted_08cb_default_1rank": 0.14010050000000002,
+  "protocol": "one warm-up + three one-step runs; median of the steady samples excluding the warm-up; shared one-GPU, so 2 ranks are slower by construction. The accepted 08cb binary measures the same 1-rank time under the same background load, so the fix adds no 1-rank cost."
+ },
+ "parity": {
+  "one_rank": {
+   "fix2_default_1rank": {
+    "tag": "fix2_default_1rank",
+    "energy_eV": -49242.4564153149,
+    "dE_eV": 0.0,
+    "max_dF_eV_per_A": 1.0041842978268712e-14,
+    "mean_dF_eV_per_A": 7.826940950084743e-16,
+    "max_pos_drift_A": 0.0,
+    "n_atoms": 128,
+    "pass": true
+   },
+   "fix2_h1_1rank": {
+    "tag": "fix2_h1_1rank",
+    "energy_eV": -49242.4564153149,
+    "dE_eV": 0.0,
+    "max_dF_eV_per_A": 1.0041842978268712e-14,
+    "mean_dF_eV_per_A": 8.113505984139333e-16,
+    "max_pos_drift_A": 0.0,
+    "n_atoms": 128,
+    "pass": true
+   }
+  },
+  "two_rank": {
+   "fix2_default_2rank": {
+    "tag": "fix2_default_2rank",
+    "energy_eV": -49242.4564153149,
+    "dE_eV": 0.0,
+    "max_dF_eV_per_A": 1.6874754336205828e-06,
+    "mean_dF_eV_per_A": 1.2217545891079773e-07,
+    "max_pos_drift_A": 0.0,
+    "n_atoms": 128,
+    "pass": true
+   },
+   "fix2_h1_2rank": {
+    "tag": "fix2_h1_2rank",
+    "energy_eV": -49242.4564153149,
+    "dE_eV": 0.0,
+    "max_dF_eV_per_A": 1.0091432627896547e-14,
+    "mean_dF_eV_per_A": 7.622662780562636e-16,
+    "max_pos_drift_A": 0.0,
+    "n_atoms": 128,
+    "pass": true
+   }
+  },
+  "tolerance": {
+   "dE_eV": 5e-05,
+   "max_dF_eV_per_A": 0.0001
+  }
+ },
+ "nvt": {
+  "runs": {
+   "fix_nvt_h1_2rank": {
+    "tag": "fix_nvt_h1_2rank",
+    "steps": 20,
+    "pe_first": -49242.4564153149,
+    "pe_last": -49242.6212955549,
+    "pe_min": -49242.7626116484,
+    "pe_max": -49240.527168824,
+    "pe_span_eV": 2.2354428243997972,
+    "etotal_first": -49237.5316037904,
+    "etotal_last": -49237.488620429,
+    "etotal_span_eV": 0.060338152696203906,
+    "T_mean": 242.94434713296164,
+    "T_min": 186.153510920006,
+    "T_max": 320.670397912678,
+    "n_atoms_final": 128,
+    "lost_atoms": false,
+    "finite": true
+   },
+   "fix_nvt_default_2rank": {
+    "tag": "fix_nvt_default_2rank",
+    "steps": 20,
+    "pe_first": -49242.4564153149,
+    "pe_last": -49242.6212955394,
+    "pe_min": -49242.7626116449,
+    "pe_max": -49240.5271688358,
+    "pe_span_eV": 2.2354428091057343,
+    "etotal_first": -49237.5316037904,
+    "etotal_last": -49237.4886202454,
+    "etotal_span_eV": 0.06033828220097348,
+    "T_mean": 242.9443529498104,
+    "T_min": 186.15351952226,
+    "T_max": 320.670408387352,
+    "n_atoms_final": 128,
+    "lost_atoms": false,
+    "finite": true
+   },
+   "fix_nvt_h1_1rank": {
+    "tag": "fix_nvt_h1_1rank",
+    "steps": 20,
+    "pe_first": -49242.4564153149,
+    "pe_last": -49242.6212955549,
+    "pe_min": -49242.7626116484,
+    "pe_max": -49240.527168824,
+    "pe_span_eV": 2.2354428243997972,
+    "etotal_first": -49237.5316037904,
+    "etotal_last": -49237.488620429,
+    "etotal_span_eV": 0.060338152696203906,
+    "T_mean": 242.9443471329615,
+    "T_min": 186.153510920006,
+    "T_max": 320.670397912678,
+    "n_atoms_final": 128,
+    "lost_atoms": false,
+    "finite": true
+   },
+   "fix_nvt_default_1rank": {
+    "tag": "fix_nvt_default_1rank",
+    "steps": 20,
+    "pe_first": -49242.4564153149,
+    "pe_last": -49242.6212955549,
+    "pe_min": -49242.7626116484,
+    "pe_max": -49240.527168824,
+    "pe_span_eV": 2.2354428243997972,
+    "etotal_first": -49237.5316037904,
+    "etotal_last": -49237.488620429,
+    "etotal_span_eV": 0.060338152696203906,
+    "T_mean": 242.9443471329615,
+    "T_min": 186.153510920006,
+    "T_max": 320.670397912678,
+    "n_atoms_final": 128,
+    "lost_atoms": false,
+    "finite": true
+   },
+   "fix2_nvt_h1_2rank": {
+    "tag": "fix2_nvt_h1_2rank",
+    "steps": 20,
+    "pe_first": -49242.4564153149,
+    "pe_last": -49242.6212955549,
+    "pe_min": -49242.7626116484,
+    "pe_max": -49240.527168824,
+    "pe_span_eV": 2.2354428243997972,
+    "etotal_first": -49237.5316037904,
+    "etotal_last": -49237.488620429,
+    "etotal_span_eV": 0.060338152696203906,
+    "T_mean": 242.94434713296158,
+    "T_min": 186.153510920006,
+    "T_max": 320.670397912678,
+    "n_atoms_final": 128,
+    "lost_atoms": false,
+    "finite": true
+   },
+   "fix2_nvt_default_2rank": {
+    "tag": "fix2_nvt_default_2rank",
+    "steps": 20,
+    "pe_first": -49242.4564153149,
+    "pe_last": -49242.6212955394,
+    "pe_min": -49242.7626116449,
+    "pe_max": -49240.5271688358,
+    "pe_span_eV": 2.2354428091057343,
+    "etotal_first": -49237.5316037904,
+    "etotal_last": -49237.4886202454,
+    "etotal_span_eV": 0.06033828220097348,
+    "T_mean": 242.94435294981037,
+    "T_min": 186.15351952226,
+    "T_max": 320.670408387352,
+    "n_atoms_final": 128,
+    "lost_atoms": false,
+    "finite": true
+   }
+  },
+  "compare": {
+   "fix_nvt_h1_1rank_vs_fix_nvt_h1_2rank": {
+    "max_abs_thermo_diff": 1.0186340659856796e-10,
+    "identical": false
+   },
+   "fix_nvt_default_1rank_vs_fix_nvt_h1_1rank": {
+    "max_abs_thermo_diff": 2.000888343900442e-11,
+    "identical": false
+   },
+   "fix2_nvt_default_2rank_vs_fix2_nvt_h1_2rank": {
+    "max_abs_thermo_diff": 0.0003835819497908233,
+    "identical": false
+   }
+  },
+  "protocol": "20 steps, 300 K NVT, 0.5 fs, 128 atoms"
+ },
+ "gates": {
+  "lammps_parity_1rank": {
+   "dE_eV": 2.9103830456733704e-11,
+   "max_dF_eV_per_A": 2.604128702224445e-14,
+   "pass": true
+  },
+  "lammps_parity_2rank_exact_2hop": {
+   "dE_eV": 2.9103830456733704e-11,
+   "max_dF_eV_per_A": 1.6874754351462371e-06,
+   "pass": true
+  },
+  "module5": "PASS",
+  "module6": "PASS",
+  "module7": "PASS",
+  "module8": "PASS",
+  "note": "LAMMPS parity ran against the fixed binary (1 rank and the 2-rank exact-2-hop production path). Module 5-8 ran against the accepted pyfinal_r2 engine snapshot, which shares the unchanged numerical code."
+ }
+}

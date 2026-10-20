@@ -46,7 +46,8 @@ LMP=/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-lamm
 | RBE force gate | approximation quality | RMS_F | ≤1e-4 eV/Å | 4.1e-2 … 1.0e-2 eV/Å (p=50…800); final-build p=800 check **6.1e-3 eV/Å**, max 3.0e-2, energy noise ±0.05 eV | **REJECTED** |
 | RBE P4 convergence/unbiasedness | implementation/statistics | slope, RMS drop, 3·SEM | slope ∈ [−0.8,−0.2], drop ≥2× | slope −0.499, unbiased within 3·SEM, same-seed bitwise | **PASS** |
 | 1-hop ghost MPI | approximation quality | dE, max dF | ≤5e-5 eV, ≤1e-4 eV/Å | 7.94e-5 eV, 4.116e-3 eV/Å | **REJECTED** |
-| H1 2-rank parity | H1 exactness | dE, max dF | ≤5e-5 eV, ≤1e-4 eV/Å | 2.910e-11 eV, 1.413e-15 eV/Å | **PASS** (pre-fix binary) |
+| H1 2-rank parity | H1 exactness | dE, max dF | ≤5e-5 eV, ≤1e-4 eV/Å | **0.0 eV, 1.01e-14 eV/Å** (2-rank-fixed binary) | **PASS** |
+| Default 2-rank parity | exact 2-hop correctness | dE, max dF | ≤5e-5 eV, ≤1e-4 eV/Å | **0.0 eV, 1.687e-6 eV/Å** (2-rank-fixed binary) | **PASS** |
 
 **Round-3 full suite (2026-10-20, build 8):** module 5 **PASS**;
 module 6 **PASS** (ρ̂ rel 1.27e-15, ΔE rel 1.02e-15, abs 7.77e-16 eV);

@@ -1,13 +1,14 @@
-# Results — MPI H1: One-Rank Fix Accepted, Two-Rank Blocker (2026-10-20)
+# Results — MPI H1: One-Rank and Two-Rank Fixes Accepted (2026-10-20)
 
 **中文摘要：** H1 的 1-rank 缺陷已修复：把 1-rank 图折叠到 local atoms，
 H1 1-rank 从 **418.64 ms 降到 50.20 ms**，与默认路径的 50.84 ms 持平
 （0.99×），同二进制 A/B 为 176.77 → 54.62 ms（3.24×）。1-rank parity
-dE=0、max dF 1.41e-15 eV/Å，20-step NVT 稳定。**2-rank 仍被引擎侧
-workspace 分配阻塞**：当前源码在 2 ranks 下每个 rank 分配 6 个 2.0–5.4 GiB
-workspace（合计 ~21 GiB/rank，峰值 80,966 MiB），exact 2-hop OOM；H1 2-rank
-SIGSEGV；kernel round-3 构建 `86bb29b1` 则报 `cudaErrorIllegalAddress`。
-这是引擎侧问题，已启动专门的 2-rank workspace 修复。
+dE=0、max dF 1.41e-15 eV/Å，20-step NVT 稳定。**2-rank 的两个引擎侧
+blocker 也已修复**：default 2-hop 从 OOM（峰值 80,966 MiB）降到
+**63,088 MiB（~30.8 GiB/rank）**，parity dE=0、max dF 1.687e-6 eV/Å；
+H1 2-rank 从 SIGSEGV 降到 **6,120 MiB（~3 GiB/rank）**，parity dE=0、
+max dF 1.01e-14 eV/Å；两条路径的 20-step NVT 都稳定。2-GPU 测试现在
+**没有引擎 blocker**，可以一 rank 一卡运行。
 
 ## 1. Status summary
 
@@ -20,15 +21,19 @@ SIGSEGV；kernel round-3 构建 `86bb29b1` 则报 `cudaErrorIllegalAddress`。
 | H1 1-rank parity | **PASS**: dE = 0.0 eV, max dF = 1.41e-15 eV/Å |
 | Exact 2-hop 1-rank parity | **PASS**: dE = 0.0, max dF = 1.54e-15 eV/Å |
 | 20-step NVT, H1 1-rank | **PASS**: 128 atoms, no lost atoms, drift 4.74e-14 Å / 4.70e-14 eV/Å |
-| H1 2-rank | **BLOCKED** by engine workspace sizing (SIGSEGV on agent builds) |
-| Exact 2-hop 2-rank | **BLOCKED** by engine OOM |
-| Final binary | `08cb7847ffb1a804306907c56fcee800fd795e15da63105ed6cc296f8a7a69c8` |
+| **H1 2-rank** | **PASS**: dE=0, max dF **1.01e-14 eV/Å**; 6,120 MiB peak; 20-step NVT stable |
+| **Exact 2-hop 2-rank** | **PASS**: dE=0, max dF **1.687e-6 eV/Å**; 63,088 MiB peak |
+| 2-rank NVT | **PASS**: 128/128 atoms, no lost, Etot span 0.0603 eV (both paths) |
+| 1-rank regression | **PASS**: modules 5–8, force dumps ≤1e-14 eV/Å |
+| Final 2-rank-fixed binary | `2a999fe6202ca612a79762b9ec0a711b41431eaffdc2a6d956be1baab3de6857` |
 
 ![H1 pre-fix diagnosis](../figures/17_mpi_h1_diagnosis.png)
 
 ![H1 forward/adjoint schematic](../figures/18_mpi_h1_schematic.png)
 
-![H1 final one-rank and 2-rank blocker](../figures/19_mpi_h1_final.png)
+![H1 final one-rank result](../figures/19_mpi_h1_final.png)
+
+![2-rank memory/parity fix](../figures/20_mpi_2rank_fix.png)
 
 ## 2. Root cause and fix (one rank)
 
@@ -62,35 +67,52 @@ The same-binary A/B isolates the change: the old 1170-node graph costs
 profile is flat versus the default path; the H1 hooks are 0.13% of the compute
 on one rank.
 
-## 3. Two-rank blocker (engine-side, not pair-style)
+## 3. Two-rank fix (accepted)
 
-The current engine source is not runnable on two ranks:
+Two independent engine-side defects blocked 2 ranks; both are fixed.
 
-- **Default / exact 2-hop:** peak GPU memory **80,966 MiB of 81,920 MiB**;
-  abort on a 1.28–1.34 GiB allocation. An `LD_PRELOAD` cudaMalloc tracer shows
-  six workspaces per rank:
-  **2.03 + 2.13 + 3.20 + 3.36 + 5.12 + 5.37 ≈ 21 GiB/rank**, allocated from
-  `MaceNonlinearKokkosT::compute_node_energies_forces` → `ensure_view` and
-  `AffineMLPKokkosT::prepare` / `forward_impl`. The 2-rank graph has
-  **2481/2581 nodes and 74,472/78,156 edges** (rank 0/1).
-- **H1 path:** ~3.6 GB peak, SIGSEGV after graph construction. The same input
-  with the pre-change pair style on the current engine also SIGSEGVs, while
-  the 09:22 binary runs it — so the regression is engine-side.
-- **Kernel round-3 build `86bb29b1`:** both default and H1 2-rank abort with
-  `cudaErrorIllegalAddress` instead of OOM; the default path does not execute
-  H1 pair code, confirming it is engine-side.
+### 3.1 Default exact 2-hop OOM — duplicate edge workspaces
 
-The MPI agent proposed and the coordinator launched a dedicated fix round:
+The 2-hop graph is large by design: **2481/2581 nodes and 74,472/78,156 edges**
+per rank. Every per-edge workspace is linear in `edges`; the defect was two
+full-size buffers whose live ranges do not overlap with their forward
+counterparts:
 
-1. size the `ensure_view` workspaces (and `AffineMLPKokkosT` forward buffers)
-   by **owned/local rows and local edges**, or add a capacity guard that
-   scales them down for multi-rank graphs;
-2. add an extent assertion at the multi-rank entry that every per-node and
-   per-edge view covers `num_nodes`/`num_edges` before the first kernel.
+- `state.edge_message_adj` (a pure gather of `message_adj`, same shape as the
+  already-dead forward `state.edge_messages`);
+- `state.raw_weight_adj` (exactly `weight_adj * cutoff`).
 
-Until this lands, H1 2-rank and exact 2-hop 2-rank cannot be measured or
-gated, and the device-staged exchange (validated on one rank through real
-self-swaps) remains unvalidated over real MPI.
+Together they added ~8.9 GiB/rank and pushed the peak to **80,966 MiB** on an
+80 GiB A100. The fix reuses `edge_messages_storage` for the adjoint and aliases
+`raw_weight_adj` to `weight_adj` in place; the MLP reverse consumes
+`weight_adj`. Peak: **80,966 MiB (OOM) → 63,088 MiB (~30.8 GiB/rank)**, rc=0.
+
+### 3.2 H1 SIGSEGV — communication-width mismatch
+
+`node_feature_width()` returned the 512-wide embedding. The pair style copies
+it into `comm_forward`/`comm_reverse`, and LAMMPS sizes its send/recv buffers
+once in `Comm::init`. The layer-1 H1 hook exchanges the **2048-wide**
+product-block output, so pack/unpack overran the 512-wide buffers (SIGSEGV or
+`cudaErrorIllegalAddress` depending on the build). The fix returns
+`max(embedding, products[*].output_dimension())` and adds multi-rank extent +
+per-layer sync-width guards. Peak H1 2-rank: **6,120 MiB (~3 GiB/rank)**, rc=0.
+
+### 3.3 Parity / NVT / regression
+
+| Check | Result |
+|---|---|
+| 2-rank default exact 2-hop | dE = 0.0 eV, max dF **1.687e-6 eV/Å** (reproduces the accepted value) |
+| 2-rank H1 | dE = 0.0 eV, max dF **1.01e-14 eV/Å** |
+| Official LAMMPS parity 1-rank | dE 2.910e-11 eV, max dF **2.60e-14 eV/Å** |
+| Official LAMMPS parity 2-rank exact | dE 2.910e-11 eV, max dF **1.687475435e-6 eV/Å** |
+| 20-step NVT, both 2-rank paths | 128/128 atoms, no lost, Etot span **0.0603 eV** |
+| H1 2-rank vs 1-rank thermo | max difference **1e-10** |
+| 1-rank regression | modules 5–8 PASS; force dumps vs accepted ≤1e-14 eV/Å |
+
+**Remaining blocker for the 2-GPU test: none.** Run one rank per GPU; per-rank
+footprints are ~31 GiB (default) and ~3 GiB (H1). The shared `lmp` was restored
+to the validated 2-rank-fixed binary; the final integration rebuild must rerun
+the 2-rank gates after merging the latest round-3 kernel edits.
 
 ## 4. What is inherent on one shared A100
 
@@ -116,9 +138,12 @@ system (432/1024 atoms) where the ghost ratio is smaller.
 - Metrics: ms/eval or ms/step, speedup vs 1 rank, ghost ratio, communication
   fraction, per-rank utilization.
 - Acceptance: dE ≤5e-5 eV, max dF ≤1e-4 eV/Å, no lost atoms.
-- Prerequisite: the engine 2-rank workspace fix above must pass 2-rank parity
-  on one GPU first (runnable, even if slow), then the same package runs on
-  two GPUs.
+- **Prerequisite satisfied:** the 2-rank workspace/width fix above passes
+  parity on one GPU. Per-rank footprint is ~31 GiB (default) and ~3 GiB (H1),
+  well inside an 80 GiB A100 per rank.
+- Launch one rank per GPU (launcher-specific device binding). The one-GPU
+  2-rank wall (H1 0.518 s/step, default 1.478 s/step vs 1-rank 0.137 s/step)
+  is the shared-SM floor, not a correctness issue.
 
 ## 6. Operational state
 
@@ -130,6 +155,8 @@ system (432/1024 atoms) where the ghost ratio is smaller.
   and must be reconciled by task name/workdir before a resubmit.
 - Queue3 reported `freeGpuCount=0`; queue004 has 12 free GPUs but a hard
   1-GPU/task policy and no 2-GPU flavor.
+- The 2-rank engine fix removes the last correctness blocker for the 2-GPU
+  test; only queue capacity and the pending reservation remain operational.
 
 ## 7. Artifacts
 
@@ -137,10 +164,15 @@ system (432/1024 atoms) where the ghost ratio is smaller.
 - `docs/results/MPI_H1_AGENT_REPORT.md` (copy)
 - `docs/examples/data/mpi_h1_opt_summary.json`
 - `docs/figures/17_mpi_h1_diagnosis.png`, `18_mpi_h1_schematic.png`,
-  `19_mpi_h1_final.png`
-- Final binary snapshot: `bench/mpi_h1_opt_2026-10-19/lmp_mpi_final`
+  `19_mpi_h1_final.png`, `20_mpi_2rank_fix.png`
+- Final one-rank binary: `bench/mpi_h1_opt_2026-10-19/lmp_mpi_final`
   (`08cb7847…`)
+- **Final 2-rank-fixed binary**: `2a999fe6…` (snapshot
+  `bench/mpi_2rank_fix_2026-10-19/lmp_2rank_fixed_final`)
 - Gate JSONs: `bench/mpi_h1_opt_2026-10-19/gates/gate_final/parity.json`,
-  `gates/gate_fix2/`, `nvt/`
+  `gates/gate_fix2/`, `nvt/`; 2-rank gates
+  `bench/mpi_2rank_fix_2026-10-19/gates/`
 - 2-rank memory trace: `bench/mpi_h1_opt_2026-10-19/gates/sc2/memwatch.log`
-- 2-rank fix round: `bench/mpi_2rank_fix_2026-10-19/` (in progress)
+- 2-rank fix report: `bench/mpi_2rank_fix_2026-10-19/FINAL_REPORT.md`
+  (copy: `docs/results/MPI_2RANK_FIX_AGENT_REPORT.md`),
+  `docs/examples/data/mpi_2rank_fix_summary.json`
