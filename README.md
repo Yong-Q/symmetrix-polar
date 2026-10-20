@@ -13,6 +13,11 @@ Symmetrix-XL Kokkos engine, and 1.93× faster than the PyTorch reference.
 1024 atoms (256 NH3 molecules) run at 312 ms/eval. Full report:
 [docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md).
 
+**Plan B audit (what 20–25 ms would require):**
+[docs/design/PLAN_B_AUDIT.md](docs/design/PLAN_B_AUDIT.md) — separate from
+Plan A; 36–40 ms is credible, 20–25 ms needs work removal below the current
+static floor.
+
 **Technical report (extendable PDF, for newcomers):**
 [docs/technical/SYMMETRIX_POLAR_TECHNICAL_REPORT.pdf](docs/technical/SYMMETRIX_POLAR_TECHNICAL_REPORT.pdf)
 — theory, engine implementation, optimization methods, measured results,

@@ -15,6 +15,13 @@
 - [`../../results/comparison_summary.csv`](../../results/comparison_summary.csv)
   — CSV; the round-2 rows are historical, the round-3 row is final.
 
+**Plan B audit (separate):**
+
+- [`../design/PLAN_B_AUDIT.md`](../design/PLAN_B_AUDIT.md) — what a 20–25 ms
+  rewrite would require, with expected savings, effort, risk, host-sync
+  inventory, and kill criteria. Conclusion: 36–40 ms is credible; 20–25 ms is
+  not credible under the current FP64/exact-physics/full-gate contract.
+
 **Post-final follow-up (pending clean A/B):**
 
 - [`KERNEL_ROUND3_FOLLOWUP.md`](KERNEL_ROUND3_FOLLOWUP.md) — vectorized
