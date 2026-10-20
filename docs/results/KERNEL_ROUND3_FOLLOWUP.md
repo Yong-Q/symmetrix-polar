@@ -36,6 +36,17 @@ export MATOS_REV_GATHER_VEC=4
 The two switches default to 4; setting either to 1 restores the build-8
 kernel. No model, precision, or gate tolerance changed.
 
+## UVU reverse x2 shared-memory staging (build 10)
+
+- Each x2 team now stages a `(64 nodes x 32 u)` `mixed_bar` tile and a
+  `(4 v x 32 u)` weight tile in shared memory (≈17 KB). Four v threads share
+  one node's `mixed_bar` row, so those global loads drop 4×.
+- The ascending-`u` accumulation order is unchanged, so the kernel is
+  intended to be bitwise vs build 9; the bitwise/parity check is queued behind
+  another GPU job at the time of writing.
+- Revert switch: `MATOS_UVU_X2_MB_SMEM=0` restores the build-9 x2 kernel.
+- Build 10 compiled successfully; speed A/B is pending a clean GPU window.
+
 ## Next nonlinear slices
 
 1. UVU reverse x2: stage `mixed_bar` in shared memory (target 0.3–0.5 ms).

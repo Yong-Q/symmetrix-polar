@@ -3206,10 +3206,10 @@ index 7514438..6189909 100644
              "MH-1 stress reduction inputs are inconsistent.");
 diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
 new file mode 100644
-index 0000000..1b57e0d
+index 0000000..f814e6e
 --- /dev/null
 +++ b/libsymmetrix/source/mace_polar_impl.tpp
-@@ -0,0 +1,3984 @@
+@@ -0,0 +1,4088 @@
 +// mace_polar_impl.tpp — P3 极性静电场独立编译单元(2026-10-15)。
 +// 目的: polar 逻辑(②Fukui/③k网格+GTO/④势特征/⑤SCF; 及未来⑥⑦⑧)与主 tpp 分离,
 +//       之后 polar 改动只重编本 TU(单 TU ~数分钟)而非四个大 TU(20-40 分钟)。
@@ -5423,6 +5423,109 @@ index 0000000..1b57e0d
 +                                        chunk_index,node,column);
 +                                x1_adj(node,in1_off+column)+=value;
 +                            });
++                        const char* mb_env=std::getenv(
++                            "MATOS_UVU_X2_MB_SMEM");
++                        const bool mb_smem=!(mb_env!=nullptr
++                            &&std::atoi(mb_env)==0);
++                        if(mb_smem) {
++                            // Stage a (64 nodes x 32 u) mixed_bar tile and a
++                            // (4 v x 32 u) weight tile in shared memory.
++                            // Four v threads share one node's mixed_bar row,
++                            // so this cuts those global loads 4x and keeps
++                            // the ascending-u accumulation order.
++                            constexpr int x2_sub=32;
++                            const int sub_smem_elems=
++                                (tile_m+tile_n)*x2_sub;
++                            const std::size_t sub_smem=
++                                scratch_view::shmem_size(sub_smem_elems);
++                            Kokkos::parallel_for(
++                                "polar reverse uvu mode0 x2",
++                                Kokkos::TeamPolicy<>(
++                                    n_tiles*m2_tiles*chunks,
++                                    tile_n*tile_m)
++                                    .set_scratch_size(0,
++                                        Kokkos::PerTeam(sub_smem)),
++                                KOKKOS_LAMBDA(
++                                    const Kokkos::TeamPolicy<>::
++                                        member_type& team) {
++                                    const int tile=team.league_rank();
++                                    const int chunk_index=tile%chunks;
++                                    const int block=tile/chunks;
++                                    const int nt=block/m2_tiles,
++                                        vt=block%m2_tiles;
++                                    const int n0=nt*tile_n,
++                                        v0=vt*tile_m;
++                                    const int u_begin=
++                                        chunk_index*x2_chunk;
++                                    const int u_end=Kokkos::min(
++                                        mul1,u_begin+x2_chunk);
++                                    scratch_view scratch(
++                                        team.team_scratch(0),
++                                        sub_smem_elems);
++                                    scratch_view sw(
++                                        scratch.data(),
++                                        tile_m*x2_sub);
++                                    scratch_view smb(
++                                        scratch.data()
++                                            +tile_m*x2_sub,
++                                        tile_n*x2_sub);
++                                    const int tr=team.team_rank();
++                                    const int node=n0+tr/tile_m,
++                                        nn=tr/tile_m,vv=tr%tile_m;
++                                    Precision acc[8];
++                                    for(int c=0;c<d1;++c)
++                                        acc[c]=Precision(0);
++                                    for(int u0=u_begin;u0<u_end;
++                                        u0+=x2_sub) {
++                                        const int uw=Kokkos::min(
++                                            x2_sub,u_end-u0);
++                                        for(int idx=tr;
++                                            idx<tile_m*uw;
++                                            idx+=team.team_size()) {
++                                            const int vvi=idx/uw,
++                                                uu=idx%uw;
++                                            const int v=v0+vvi;
++                                            sw(vvi*uw+uu)=(v<mul2)
++                                                ?weight_view(w_off
++                                                    +(u0+uu)*mul2+v)
++                                                :Precision(0);
++                                        }
++                                        for(int idx=tr;
++                                            idx<tile_n*uw;
++                                            idx+=team.team_size()) {
++                                            const int ni=idx/uw,
++                                                uu=idx%uw;
++                                            smb(ni*uw+uu)=
++                                                (n0+ni<num_nodes)
++                                                ?mixed_bar_view(
++                                                    n0+ni,u0+uu)
++                                                :Precision(0);
++                                        }
++                                        team.team_barrier();
++                                        if(node<num_nodes
++                                            &&v0+vv<mul2) {
++                                            for(int uu=0;uu<uw;++uu) {
++                                                const Precision pair_bar=
++                                                    smb(nn*uw+uu)
++                                                    *inv_sqrt_d1
++                                                    *sw(vv*uw+uu);
++                                                for(int c=0;c<d1;++c)
++                                                    acc[c]+=pair_bar
++                                                        *x1(node,in1_off
++                                                            +(u0+uu)*d1
++                                                            +c);
++                                            }
++                                        }
++                                        team.team_barrier();
++                                    }
++                                    if(node<num_nodes&&v0+vv<mul2) {
++                                        const int v=v0+vv;
++                                        for(int c=0;c<d1;++c)
++                                            partial_x2(chunk_index,
++                                                node,v*d1+c)=acc[c];
++                                    }
++                                });
++                        } else {
 +                        Kokkos::parallel_for("polar reverse uvu mode0 x2",
 +                            Kokkos::TeamPolicy<>(
 +                                n_tiles*m2_tiles*chunks,tile_n*tile_m)
@@ -5478,6 +5581,7 @@ index 0000000..1b57e0d
 +                                            v*d1+c)=acc[c];
 +                                }
 +                            });
++                        }
 +                        Kokkos::parallel_for(
 +                            "polar reverse uvu mode0 x2 reduce",
 +                            Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
