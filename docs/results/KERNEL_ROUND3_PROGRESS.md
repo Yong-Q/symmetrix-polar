@@ -9,7 +9,12 @@ affine LayerNorm+SiLU 正反向（合计 -1.92 ms）、UVU reverse x1（-0.46 ms
 k 空间 `desc ab` / `desc proj phase` 分块（合计 -1.59 ms）和
 MH-1 前向写穿（-0.11 ms）。计划中预期的 MH-1 前向 4-channel 和
 reverse cutoff 两阶段归约实测**变慢**，已分别改回 scalar 默认（保留 opt-in）；
-UVU reverse x2 的分块归约基本中性。离 20–30 ms 仍有明显差距，下一阶段需要
+UVU reverse x2 的分块归约基本中性。构建 7 还加入了 `polar rev phase and source`
+分块和三个 polar LayerNorm+SiLU 的 team-per-row 版本；前者已编译，后者待下一次
+构建生效。e3-linear 的 **merged unpack**（block-plan，一次 launch 完成全部
+unpack）已实现，但在多贡献 block 上触发 illegal memory access，因此默认关闭，
+仅保留为 `MATOS_E3_LINEAR_MERGED_UNPACK=1` 实验开关；关闭时 parity gate PASS
+（dE 2.91e-11 eV，max dF 2.54e-14 eV/Å）。离 20–30 ms 仍有明显差距，下一阶段需要
 继续做 Stage B/C（e3 pack/unpack 合并、UVU x2 共享内存、gather 融合、
 host gap/CUDA Graph）。
 
