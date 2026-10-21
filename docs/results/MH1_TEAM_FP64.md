@@ -2,7 +2,7 @@
 
 **Status:** measured, parity-gated, and **correctness-fixed** on the main tree.
 The original FP64 team enablement had a repeated-evaluation state bug (see
-"Write-through bug" below); the fixed build gives 333.17 ms at 1,296 atoms
+"Write-through bug" below); the fixed build gives 320.97 ms at 1,296 atoms
 with real-MD parity against the pre-team engine.
 
 ## What changed
@@ -98,8 +98,8 @@ scalar paths. No other numerics change.
 The reference target is normalized to the 1,296-atom H₂O system:
 
 - target: 1,296 × **4.5 µs** = **5.832 ms/eval**;
-- corrected B4+team: **333.17 ms = 257.2 µs/atom**;
-- gap: **57.1×** (333.17 / 5.832).
+- corrected B4+team + coalescing: **320.97 ms = 247.4 µs/atom**;
+- gap: **55.0×** (320.97 / 5.832).
 
 Even setting the whole MH-1 family to zero would leave >150 µs/atom, i.e.
 >30× above the target. The 4.5 µs/atom number is the **linear MACE-OFF23 FP32
@@ -131,8 +131,13 @@ default MDRange tiling (nodes in x), so every warp read a different edge row.
 Tile `{1,128}` (feature block in x, one node per block) drops the kernel from
 10.3 to 3.5 ms per launch (−66%) and the 1,296-atom wall time from
 **346.91 → 333.17 ms (−13.7 ms, −4.0%)**. Forces match to 1e-15.
-Cumulative from the fused-MH-1 + team-cutoff baseline: 599.54 → 333.17 ms
-(−44.4%).
+**Edge-feature coalescing (2026-10-21):** the edge-feature kernel launched one
+thread per edge; each thread wrote 1026 consecutive doubles, so a warp wrote
+32 rows 8 KB apart (~32× write amplification). Parallelizing over
+(edge, feature) with tile {1,256} gives **333.7 → 321.0 ms (−12.8 ms,
+−3.8%)**. Forces match to 1e-15 and three fixed-geometry evaluations are
+identical. Cumulative from the fused-MH-1 + team-cutoff baseline:
+599.54 → 320.97 ms (−46.5%).
 
 The parity gate for the merged binary passes, and the repeated-evaluation gate
 now holds.

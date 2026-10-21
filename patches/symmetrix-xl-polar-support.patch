@@ -2378,7 +2378,7 @@ index ffcdc1c..fb089d8 100644
      std::vector<ExecutionMH1NodeRuntime> execution_mh1_node_runtime;
      void prepare_execution_mh1_node_runtime_parameters();
 diff --git a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
-index 7514438..a9a2025 100644
+index 7514438..a4381c1 100644
 --- a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
 +++ b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
 @@ -4,6 +4,7 @@
@@ -3086,15 +3086,50 @@ index 7514438..a9a2025 100644
          state.input=features;
          const int input_width=interaction.linear_up.input_dimension();
          const int up_width=interaction.linear_up.output_dimension();
-@@ -4961,6 +5362,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
-                     edge_features(edge,column++)=target_embed(target,k);
-             });
+@@ -4951,16 +5352,33 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+             auto source_embed=state.source_embeddings;
+             auto target_embed=state.target_embeddings;
+             auto edge_features=state.edge_features;
+-            Kokkos::parallel_for("nonlinear edge features",edges,KOKKOS_LAMBDA(int edge) {
+-                int column=0;
+-                for(int k=0;k<nb;++k) edge_features(edge,column++)=local_radial(edge,k);
+-                const int source=neigh_indices(edge),target=local_targets(edge);
+-                for(int k=0;k<source_embed.extent(1);++k)
+-                    edge_features(edge,column++)=source_embed(source,k);
+-                for(int k=0;k<target_embed.extent(1);++k)
+-                    edge_features(edge,column++)=target_embed(target,k);
+-            });
++            // Feature columns in x: one block covers 256 consecutive
++            // columns of one edge, so a warp writes contiguous 8-byte
++            // elements.  The per-edge version put edges in x; a warp then
++            // wrote 32 rows 8 KB apart and paid ~32x write amplification.
++            const int source_width=static_cast<int>(
++                source_embed.extent(1));
++            const int target_width=static_cast<int>(
++                target_embed.extent(1));
++            const int radial_width=static_cast<int>(nb);
++            Kokkos::parallel_for("nonlinear edge features",
++                Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
++                    {0,0},{edges,edge_width},{1,256}),
++                KOKKOS_LAMBDA(int edge,int column) {
++                    if(column<radial_width) {
++                        edge_features(edge,column)=
++                            local_radial(edge,column);
++                    } else if(column<radial_width+source_width) {
++                        edge_features(edge,column)=source_embed(
++                            neigh_indices(edge),column-radial_width);
++                    } else {
++                        edge_features(edge,column)=target_embed(
++                            local_targets(edge),column-radial_width
++                                -source_width);
++                    }
++                });
          }
 +        symmetrix_polar_profile_mark_i("fwd:conditioning",layer);
  
          ensure_view(state.raw_weights,state.raw_weights_storage,edges,
              interaction.convolution.weight_size());
-@@ -4979,6 +5381,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -4979,6 +5397,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                      weights(edge,flat%weights.extent(1))*=local_cutoffs(edge);
                  });
          }
@@ -3102,7 +3137,7 @@ index 7514438..a9a2025 100644
  
          ensure_view(state.edge_up,state.edge_up_storage,edges,up_width);
          auto edge_up=state.edge_up;
-@@ -4991,15 +5394,69 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -4991,15 +5410,69 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
          ensure_view(state.edge_messages,state.edge_messages_storage,edges,message_width);
          interaction.convolution.evaluate(
              state.edge_up,edge_harmonics,state.weights,state.edge_messages);
@@ -3180,7 +3215,7 @@ index 7514438..a9a2025 100644
  
          ensure_view(state.density_matrix,state.density_matrix_storage,edges,1);
          ensure_view(state.density_raw,state.density_raw_storage,edges);
-@@ -5025,6 +5482,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5025,6 +5498,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
          });
          }
          }
@@ -3188,7 +3223,7 @@ index 7514438..a9a2025 100644
  
          if(generated_device_spline_node_adapter&&!use_pair_spline) {
              const auto output_mul_to_ir=
-@@ -5052,6 +5510,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5052,6 +5526,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
              else interaction.linear_res.evaluate(state.up,state.residual);
              interaction.skip.evaluate(features,state.skip);
          }
@@ -3196,7 +3231,7 @@ index 7514438..a9a2025 100644
          if(generated_node_program) {
              ensure_view(state.output,state.output_storage,num_nodes,
                  products[layer].output_dimension());
-@@ -5190,6 +5649,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5190,6 +5665,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                      state.gated,state.interaction_output);
          } else {
              interaction.linear_1.evaluate(state.messages,state.linear_1_output);
@@ -3204,7 +3239,7 @@ index 7514438..a9a2025 100644
              auto linear_value=state.linear_1_output;
              auto residual=state.residual;
              auto pre_gate=state.pre_gate;
-@@ -5202,7 +5662,9 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5202,7 +5678,9 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                          /(alpha+beta*densities(node))+residual(node,k);
                  });
              interaction.gate.evaluate(state.pre_gate,state.gated);
@@ -3214,7 +3249,7 @@ index 7514438..a9a2025 100644
          }
          ensure_view(state.output,state.output_storage,num_nodes,
              products[layer].output_dimension());
-@@ -5219,9 +5681,55 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5219,9 +5697,55 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                  ?E3ProductBasisKokkosT<Precision>::InputLayout::block_major
                  :E3ProductBasisKokkosT<Precision>::InputLayout::native,
              interaction.skip.active_output_prefix_dimension());
@@ -3270,7 +3305,7 @@ index 7514438..a9a2025 100644
      for(int layer=0;!generated_node_program
          &&layer<static_cast<int>(readouts.size());++layer) {
          auto& state=states[layer];
-@@ -5234,6 +5742,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5234,6 +5758,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
          ensure_view(state.layer_adjoint,state.layer_adjoint_storage,num_nodes,
              products[layer].output_dimension());
          readouts[layer].reverse(state.output,scale,state.layer_adjoint);
@@ -3278,7 +3313,7 @@ index 7514438..a9a2025 100644
      }
      if(generated_node_program)
          for(int layer=0;layer<static_cast<int>(states.size());++layer) {
-@@ -5249,6 +5758,48 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5249,6 +5774,48 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
          energies(node)=e0(node_types(node))+energy_scale*energies(node)+energy_shift;
      });
  
@@ -3327,7 +3362,7 @@ index 7514438..a9a2025 100644
      ensure_view(harmonic_adjoints,harmonic_adjoints_storage,edges,num_lm);
      ordered_kokkos_deep_copy(harmonic_adjoints,Precision(0));
      if(use_pair_spline) {
-@@ -5336,6 +5887,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5336,6 +5903,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
          const int skip_width=interaction.skip.output_dimension();
          const bool spline_layer=use_pair_spline&&interaction.pair_spline_ready;
          bool packed_spline_messages=false;
@@ -3335,7 +3370,7 @@ index 7514438..a9a2025 100644
          if(generated_spline_r_program&&spline_layer)
              packed_spline_messages=(jit_mh1_host_plugin_v5->descriptor()
                      .spline_r_programs[layer].flags
-@@ -5510,6 +6062,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5510,6 +6078,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                      ?E3ProductBasisKokkosT<Precision>::InputLayout::block_major
                      :E3ProductBasisKokkosT<Precision>::InputLayout::native,
                  interaction.skip.active_output_prefix_dimension());
@@ -3343,7 +3378,7 @@ index 7514438..a9a2025 100644
  
              ensure_view(state.gated_adj,state.gated_adj_storage,num_nodes,
                  state.gated.extent(1));
-@@ -5524,6 +6077,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5524,6 +6093,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                      state.interaction_output_adj,state.gated_adj);
              else interaction.linear_2.reverse(
                  state.interaction_output_adj,state.gated_adj);
@@ -3351,7 +3386,7 @@ index 7514438..a9a2025 100644
  
              ensure_view(state.linear_adj,state.linear_adj_storage,
                  num_nodes,pre_gate_width);
-@@ -5552,6 +6106,11 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5552,6 +6122,11 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                  auto linear_forward=state.linear_1_output;
                  auto layer_densities=state.densities;
                  const Precision alpha=interaction.alpha,beta=interaction.beta;
@@ -3363,7 +3398,7 @@ index 7514438..a9a2025 100644
                  Kokkos::parallel_for("reverse nonlinear normalization",num_nodes,
                      KOKKOS_LAMBDA(int node) {
                          const Precision normalization=
-@@ -5565,7 +6124,37 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5565,7 +6140,37 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                          }
                          density_adj(node)=density_value;
                      });
@@ -3401,7 +3436,7 @@ index 7514438..a9a2025 100644
  
              ensure_view(state.message_adj,state.message_adj_storage,
                  num_nodes,message_width);
-@@ -5607,6 +6196,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5607,6 +6212,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                          density_adj(node)=density_value;
                      });
              }
@@ -3409,7 +3444,7 @@ index 7514438..a9a2025 100644
              ensure_view(state.up_adj,state.up_adj_storage,num_nodes,up_width);
              if(layer>0) {
                  if(uses_packed_node_linears())
-@@ -5615,6 +6205,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5615,6 +6221,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                  else interaction.linear_res.reverse(
                      state.pre_gate_adj,state.up_adj);
              } else ordered_kokkos_deep_copy(state.up_adj,Precision(0));
@@ -3417,7 +3452,7 @@ index 7514438..a9a2025 100644
          }
          }
          auto density_adj=state.density_adj;
-@@ -6633,22 +7224,81 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6633,22 +7240,81 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
              if(mace_uses_prepared_execution(streamed_edges))
                  ++factorized_reverse_evaluations;
          } else {
@@ -3508,7 +3543,7 @@ index 7514438..a9a2025 100644
          auto local_up_adj=state.up_adj;
          auto edge_up_adj=state.edge_up_adj;
          auto edge_harmonic_adj=state.edge_harmonic_adj;
-@@ -6662,13 +7312,92 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6662,13 +7328,92 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
              KOKKOS_LAMBDA(int edge,int lm) {
                  harmonic_adjoint_values(edge,lm)+=edge_harmonic_adj(edge,lm);
              });
@@ -3604,7 +3639,7 @@ index 7514438..a9a2025 100644
              Kokkos::parallel_for("reverse convolution cutoff",edges,
                  KOKKOS_LAMBDA(int edge) {
                      Precision cutoff_value=Precision(0);
-@@ -6678,16 +7407,18 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6678,16 +7423,18 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                      }
                      cutoff_adjoint_values(edge)+=cutoff_value;
                  });
@@ -3626,7 +3661,7 @@ index 7514438..a9a2025 100644
          ensure_view(state.density_raw_adj,state.density_raw_adj_storage,edges,1);
          auto density_raw_adj=state.density_raw_adj;
          auto density_raw=state.density_raw;
-@@ -6716,6 +7447,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6716,6 +7463,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                  radial_adjoint_values(edge,k)+=edge_feature_adj(edge,k)
                      +density_feature_adj(edge,k);
              });
@@ -3634,7 +3669,7 @@ index 7514438..a9a2025 100644
          }
  
          if(generated_node_program) {
-@@ -6810,7 +7542,16 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6810,7 +7558,16 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
              auto previous=states[layer-1].layer_adjoint;
              interaction.linear_up.reverse(state.up_adj,previous,false);
              interaction.skip.reverse(state.skip_adj,previous,false);
@@ -3651,7 +3686,7 @@ index 7514438..a9a2025 100644
      }
  
      ensure_view(node_forces,node_forces_storage,xyz.size());
-@@ -6867,6 +7608,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6867,6 +7624,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
              forces(coordinate)=-vector_adjoint;
          }
      });
@@ -3659,7 +3694,7 @@ index 7514438..a9a2025 100644
  
      if(has_zbl) {
          ensure_view(zbl_energies,zbl_energies_storage,num_nodes);
-@@ -6899,6 +7641,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -6899,6 +7657,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
          factorized_completed_evaluation_graph_generation=
              execution_graph_generation;
      }
@@ -3667,7 +3702,7 @@ index 7514438..a9a2025 100644
  }
  
  template<typename Precision>
-@@ -6906,6 +7649,7 @@ void MaceNonlinearKokkosT<Precision>::reduce_node_forces(
+@@ -6906,6 +7665,7 @@ void MaceNonlinearKokkosT<Precision>::reduce_node_forces(
      const int num_nodes,Kokkos::View<const int*> edge_receivers,
      Kokkos::View<const int*> edge_sources)
  {
@@ -3675,7 +3710,7 @@ index 7514438..a9a2025 100644
      if(num_nodes<0||edge_receivers.extent(0)!=edge_sources.extent(0))
          throw std::invalid_argument(
              "MH-1 atom-force reduction extents are inconsistent.");
-@@ -6934,6 +7678,26 @@ void MaceNonlinearKokkosT<Precision>::reduce_node_forces(
+@@ -6934,6 +7694,26 @@ void MaceNonlinearKokkosT<Precision>::reduce_node_forces(
                      &reduced_forces(3*receiver+component),-force);
              }
          });
@@ -3702,7 +3737,7 @@ index 7514438..a9a2025 100644
  }
  
  template<typename Precision>
-@@ -6954,6 +7718,13 @@ template<typename Precision>
+@@ -6954,6 +7734,13 @@ template<typename Precision>
  void MaceNonlinearKokkosT<Precision>::reduce_stress(
      const double volume,Kokkos::View<const double*> xyz)
  {
