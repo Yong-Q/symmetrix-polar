@@ -5,7 +5,9 @@
 [离线阅读网页](docs/tutorial/index.html) ·
 [Markdown](docs/tutorial/SYMMETRIX_POLAR_TUTORIAL_2026-10-21.md)。
 从模型概念、数学公式、GPU 执行到历史测试逐步讲解，性能统一为 µs/atom/step。
-数值以具体测试版本、统计规则及其来源为准。
+数值以具体测试版本、统计规则及其来源为准。教程正文是 2026-10-21 08:57 的快照
+（128 原子 30.56 ms、1,296 原子 224.1 µs/atom）；其后 **Plan B-micro 30.33 ms**
+与 **A1 UVU tile 205.4 µs/atom** 的最新门控结果见下方。
 
 **GPU-accelerated PolarMACE with long-range electrostatics — PolarMACE (MACE-POLAR)
 support for the [Symmetrix-XL](https://github.com/) engine, with a full Ewald
