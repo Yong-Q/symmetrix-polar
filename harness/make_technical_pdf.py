@@ -294,9 +294,9 @@ def cover(pdf: Report):
     pdf.ln(14)
     pdf.set_font("NotoSansSC", "", 11)
     metrics = [
-        ("128 原子（32 NH3），full PolarMACE", "31.33 ms/eval"),
+        ("128 原子（32 NH3），full PolarMACE", "30.56 ms/eval"),
         ("1024 原子（256 NH3），full PolarMACE", "312.1 ms/eval"),
-        ("相对 round-3 build 8 / v29 引擎", "1.556× / 5.87×"),
+        ("相对 round-3 build 8 / v29 引擎", "1.595× / 6.02×"),
         ("全套数值门（含 2-rank + 重复评估）", "PASS"),
         ("RBE 生产精度门", "REJECTED"),
     ]
@@ -316,7 +316,7 @@ def cover(pdf: Report):
     pdf.set_x(24)
     pdf.set_font("NotoSansSC", "", 9)
     pdf.set_text_color(*MUTED)
-    pdf.multi_cell(160, 5, "版本：round 3 + Plan B-full · 2026-10-21\n"
+    pdf.multi_cell(160, 5, "版本：round 3 + Plan B-30ms · 2026-10-21\n"
                            "模型：MACE_Nonlinear + PolarMACE，FP64，单张 A100-80GB\n"
                            "本 PDF 由 Markdown 源文件自动生成，可直接续写。")
 

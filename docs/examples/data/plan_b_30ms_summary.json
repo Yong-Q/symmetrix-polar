@@ -1,0 +1,172 @@
+{
+ "system": "128-atom NH3 (32 molecules), full PolarMACE, FP64, A100-SXM4-80GB",
+ "protocol": {
+  "ab": "interleaved 2 rounds x 12 measured run 1, median of per-round medians, per-run GPU flock",
+  "warmup": "1 run 1",
+  "reference_binary": "plan_b_full bin/lmp_full_final bcecbf90 (31.33 ms)"
+ },
+ "headline_ms": {
+  "b_full_gated_31_33": 31.3342,
+  "same_session_baseline": 31.7957,
+  "same_session_baseline_round_medians": [
+   31.458000000000006,
+   32.133399999999995
+  ],
+  "final_gated": 30.55725,
+  "final_round_medians": [
+   30.643449999999998,
+   30.47105
+  ],
+  "saving_vs_same_session": 1.2384500000000003,
+  "gap_to_30_ms": 0.5572499999999998,
+  "projection_vs_accepted_31_33": 30.09575
+ },
+ "slices": {
+  "uvu_fwd_le_d1spec": {
+   "saving_ms": 0.411,
+   "off_mom_ms": 30.968,
+   "on_mom_ms": 30.557,
+   "off_round_medians_ms": [
+    30.956,
+    30.98
+   ],
+   "on_round_medians_ms": [
+    30.643,
+    30.471
+   ],
+   "verdict": "accepted, default on (MATOS_UVU_FWD_D1SPEC=0 restores the generic runtime-d1 loop)"
+  },
+  "affine_epilogue": {
+   "saving_ms": 0.214,
+   "off_mom_ms": 30.771,
+   "on_mom_ms": 30.557,
+   "off_round_medians_ms": [
+    30.787,
+    30.755
+   ],
+   "on_round_medians_ms": [
+    30.643,
+    30.471
+   ],
+   "verdict": "accepted, default on (MATOS_AFFINE_EPI_FUSE=0 and MATOS_AFFINE_EPI_INIT=0 restore the separate epilogue)"
+  },
+  "affine_ln_reuse": {
+   "saving_ms": 0.484,
+   "off_mom_ms": 31.041,
+   "on_mom_ms": 30.557,
+   "off_round_medians_ms": [
+    31.277,
+    30.806
+   ],
+   "on_round_medians_ms": [
+    30.643,
+    30.471
+   ],
+   "verdict": "accepted, default on (MATOS_AFFINE_LN_REUSE=0 restores mean/variance recompute)"
+  },
+  "sum_slice_saving_ms": 1.109,
+  "total_measured_saving_vs_same_session_ms": 1.238
+ },
+ "binary": {
+  "path": "bin/lmp_final",
+  "sha256": "f0d3f05aabecb7021dca847c27434fff706a541cf5f62f545f953eadf9daf103",
+  "bytes": 199011656
+ },
+ "python_module": {
+  "path": "pyb_final/symmetrix/symmetrix.cpython-312-x86_64-linux-gnu.so",
+  "sha256": "d01e0eb7e4bb719c82819e7c3f95402004005921bc7056d2711f5a0adc527c62"
+ },
+ "source": {
+  "tree": "private work/symmetrix (baseline snapshot + accepted patches)",
+  "hashes": {
+   "libsymmetrix/source/mace_polar_impl.tpp": "6a3da179a0258bdcd3dd6163fa519d1b39fe762dfdd57f23eef13f087c441cbc",
+   "libsymmetrix/source/affine_mlp_kokkos.cpp": "5fcc7bd447c41db0f72362bcd9c1d7459230187eeb4ab397e7fc4ec7ca855f52",
+   "libsymmetrix/source/affine_mlp_kokkos.hpp": "8aeb657adc5ff5fb953917f987be8efdf8806b234b037a4f61cce35fb8859c34",
+   "libsymmetrix/source/e3nn_kokkos.cpp": "d0a2b3b6eb646a14e468aac7c452bdaebc947d2582f0ab84e7429e90eab5f368",
+   "libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp": "2b0d1293e38f2668d3654da61f4bcf257621d9c8a1aca467aa2681ed847794ce",
+   "libsymmetrix/source/mace_nonlinear_kokkos.hpp": "af47943c6a0c2aa7cfe14bfb316f700fbfa88fcd62ddb658baa50587d2246c60",
+   "libsymmetrix/source/e3nn_kokkos.hpp": "7cff64746678163146f44010d85ce7a639189bdd30af112bd7b4d804a477e8b0",
+   "pair_symmetrix/pair_symmetrix_mace_kokkos.cpp": "df3b3f0c92f8d34d898435b13f2b1e91a0c3c229472abfc0353c12f40843543d"
+  }
+ },
+ "gates": {
+  "module5": {
+   "verdict": "PASS",
+   "dens_abs_max": 6.689189646635896e-08,
+   "dens_rel_max": 4.217663712453119e-08,
+   "stage_rel_max": 7.126771349152317e-08
+  },
+  "module6": {
+   "verdict": "PASS",
+   "rel_max": 1.2697694585698573e-15,
+   "dE_abs_max_eV": 7.771561172376096e-16
+  },
+  "module7": {
+   "verdict": "PASS",
+   "configs": 16,
+   "stage_max_abs": 2.3960317037108325e-05,
+   "out_max_abs": 4.546014047424052e-07
+  },
+  "module8": {
+   "verdict": "PASS",
+   "fd_max": 0.0005782702483827507,
+   "parity_max": 7.190934283585193e-07
+  },
+  "endtoend_32": {
+   "verdict": "PASS",
+   "n_pass": 32,
+   "n_total": 32,
+   "dE_abs_max_eV": 1.034321030601859e-06,
+   "dF_max_eV_per_A": 1.6236539579495002e-07
+  },
+  "lammps_parity_1rank": {
+   "pass": true,
+   "dE_eV": 2.9103830456733704e-11,
+   "max_dF_eV_per_A": 2.6107320669028477e-14,
+   "nproc": 1,
+   "run_steps": 0
+  },
+  "lammps_parity_2rank": {
+   "pass": true,
+   "dE_eV": 2.9103830456733704e-11,
+   "max_dF_eV_per_A": 1.6874754345319032e-06,
+   "nproc": 2,
+   "run_steps": 0
+  }
+ },
+ "repeated_eval": {
+  "protocol": "three run 0 at fixed positions, 17-digit dumps",
+  "pe": [
+   -49242.45641531493,
+   -49242.45641531493,
+   -49242.45641531493
+  ],
+  "dPE_1": 0.0,
+  "dPE_2": 0.0,
+  "max_dF_1": 7.771561172376096e-16,
+  "max_dF_2": 7.494005416219807e-16,
+  "repeat_3": {
+   "pe": [
+    -49242.45641531493,
+    -49242.45641531493,
+    -49242.45641531493
+   ],
+   "dPE_1": 0.0,
+   "dPE_2": 0.0,
+   "max_dF_1": 6.106226635438361e-16,
+   "max_dF_2": 8.326672684688674e-16
+  },
+  "repeat_2": {
+   "pe": [
+    -49242.45641531493,
+    -49242.45641531493,
+    -49242.45641531493
+   ],
+   "dPE_1": 0.0,
+   "dPE_2": 0.0,
+   "max_dF_1": 8.881784197001252e-16,
+   "max_dF_2": 1.0547118733938987e-15
+  },
+  "verdict": "PASS"
+ }
+}

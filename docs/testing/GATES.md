@@ -77,8 +77,16 @@ state-accumulation bug).
 32/32 end-to-end, LAMMPS 1-rank (dE 2.910e-11, max dF 2.608e-14 eV/Å) and
 2-rank exact (max dF 1.687e-6 eV/Å) **PASS**. Repeated evaluation: three
 `run 0` at fixed positions, PE −49242.45641531493 three times, max dF
-≤1.1e-15 eV/Å. This is the **latest full-gate-passing version**; the remaining
-gap to 30 ms is 1.33 ms.
+≤1.1e-15 eV/Å.
+
+**Plan B-30ms (2026-10-21, binary `f0d3f05a…`): 30.56 ms/eval.** module 5–8,
+32/32 end-to-end (dE 1.034e-6 eV, dF 1.624e-7 eV/Å), LAMMPS 1-rank
+(dE 2.910e-11 eV, max dF 2.611e-14 eV/Å), 2-rank exact (max dF
+1.687475e-6 eV/Å) **PASS**. Repeated evaluation over three runs: PE
+−49242.45641531493 identical, max dF 6.1e-16–1.06e-15 eV/Å; cross-binary vs
+the 31.33 build PE identical, max dF 6.661e-16. This is the **latest
+full-gate-passing version**; measured gap to 30 ms is 0.56 ms (projected
+30.10 vs the 31.33 accepted build).
 
 The two RBE rows are deliberately separate: the P4 implementation/statistics
 gate passes, while the production force gate is rejected. The p-scan and the

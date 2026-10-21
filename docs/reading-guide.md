@@ -1,9 +1,9 @@
 # Reading Guide — Symmetrix-Polar Report
 
 > **Start with the latest gated result:**
-> [results/PLAN_B_FULL_FINAL.md](results/PLAN_B_FULL_FINAL.md)
-> (**31.33 ms** at 128 atoms = 32 NH3 molecules, full PolarMACE, FP64;
-> 1.556× over round-3 build 8 and 3.00× faster than the PyTorch reference;
+> [results/PLAN_B_30MS_FINAL.md](results/PLAN_B_30MS_FINAL.md)
+> (**30.56 ms** at 128 atoms = 32 NH3 molecules, full PolarMACE, FP64;
+> 1.595× over round-3 build 8 and 3.08× faster than the PyTorch reference;
 > 312 ms at 1024 atoms; all gates PASS, including 2-rank exact parity and the
 > repeated-evaluation check; RBE rejected by the production force gate).
 > The consolidated comparison below is historical (round-2 headline).
@@ -27,6 +27,7 @@ Chinese guide is [`阅读说明.md`](阅读说明.md); the theory and test modul
 | See the MPI one-rank and two-rank fixes | [`results/MPI_H1.md`](results/MPI_H1.md) |
 | See the Plan B-lite result (40.95 → 38.66 ms) | [`results/PLAN_B_LITE_FINAL.md`](results/PLAN_B_LITE_FINAL.md) |
 | See the Plan B-full result (31.33 ms) | [`results/PLAN_B_FULL_FINAL.md`](results/PLAN_B_FULL_FINAL.md) |
+| See the Plan B-30ms result (30.56 ms) | [`results/PLAN_B_30MS_FINAL.md`](results/PLAN_B_30MS_FINAL.md) |
 | See the round-3 implementation plan and 20–30 ms target | [`design/KERNEL_ROUND3_PLAN.md`](design/KERNEL_ROUND3_PLAN.md), [`design/KERNEL_ROUND3_TARGET.md`](design/KERNEL_ROUND3_TARGET.md) |
 
 ## 2. Key results at a glance

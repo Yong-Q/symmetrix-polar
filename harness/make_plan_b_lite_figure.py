@@ -50,7 +50,7 @@ ax.invert_yaxis()
 ax.set_xlabel("wall-time saving (ms)")
 ax.set_title("Slice attribution (same binary)")
 ax.axvline(0, color=figstyle.INK, lw=0.8)
-ax.set_xlim(-7.2, 5.2)
+ax.set_xlim(-9.5, 5.2)
 ax.set_axisbelow(True)
 
 fig.tight_layout()

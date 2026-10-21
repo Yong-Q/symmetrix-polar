@@ -86,6 +86,24 @@ FP64 MH-1 team build. Artifacts: `bench/plan_b_core_2026-10-20/` and
 Artifacts: `bench/plan_b_full_2026-10-20/` and
 `docs/results/PLAN_B_FULL_FINAL.md`. Remaining gap to 30 ms: **1.33 ms**.
 
+### Plan B-30ms final result (2026-10-21)
+
+| Item | Value |
+|---|---:|
+| 128 atoms (32 NH3), full PolarMACE | **30.56 ms/eval** |
+| Same-session 31.33 baseline | 31.80 ms/eval |
+| Saving | **−1.24 ms** |
+| UVU forward/LE d1 split | +0.411 ms |
+| affine epilogue | +0.214 ms |
+| affine reverse LN reuse | +0.484 ms |
+| Final binary sha256 | `f0d3f05aabecb7021dca847c27434fff706a541cf5f62f545f953eadf9daf103` |
+| Gates | module 5–8, 32/32, LAMMPS 1/2-rank, repeated-eval: **PASS** |
+
+Artifacts: `bench/plan_b_30ms_2026-10-21/` and
+`docs/results/PLAN_B_30MS_FINAL.md`. Measured gap to 30 ms: **0.56 ms**;
+accepted-relative projection 30.10 ms. No further safe ≥0.2 ms slice was
+found; 20–25 ms remains not credible.
+
 The interleaved A/B is deliberate: absolute times are contention-sensitive,
 while same-run ratios are stable. A speed claim without an interleaved baseline
 is not accepted.
