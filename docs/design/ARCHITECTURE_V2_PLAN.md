@@ -12,14 +12,14 @@ accepted physics, precision, or SCF step count.
 
 > **Evidence status.** Every number is tagged **[M]** measured, **[D]**
 > derived from measured deltas, or **[P]** projection/estimate. Only [M] rows
-> are measurements. The two parallel reports
-> (`docs/results/PERFORMANCE_DECOMPOSITION_1296.md`,
-> `docs/research/CUDA_SPEEDUP_PAPERS_2026.md`) were not present in the
-> repository when this document was written; the per-family decomposition
-> therefore uses the committed pre-opt3 CUPTI trace
-> (`docs/results/data/cupti_b4team_1296_summary.json`) plus the measured
-> additive ladder in section 2.3. P0 must replace the [D] table with a fresh
-> trace of `6582bc6`.
+> are measurements. The parallel work appeared during writing:
+> `bench/perf_decomp_1296_2026-10-21/analysis/1296_generic_summary.json`
+> (fresh trace of `6582bc6`; the materialized sister file is alongside it) is
+> the primary current decomposition, and `docs/research/CUDA_SPEEDUP_PAPERS_2026.md`
+> supplies the current Ewald share (1.67 %), the 4-rank halo ratios, and the
+> N1/N3/N5/N6 projections. The `docs/results/PERFORMANCE_DECOMPOSITION_1296.md`
+> report itself was not present; the bench JSON is the source. P0 must still
+> re-run the trace with the production A/B protocol.
 
 ---
 
@@ -33,7 +33,7 @@ accepted physics, precision, or SCF step count.
 4. **决策 B（通信面）：** 把跨卡通信收窄为 **窄 halo + 设备全归约**：每 eval 仅 2 次前向 + 2 次反向 **512-wide `up`/`up_adj`** 交换（16 KB/ghost），每个 SCF 步 **2 次打包 all-reduce（ρ 双通道 4·Nk + Fukui 4）**，全 eval 约 **20–24 → 8–10 次**；Ewald **复制 k-space** 而非 k-split；**无 root-rank gather**。
 5. **决策 C（控制面）：** prepared path tables、device-side SCF/Fukui/LE 标量、persistent tile loop、8–12 段 CUDA Graph；目标 host gap **<2 ms**、launch 从 **1,762**（generic；materialized 1,075）降到 **约 120**，非 kernel 从 **14.1 ms [D]** 降到 **约 2 ms**。
 6. **单 GPU 预期（[P]）：** P1+P2 为 1,296 **195–220 ms**、5,184 **790–870 ms**；完整 V2（含 P4 反向/路径特化）为 1,296 **168–195 ms（1.30–1.51×）**、5,184 **636–789 ms**（相对 986 ms 为 **1.25–1.55×**，相对默认 1,549 ms 约 **2×**）。
-7. **多 GPU 预期（[P]）：** 一 rank 一卡并改为 owned-only 节点/polar 后，2-GPU 5,184 为 **1.22–1.35×**、4-GPU 5,184 为 **2.1–2.6×**；1,296 的 2-GPU 仅 **1.10–1.22×**（子域太小），4-GPU 1,296 为 **1.8–2.2×（低置信）**；每 rank **5–13 GiB**。4×A100 只在远端 Volc 队列。
+7. **多 GPU 预期（[P]）：** 一 rank 一卡并改为 owned-only 节点/polar 后，2-GPU 5,184 为 **1.22–1.35×**、4-GPU 5,184 为 **1.9–2.6×**（2.5–3.2× 需 NVSHMEM/融合 halo）；1,296 的 2-GPU 仅 **1.10–1.22×**（子域太小），4-GPU 1,296 为 **1.5–2.0×（低置信）**；每 rank **5–13 GiB**。4×A100 只在远端 Volc 队列。
 8. **结论：** **4.5 µs/atom 不可达**（1,296 折合 5.83 ms，需约 43×），除非改精度（FP16/TF32/FP8）、近似 Ewald/PPPM、减少 SCF 步数或重写模型；FP64 精确 PolarMACE 的静态下界不支持。所有前瞻数字均为 projection，P0 必须先在 `6582bc6` 上复测并重定基线。
 
 ### 1.2 Top 3 architecture decisions
@@ -41,7 +41,7 @@ accepted physics, precision, or SCF step count.
 | # | Decision | Why it is the architecture, not an optimization | Evidence |
 |---|---|---|---|
 | **A** | **One node-owned execution model.** Backbone and polar UVU are receiver/output-owned in the forward and source/input-owned in the reverse; every edge object is tile-local. | The polar layer is node-level (`x1(node,...)`, `x2(node,...)`); the backbone edge path is the only edge-indexed part. Making this ownership explicit removes the `[C,8192/5120]` message stream, the `[4,N,mul·d1]` reverse partials, and the per-path RMW at once. | `mace_polar_impl.tpp:918-1182`, `:2249-2680`, `:2309-2314`; `e3nn_kokkos.cpp:3627-3746`, `:3749+`; survey T1/T2/T5 |
-| **B** | **Narrow communication surface.** One rank per GPU; rank graph = owned receivers + ghost *sources*; halo at `up`/`up_adj` (512 doubles); two packed device all-reduces per SCF step (rho and Fukui); k-space replicated. | The multi-GPU cost is dominated by duplicated edge work, not by halo bytes: the analytic model in §4.7 gives 2.1–2.6× on 4 GPUs only if the node/polar chain runs owned-only. The 8 Å geometric halo model gives 1.9× the local nodes at 5,184/4 [P], and the exact 2-hop path measured 30.8 GiB/rank at 128 atoms. | `MPI_H1.md` §2–§5; `pair_symmetrix_mace_kokkos.cpp:2660,2701-2704,2781-2811`; `MPI_2RANK_FIX_AGENT_REPORT.md` §2 |
+| **B** | **Narrow communication surface.** One rank per GPU; rank graph = owned receivers + ghost *sources*; halo at `up`/`up_adj` (512 doubles); two packed device all-reduces per SCF step (rho and Fukui); k-space replicated. | The multi-GPU cost is dominated by duplicated edge work, not by halo bytes: the analytic model in §4.7 gives 1.9–2.6× on 4 GPUs only if the node/polar chain runs owned-only (2.5–3.2× is the fused-halo N3 projection). The 8 Å geometric halo model gives 1.9× the local nodes at 5,184/4 [P], and the exact 2-hop path measured 30.8 GiB/rank at 128 atoms. | `MPI_H1.md` §2–§5; `pair_symmetrix_mace_kokkos.cpp:2660,2701-2704,2781-2811`; `MPI_2RANK_FIX_AGENT_REPORT.md` §2 |
 | **C** | **Device-resident control plane + captured phases.** Prepared path plans, device SCF/Fukui/LE scalars, a persistent tile loop, and CUDA Graph capture of 8–12 host-free regions. | 1,762 launches (generic) / 1,075 (materialized) and 14.1 ms of non-kernel time [D] are pure overhead at 1,296; the SCF/Fukui chain currently does ~20 host `MPI_Allreduce` round trips per eval. Moving control to the device is also designed to make repeat-eval bitwise; the current 1-ULP first-eval drift must be localized in P0 (hypothesis: first-use plan/cache path, not yet proven). | `bench/perf_decomp_1296_2026-10-21/analysis/1296_generic_summary.json`; `kernel_labels_1296.json`; `mace_nonlinear_kokkos.hpp:444-461`; `pair_symmetrix_mace_kokkos.cpp:486-492`; `mace_polar_impl.tpp:897-917,1876-1892,3709-3717` |
 
 ---
@@ -164,9 +164,9 @@ host gap. The production gap is 14.1 ms [D].
 
 Two facts matter for V2:
 
-- **The S1.1 win is mostly host/launch, not GPU work.** Generic has 1.7 ms
+- **The S1.1 win is mostly host/launch, not GPU work.** In the trace pair, generic has 1.7 ms
   *more* GPU busy than materialized (239.75 vs 238.08) but 14.3 ms less
-  non-kernel time (14.1 vs 28.4), hence the accepted 12.6 ms net. The edge
+  non-kernel time (14.1 vs 28.4), consistent with the accepted 12.6 ms net. The edge
   kernels themselves are not cheaper in this trace; the streaming path moves
   the cost from host/launch into the tile loop. V2 must reduce both.
 - **The current tensor/MH-1 share is 27.6 %, not the pre-opt3 51 %.** The
@@ -187,7 +187,7 @@ the groups overlap with the family table and must not be added.
 
 | Label / group | ms | Launches | Note |
 |---|---:|---:|---|
-| cuBLAS / external | 22.85 | 482 | 14 small DGEMM groups + tiny GEMMs; 9.5 % |
+| cuBLAS / external | 22.85 | 482 | mostly small GEMMs and external kernels; 9.5 % |
 | `e3 tensor reverse mh1 team channels` | 21.84 | 14 | reverse MH-1 channels |
 | `polar reverse uvu mode0 x2` | 21.74 | 10 | polar reverse UVU x2 |
 | `polar reverse uvu mode0 x1` | 20.76 | 10 | polar reverse UVU x1 |
@@ -315,6 +315,15 @@ the launch sequence:
   `(mode,d1)`. The checkpoint has 2 paths per UVU, `mode∈{0,1}`,
   `d1∈{1,3}` (`POLAR_PAPER_OPTIMIZATION_PLAN.md` §3.1). This removes the
   per-step host copies at `mace_polar_impl.tpp:897-917` and `:1876-1892`.
+- **Grouped-GEMM alternative (N1, bake-off):** the checkpoint's 14 path
+  GEMMs (M=512, N, K=512) can be computed as `cublasDgemm` with a fused
+  epilogue; W is shared by all nodes. `CUDA_SPEEDUP_PAPERS_2026.md` §3.1
+  projects 30–60 ms at 1,296 and 150–300 ms at 5,184 against the **pre-A1**
+  105.83 ms UVU; the fresh post-A1 trace shows 48.2 ms in the visible UVU
+  labels, so the projection must be re-based and the upper end is not
+  credible against the current tree. It changes the FP64 `v`-order and is not
+  the deterministic baseline. P2 runs a one-day microbenchmark and picks the
+  faster gated path; its saving is not added to the output-owned estimate.
 - **Bitwise claim:** the fused forward is bitwise identical to the shipped
   `sweep=4` path if the four-register fold is used. A single accumulator
   reproduces `sweep=1` and is allowed only as a gated fallback.
@@ -459,7 +468,7 @@ workspaces before capture; update only pointers/positions between replays.
 | F | polar reverse per step | cache/adjoints | graph generation |
 | G | backbone reverse per layer (source-owned edge sweep + node chain) | `message_adj`, `up`, arena | graph generation / C |
 
-Target: 8–12 graph launches per eval instead of 1,082 kernel launches. If
+Target: 8–12 graph launches per eval instead of 1,762 kernel launches (generic; 1,075 materialized). If
 Kokkos stream capture is unstable with the CUDA backend, fall back to the
 persistent tile loop plus a host launch batch; do not hand-roll graph nodes
 for kernels not captured on the Kokkos stream.
@@ -635,26 +644,29 @@ flipped before the 2-rank gate passes.
 `S(R) = 1 / [ (1 − f_e)/R + f_e · (1 + g(R))/R ]`
 
 where `f_e` is the edge-path fraction of single-GPU time (0.40 at 1,296,
-0.45 at 5,184) and `g(R)` is ghost/local. For an 8 Å halo on a periodic box,
-a slab decomposition gives `g ≈ 48/L` (L = box side), independent of `R`;
-this gives `g ≈ 1.4` at 1,296 (L ≈ 33.9 Å) and `g ≈ 0.9` at 5,184
-(L ≈ 53.7 Å). These are geometric estimates; the measured 128-atom 2-rank
-anchor is 13× ghost/local, a small-box artifact (`MPI_H1.md` §4). The actual
-LAMMPS decomposition shape and periodic images change `g`; P3 must measure it.
+0.45 at 5,184) and `g(R)` is ghost/local. For a 2-rank slab decomposition,
+`g ≈ 48/L` (L = box side) gives `g ≈ 1.4` at 1,296 and `g ≈ 0.9` at 5,184.
+For a 4-rank cube decomposition, `CUDA_SPEEDUP_PAPERS_2026.md` §3.3 estimates
+`g ≈ 2.8` at 1,296 and `g ≈ 1.5` at 5,184. These are geometric estimates; the
+measured 128-atom 2-rank anchor is 13× ghost/local, a small-box artifact
+(`MPI_H1.md` §4). The actual LAMMPS decomposition shape and periodic images
+change `g`; P3 must measure it.
 
 | Configuration | Ideal S(R) [P] | Realistic [P] | Per-rank memory [P] |
 |---|---:|---:|---:|
 | 1,296, 2 GPU | 1.28× | **1.10–1.22×** | 5–7 GiB |
-| 1,296, 4 GPU | 2.56× | **1.8–2.2×** (low confidence; 324 atoms/rank) | 4–6 GiB |
+| 1,296, 4 GPU | 1.89× | **1.5–2.0×** (low confidence; 324 atoms/rank) | 4–6 GiB |
 | 5,184, 2 GPU | 1.42× | **1.22–1.35×** | 9–13 GiB |
-| 5,184, 4 GPU | 2.85× | **2.1–2.6×** | 6.5–11 GiB (C=16k–32k); up to ~15 GiB at C=65k |
+| 5,184, 4 GPU | 2.39× | **1.9–2.6×** (2.5–3.2× with NVSHMEM/fused halo [P]) | 6.5–11 GiB (C=16k–32k); up to ~15 GiB at C=65k |
 
 The 1,296 2-GPU case is close to the halo-dominated floor: each rank has
 ~648 local + ~900 ghost nodes, so edge work per rank is ~1.2× the one-GPU
 work even though there are two GPUs; the 1.28× ideal is a ceiling, not a
 target. Do not promise 2× at 1,296. The 5,184
-4-GPU case is the one that matters: per rank ~1,296 local + ~1,166 ghost
-nodes, edge work ~0.69× one-GPU, node/polar ~0.25×, hence 2.1–2.6×.
+4-GPU case is the one that matters: per rank ~1,296 local + ~1,944 ghost
+nodes (cube g≈1.5), edge work ~(1+1.5)/4 = 0.625× one-GPU, node/polar ~0.25×;
+the compute model gives ~1.9×, and the N3 fused-halo projection is 2.5–3.2×,
+so V2 quotes the combined 1.9–2.6×.
 
 **Operational constraint.** 4×A100 is only on the remote Volc queue. At the
 last check `devinstance-queue3` had 0 free GPUs (32/32 allocated) and
@@ -679,7 +691,7 @@ given, otherwise derived from the pre-opt3 trace + measured deltas.
 | **Kernel↔global: reverse partials** | `[chunks,N,mul·d1]` x1+x2 = 0.475 GiB at 5,184 (`mace_polar_impl.tpp:2309-2314`); `edge_message_adj` + `mixed_bar` | **None**; four register accumulators per component, ascending 4-chunk fold | Bitwise-identical to the current fold with zero global partial traffic. |
 | **Intra-GPU: shared / L2** | 32 KB weight tile/team (32×16 shape, `uvu_tile_shape` at `mace_polar_impl.tpp:104-115`); type tables 64/40 KB in L2; team size 64 | Phi-major weights; type tables in shared; 128-bit loads; cp.async double buffer | The weight tile is reused across all nodes in a team; shared memory is the right place. L2 persistence (<2 %) is not worth it. |
 | **Intra-GPU: warp / team** | `MDRangePolicy({receiver,channel})`, one team per (node_tile,out_tile), team 64; vec4 measured negative (`OPTIMIZATION_LEDGER.md` §5) | Warp = 32 consecutive channels of one receiver; lane 0 broadcasts the 64-wide weight; 256-thread CTAs | Matches the feature layout and removes 32× redundant `phi·B` work per edge. Keep scalar channels; do not revive vec4. |
-| **Inter-GPU: halo** | 2 fwd + 1 rev exchange, 4,608 doubles/ghost/eval = 36.9 KB; layer 1 features and layer 0 adjoint are 2048-wide (`mace_nonlinear_kokkos_impl.tpp:4614-4617,7812-7815`) | 2 fwd + 2 rev at 512-wide `up`/`up_adj` = 16 KB/ghost/eval | Narrowest legal boundary. The edge path needs source `up`, not full features; the reverse needs `up_adj`, not the 2048-wide feature adjoint. |
+| **Inter-GPU: halo** | 2 fwd + 1 rev exchange, 4,608 doubles/ghost/eval = 36.9 KB; layer 1 features and layer 0 adjoint are 2048-wide (`mace_nonlinear_kokkos_impl.tpp:4614-4617,7812-7815`) | 2 fwd + 2 rev at 512-wide `up`/`up_adj` = 16 KB/ghost/eval | Narrowest legal boundary. The edge path needs source `up`, not full features; the reverse needs `up_adj`, not the 2048-wide feature adjoint. P3 baseline is GPU-aware MPI; optional N3 NVSHMEM/NCCL-LSA (`put/signal`, no multimem/NVLS on A100) fuses the pulse. |
 | **Inter-GPU: all-reduce** | ~20–24 host `MPI_Allreduce` calls/eval, each with D2H/H2D; rho payload 21.7 KB (1,296) / 88 KB (5,184) for both channels | **8–10** device all-reduces/eval: 2 per SCF step (rho, Fukui) + initial Fukui + Coulomb + LE + energy (+ reverse-step Fukui) | Pack rho (both channels) and the 4 Fukui scalars separately; use NCCL ring/simple or an MPI device buffer; fixed order for repeatability. The two cannot be one call because Fukui depends on the post-update density. |
 | **Inter-GPU: Ewald k-space** | Replicated `cos/sin`; host all-reduce per channel/step | Replicated `cos/sin [Nk,nlocal]`; one packed rho all-reduce per step | Replication: payload O(Nk), no node-density all-reduce, exact half-space order preserved. A k-split would need O(N·8) communication and change the order. |
 | **Force / energy reduce** | Atomic `f(j)` adds + per-rank energy reduce (`pair_symmetrix_mace_kokkos.cpp:2211-2270`) | Keep the pair atomic reduction; owned-only energy; no root gather | The pair reduction is <0.05 ms at 1,296 and preserves LAMMPS semantics; do not replace it with a deterministic segmented reduction in V2. |
@@ -753,7 +765,9 @@ device scalars; do not hand-roll a graph that changes the stream.
 reverse into the generic tile loop (survey E2/E3); fused output-owned polar
 forward UVU; LE `q+v` fusion; source-owned X1/X2 reverse with register fold; remove `[chunks,N,mul·d1]` partials and
 `mixed_bar`; `(node,k-chunk)` project and `(k,node-chunk)` assemble with
-CK=8/32; shared arena and size-adaptive C.
+CK=8/32; shared arena and size-adaptive C. Optional: grouped FP64 GEMM for
+  the polar UVU (N1) after a standalone microbenchmark; it is an alternative
+  to the output-owned kernel, not an additive gain.
 
 **Acceptance.** ≥5 % at 1,296 and ≥8 % at 5,184 vs P1; polar named memory
 ≤1.5 GiB at 5,184; no `[S,N,mul·d1]` allocation in the fused arm; G-PAR/G-REP;
@@ -773,7 +787,7 @@ replication; overlap the all-reduce with source/node-linear work; make
 path as a control.
 
 **Acceptance.** G-PAR2 at 128 and 1,296; 2-GPU 1,296 ≥1.10× vs V2 1-GPU;
-2-GPU 5,184 ≥1.22×; 4-GPU 5,184 ≥2.0× if the queue is available; per-rank
+2-GPU 5,184 ≥1.22×; 4-GPU 5,184 ≥1.9× (target 2.0×; fused-halo upper end 2.5–3.2×) if the queue is available; per-rank
 peak <30 GiB (target <20); repeat-eval stable at a fixed rank count and
 decomposition; no root gather. The 1,296 2-GPU claim is allowed only as
 1.10–1.22×, not 2×.
@@ -819,6 +833,10 @@ The **relative-to-default** 5,184 gain is 1.96–2.44× because the current
 default is 57 % off its own best control. That is a configuration fix (P1),
 not a kernel breakthrough; quote it separately.
 
+If N1 wins the P2 bake-off, the headline could improve by up to 20–30 ms at
+1,296 and 80–120 ms at 5,184; those numbers are not in the table until
+measured, and must not be added to the output-owned kernel's saving.
+
 ### 7.2 Memory
 
 Values in GiB. Current rows are calibrated to the measured totals; V2 rows are
@@ -859,7 +877,7 @@ These exclude allocator slack; add 5–10 % for the NVML acceptance value.
   different model.
 - PolarMACE's node boundary is `O(N·C·K_node)` with `C=2048`, two SCF steps,
   four UVU families (dot/tp/LE-q/LE-v), and an exact Ewald `O(N·Nk)` term.
-  Even a perfect V2 at 1.30–1.55× leaves **123–150 µs/atom** at 5,184.
+  Even a perfect V2 at 1.30–1.55× leaves **123–146 µs/atom** at 5,184.
   Reaching 4.5 µs/atom requires changing the model or precision: FP16/TF32/
   FP8, approximate Ewald/PPPM, fewer SCF steps, smaller features, or dropping
   the polar layer. All are outside the V2 contract.
@@ -884,6 +902,8 @@ These exclude allocator slack; add 5–10 % for the NVML acceptance value.
 
 | Do not | Why |
 |---|---|
+| **Hopper TMA / WGMMA / NVLS / multimem / `gin.get` on A100** | A100 is SM80: no TMA, no WGMMA, no clusters, no NVLS/multimem; NCCL `gin.get` is unsupported on Ampere. Use `cp.async`, LSA, and `put/signal`. |
+| **FlashTP-style `atomicAdd` scatter** | Nondeterministic; the reverse needs a fixed order. Use a deterministic segmented reduction/fixup. |
 | **A single cooperative megakernel for the whole eval** | A grid-wide sync cannot span the SCF all-reduce, the pairwise halo, or the host energy/force boundary; occupancy and register limits (L1 alone needs 40 component accumulators × 64/128 channels) would force spills; a persistent grid would deadlock with LAMMPS/MPI. Use phase-persistent kernels and graphs instead. |
 | **FP16 / BF16 / TF32 / FP8 or mixed accumulation** | Violates the FP64 gates; the accepted values are `dE ≤ 1e-9 eV`, `dF ≤ 1e-8 eV/Å` at 128/1,296 and `dE ≤ 5e-5`, `dF ≤ 1e-4` at 2 ranks. The paper's 4.5 µs/atom is FP32 and is a different contract. |
 | **Approximate Ewald / PPPM / k-space truncation / RBE sampling** | Changes the physics. The exact GTO-Ewald with the same half-space, `1/k²`, SI terms is an invariant (`mace_polar_impl.tpp:1566-1678`). Ewald is ≤3 % at 1,296; there is no speed reason to touch it. |
@@ -916,10 +936,10 @@ two packed all-reduces per SCF step (rho and Fukui), replicated k-space, no root
 ![V2 communication and memory budget](figures/v2_comm_memory_budget.png)
 
 **Figure 2.** (a) 1,296 time budget: the pre-opt3 348.97 ms direct trace, the
-current 253.84 ms reconciled from the measured additive ladder, and the V2
-target 165–201 ms (midpoint 183). (b) Peak VRAM: measured 8.55 / 19.21 GiB,
+current 253.84 ms fresh generic trace (GPU busy 239.75 + 14.1 ms non-kernel),
+and the V2 target 168–195 ms (bar total 184). (b) Peak VRAM: measured 8.55 / 19.21 GiB,
 calibrated ledger bars, and the V2 1,296 / 5,184 projections for C=16k and
-C=32k. (c) Control/communication events per eval: 1,082 → ~120 launches,
+C=32k. (c) Control/communication events per eval: 1,762 → ~120 launches,
 24 → 2 host syncs, 20 → 8–10 all-reduces, halo 37 → 16 KB/ghost. All projected
 values are [P].
 
@@ -944,7 +964,9 @@ that justifies the remote queue; 2-GPU 1,296 is halo-limited.
 | 5,184 materialized 139.9 GiB, OOM requests | `docs/design/TILED_EDGE_PLAN.md` §2.3–2.4; `stdout.polar_water_{2592,5184}` |
 | Measured additive ladder 348.97 → 253.84 | `docs/results/OPTIMIZATION_LEDGER.md` §1; `docs/results/data/ab_*.json` |
 | Pre-opt3 family table 340.32 ms GPU busy, 1,082 launches | `docs/results/data/cupti_b4team_1296_summary.json` |
-| MH-1 51 %, polar UVU 105.83, node/edge 91.87, cuBLAS 35.83, Ewald 9.56, host 8.65 | `docs/results/data/kernel_labels_1296.json` |
+| Fresh generic decomposition 239.75 ms GPU busy, 1,762 launches; materialized 238.08 / 1,075 | `bench/perf_decomp_1296_2026-10-21/analysis/1296_generic_summary.json`, `1296_materialized_summary.json` |
+| Current Ewald 1.67 % of GPU busy; 4-rank halo g ~ 2.8 / 1.5; N1 30–60 ms at 1,296 | `docs/research/CUDA_SPEEDUP_PAPERS_2026.md` §1, §2 N1/N3, §3.3 |
+| Pre-opt3 MH-1 51 %, polar UVU 105.83, node/edge 91.87, cuBLAS 35.83, Ewald 9.56, host 8.65 (not current shares) | `docs/results/data/kernel_labels_1296.json` |
 | 128-atom 39 single-block launches / 47.8 ms / 0.042 SM-weighted | `docs/design/KERNEL_PROFILE_2026-10-19.md` |
 | Polar is node-level; no edge tensor | `docs/design/POLAR_PAPER_OPTIMIZATION_PLAN.md` §2.2; `mace_polar_impl.tpp:918-1182,1676-1808` |
 | SCF is a global fixed point, 2 steps | `mace_polar_impl.tpp:759-1561`; `polar_global_sum_view` call sites |

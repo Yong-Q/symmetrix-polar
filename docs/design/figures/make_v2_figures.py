@@ -234,7 +234,7 @@ axA.errorbar([2], [184], yerr=[[16], [11]], fmt="none", ecolor="#222222",
              capsize=7, lw=1.2, zorder=6)
 axA.set_xticks(xs)
 axA.set_xticklabels(["measured\ndirect trace\n348.97 ms",
-                     "current 6582bc6\nreconciled [D]\n253.84 ms",
+                     "current 6582bc6\nfresh trace [M/D]\n253.84 ms",
                      "V2 target [P]\n168-195 ms"], fontsize=7.3)
 axA.set_ylabel("ms / eval  (1,296 H2O, FP64, 1x A100)", fontsize=8.2)
 axA.set_title("(a) Time budget at 1,296 atoms", fontsize=9.4, loc="left",
@@ -306,7 +306,7 @@ for yy, v in zip(y - hgt / 2, v2_ev):
     axC.text(v * 1.12, yy, f"{v}", va="center", fontsize=7.4,
              color="#4B2A72", fontweight="bold")
 axC.set_xscale("log")
-axC.set_xlim(1, 4000)
+axC.set_xlim(1, 6000)
 axC.set_yticks(y)
 axC.set_yticklabels(events, fontsize=7.4)
 axC.set_xlabel("count per eval (log scale); halo 37 -> 16 KB/ghost [P]",
@@ -329,9 +329,9 @@ plt.close(fig)
 # ==========================================================================
 fig, ax = plt.subplots(figsize=(8.6, 5.2), dpi=DPI)
 ranks = np.array([1, 2, 4])
-low1296 = np.array([1.0, 1.10, 1.80])
-high1296 = np.array([1.0, 1.22, 2.20])
-low5184 = np.array([1.0, 1.22, 2.10])
+low1296 = np.array([1.0, 1.10, 1.50])
+high1296 = np.array([1.0, 1.22, 2.00])
+low5184 = np.array([1.0, 1.22, 1.90])
 high5184 = np.array([1.0, 1.35, 2.60])
 ax.fill_between(ranks, low1296, high1296, color=BLUE, alpha=0.22,
                 label="1,296 H2O  [P]")
@@ -357,8 +357,8 @@ ax.set_title("Multi-GPU scaling projection (one rank per GPU; all values "
 ax.grid(alpha=0.25, lw=0.6)
 ax.set_axisbelow(True)
 ax.legend(fontsize=7.4, loc="upper left", frameon=False)
-ax.text(1.02, 0.84, "ghost/local model: g ~ 1.4 at 1,296 and g ~ 0.9 at 5,184\n"
-        "(8 A LAMMPS halo, slab decomposition); 4x A100 only on the remote "
+ax.text(1.02, 0.84, "ghost/local: 2-GPU slab g ~ 1.4 / 0.9; 4-GPU cube g ~ 2.8 / 1.5\n"
+        "(CUDA_SPEEDUP_PAPERS_2026.md sec. 3.3); 4x A100 only on the remote "
         "Volc queue.", fontsize=6.6, color="#555555")
 fig.tight_layout()
 fig.savefig(OUT / "v2_scaling_projection.png", dpi=DPI, facecolor="white",
