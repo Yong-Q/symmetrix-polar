@@ -21,7 +21,7 @@ The round-3 report (48.74 ms) remains the pre-Plan-B baseline:
 [docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md).
 
 **Reference target normalized to 1,296 atoms: 4.5 µs/atom → 5.832 ms/eval.**
-The latest measured 1,296-atom polar result is **320.97 ms (247.4 µs/atom),
+The latest measured 1,296-atom polar result is **320.97 ms (247.7 µs/atom),
 55.0× above target**; the linear FP32 path on the same box is 9.69 µs/atom
 (2.15× above). B-full's three new slices were **not re-measured at 1,296**,
 so no extrapolated 1,296 headline is claimed. 1024 atoms (256 NH3) remains
@@ -267,7 +267,7 @@ on one A100 80 GB):
 | This work: MACE-OFF23 medium (linear) | FP32 | direct/JIT | 1,296 | **6.31 min; 9.69 clean median** | 8.2 / 12.6 |
 | This work: full PolarMACE | FP64 | materialized + cache + team cutoff, fused MH-1 | 1,296 | 462.6 | 599.54 |
 | This work: full PolarMACE | FP64 | materialized + cache + team cutoff + team MH-1 (team size 64) | 1,296 | 311.3 | 403.97 |
-| **This work: full PolarMACE** | **FP64** | **+ B4 reverse-gather fusion, gather/edge coalescing (main tree)** | **1,296** | **247.4** | **320.97** |
+| **This work: full PolarMACE** | **FP64** | **+ B4 reverse-gather fusion, gather/edge coalescing (main tree)** | **1,296** | **247.7** | **320.97** |
 | Gap to target (polar) | | | | **55.0×** | |
 | Gap to target (linear FP32) | | | | **2.15×** | |
 
@@ -275,11 +275,11 @@ The target is normalized to this system: **1,296 × 4.5 µs = 5.832 ms/eval**.
 The current polar best is the **B4 + team** build in the main tree
 (`MATOS_REPLAY_CACHE=1`, UVU x2 smem off, forward sweep off, team cutoff,
 FP64 team MH-1, `MATOS_MH1_TEAM_SIZE=64`, B4 default on). It is **46.5%**
-faster than the fused-MH-1 result (462.6 → 247.4 µs/atom); B4 alone
+faster than the fused-MH-1 result (462.6 → 247.7 µs/atom); B4 alone
 saved 13.8% (404.96 → 348.97 ms), the gather-tile fix 4.0% (346.91 →
 333.17 ms), and the edge-feature coalescing a further 3.8% (333.7 → 321.0 ms). The linear direct/JIT numbers are the measured
 minimum and the cleanest trial median; the shared A100 produced outliers. At
-247.4 µs/atom the polar gap is **55.0×**; the measured linear FP32 path at the
+247.7 µs/atom the polar gap is **55.0×**; the measured linear FP32 path at the
 same atom count is **2.15×** away. Even zeroing the entire MH-1 family leaves
 >150 µs/atom (>30×), so 4.5 µs/atom is not reachable for FP64 PolarMACE with
 kernel work alone; see

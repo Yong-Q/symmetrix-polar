@@ -98,7 +98,7 @@ scalar paths. No other numerics change.
 The reference target is normalized to the 1,296-atom H₂O system:
 
 - target: 1,296 × **4.5 µs** = **5.832 ms/eval**;
-- corrected B4+team + coalescing: **320.97 ms = 247.4 µs/atom**;
+- corrected B4+team + coalescing: **320.97 ms = 247.7 µs/atom**;
 - gap: **55.0×** (320.97 / 5.832).
 
 Even setting the whole MH-1 family to zero would leave >150 µs/atom, i.e.

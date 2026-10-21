@@ -181,7 +181,7 @@ water box is 1,296 atoms; this is the same-size reference for the polar gap:
 | **Target (4.5 µs/atom)** | — | — | **4.5** | **5.832** |
 | Linear MACE-OFF23 medium | FP32 | direct/JIT | **6.31 min; 9.69 clean median** | 8.2 / 12.6 |
 | Full PolarMACE | FP64 | materialized + replay cache + team cutoff | 462.4 | 599.77 |
-| **Full PolarMACE, B4 + team (write-through fixed)** | **FP64** | **+ team MH-1, team size 64, B4 gather fusion** | **247.4** | **320.97** |
+| **Full PolarMACE, B4 + team (write-through fixed)** | **FP64** | **+ team MH-1, team size 64, B4 gather fusion** | **247.7** | **320.97** |
 | Gap to 4.5 µs/atom (polar) | | | **55.0×** | |
 | Gap to 4.5 µs/atom (linear) | | | **2.15×** | |
 
@@ -201,7 +201,7 @@ nonlinear 112.49 ms = 18.0%, and the whole polar pipeline 111.15 ms = 17.8%.
 ## What this means for the headline
 
 - The target is **4.5 µs/atom normalized to 1,296 atoms = 5.832 ms/eval**.
-  The current polar best at 1,296 atoms is **320.97 ms = 247.4 µs/atom**, a
+  The current polar best at 1,296 atoms is **320.97 ms = 247.7 µs/atom**, a
   **55.0×** gap. The measured linear FP32 direct/JIT path on the same box is
   9.69 µs/atom, a **2.15×** gap.
 - The paper-comparable statement for the materialized path is: **linear
@@ -212,7 +212,7 @@ nonlinear 112.49 ms = 18.0%, and the whole polar pipeline 111.15 ms = 17.8%.
   matching the paper's 4.50 µs/atom A100 value within the system mismatch.
   The 3.1× gap to ML-IAP is therefore closed on this engine.
 - PolarMACE remains materially different: it is materialized-only, FP64, and
-  247.4 µs/atom at 1,296 atoms. Even zeroing the MH-1 family leaves
+  247.7 µs/atom at 1,296 atoms. Even zeroing the MH-1 family leaves
   >150 µs/atom (>30× above target), so 4.5 µs/atom is not reachable for the
   full polar model with kernel work alone.
 
