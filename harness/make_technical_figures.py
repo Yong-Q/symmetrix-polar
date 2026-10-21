@@ -82,9 +82,9 @@ fig.tight_layout(); fig.savefig(OUT / "fig_02_kernels.png"); plt.close(fig)
 # 3. speed ladder
 fig, ax = plt.subplots(figsize=(10, 4.6))
 names = ["v28 initial\npolar", "v29 Kokkos\nengine", "round 1", "round 2",
-         "round 3\n(latest, gates PASS)"]
-vals = [6951.7, 183.8, 122.2, 56.50, 48.74]
-cols = ["#8c8c8c", "#8c8c8c", "#8c8c8c", "#8c8c8c", "#1f6feb"]
+         "round 3", "Plan B-lite\n(latest, gates PASS)"]
+vals = [6951.7, 183.8, 122.2, 56.50, 48.74, 38.66]
+cols = ["#8c8c8c", "#8c8c8c", "#8c8c8c", "#8c8c8c", "#1f6feb", "#1a7f37"]
 y = np.arange(len(names))[::-1]
 ax.barh(y, vals, color=cols, height=0.55)
 for yi, v in zip(y, vals):

@@ -64,8 +64,14 @@ until Plan B-lite.
 (16/16, out 4.546e-7); module 8 **PASS** (FD 5.783e-4, parity 7.191e-7);
 end-to-end **32/32 PASS** (dE abs 1.034e-6 eV, dF 1.624e-7 eV/Å); LAMMPS
 1-rank **PASS** (dE 2.910e-11 eV, max dF 2.594e-14 eV/Å); 2-rank exact-2-hop
-**PASS** (dE 2.910e-11 eV, max dF 1.6874754349e-6 eV/Å). This makes Plan B-lite
-(40.95 ms) the **latest full-gate-passing version**.
+**PASS** (dE 2.910e-11 eV, max dF 1.6874754349e-6 eV/Å).
+
+**Plan B-core cross-check (2026-10-21, binary `ed331d23…`):** 38.73 ms/eval;
+module 5–8, 32/32 end-to-end, LAMMPS 1-rank and 2-rank exact **PASS**;
+independent frozen tree. The accepted 38.66 ms build includes the write-through
+fix; the 0.2% difference is run noise. **Repeated-evaluation checks are
+mandatory** for any FP64 MH-1 team build (the single-point gate cannot see a
+state-accumulation bug).
 
 The two RBE rows are deliberately separate: the P4 implementation/statistics
 gate passes, while the production force gate is rejected. The p-scan and the

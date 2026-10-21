@@ -55,11 +55,19 @@ LAMMPS/Kokkos build.
 | Final binary sha256 | `18d5fc94fda3df98837520b885de48956afa59fb4c81223f9fe5d3f2e7833c64` |
 | Gates | module 5–8, 32/32 end-to-end, LAMMPS 1-rank and 2-rank exact: **PASS** |
 
-Slices: B1 replay cache **+3.39 ms**, B4 reverse-gather fusion **+4.01 ms**
-(same-binary A/B); B3 merged unpack is exact but **−5.97 ms** (rejected,
-opt-in); B5 is neutral. Defaults: `MATOS_REPLAY_CACHE=1`,
-`MATOS_REV_GATHER_FUSE=1`, `MATOS_UVU_X2_MB_SMEM=0`. Artifacts:
-`bench/plan_b_lite_2026-10-20/` and `docs/results/PLAN_B_LITE_FINAL.md`.
+Slices: B1 replay cache **+3.39 ms**, B4 reverse-gather fusion **+4.13 ms**
+(same-binary A/B after the write-through fix); B3 merged unpack is exact but
+**−5.97 ms** (rejected, opt-in); B5 is neutral. Defaults:
+`MATOS_REPLAY_CACHE=1`, `MATOS_REV_GATHER_FUSE=1`, `MATOS_UVU_X2_MB_SMEM=0`.
+Artifacts: `bench/plan_b_lite_2026-10-20/` and
+`docs/results/PLAN_B_LITE_FINAL.md`.
+
+**Plan B-core cross-check (2026-10-21):** frozen-tree binary `ed331d23…`
+measures **38.73 ms/eval**, all gates PASS (module 5–8, 32/32, LAMMPS 1-rank
+and 2-rank exact). The accepted 38.66 ms build includes the write-through fix;
+the 0.2% difference is run noise. Repeated evaluations are mandatory for any
+FP64 MH-1 team build. Artifacts: `bench/plan_b_core_2026-10-20/` and
+`docs/results/PLAN_B_CORE_FINAL.md`.
 
 The interleaved A/B is deliberate: absolute times are contention-sensitive,
 while same-run ratios are stable. A speed claim without an interleaved baseline

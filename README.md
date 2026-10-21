@@ -6,17 +6,26 @@ electrostatic layer. Random Batch Ewald (RBE) is implemented and statistically
 validated, but its production force gate is rejected; exact full-k Ewald is the
 production path.**
 
-**Latest gated result (2026-10-20, Plan B-lite): 40.95 ms/eval on 128 atoms
-(32 NH3 molecules), full nonlinear PolarMACE, FP64, one A100; all gates PASS,
-including 2-rank exact parity.** That is **1.190×** over the round-3 build 8
-(48.74 ms), **4.49×** over the original Symmetrix-XL Kokkos engine (183.8 ms),
-and **2.30×** faster than the PyTorch reference (94.0 ms). Plan B-lite adds
-replay caching (B1, −3.39 ms) and reverse-gather fusion (B4, −4.01 ms); the
-replay-cache-only intermediate was 45.09–45.12 ms. Full report:
+**Latest gated result (2026-10-21, Plan B-lite, correctness-fixed): 38.66
+ms/eval on 128 atoms (32 NH3 molecules), full nonlinear PolarMACE, FP64, one
+A100; all gates PASS, including 1-rank and 2-rank exact parity.** That is
+**1.261×** over the round-3 build 8 (48.74 ms), **4.75×** over the original
+Symmetrix-XL Kokkos engine (183.8 ms), and **2.43×** faster than the PyTorch
+reference (94.0 ms). Plan B-lite adds replay caching (B1) and reverse-gather
+fusion (B4, **−4.13 ms**, 42.79 → 38.66 ms). The earlier 40.95 ms figure was
+measured before the write-through correctness fix; see the note in the 1,296
+comparison below. Full report:
 [docs/results/PLAN_B_LITE_FINAL.md](docs/results/PLAN_B_LITE_FINAL.md).
 The round-3 report (48.74 ms) remains the pre-Plan-B baseline:
 [docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md).
 1024 atoms (256 NH3) remains **312.1 ms** (not re-measured under Plan B-lite).
+
+**Independent cross-check (Plan B-core, frozen tree):** 38.73 ms/eval
+(binary `ed331d23…`, module 5–8, 32/32 end-to-end, LAMMPS 1-rank/2-rank all
+PASS); the 0.2% difference from 38.66 is run noise. Source-integrity note:
+the main-tree FP64 MH-1 team path must keep the write-through / float-only
+guard; repeated evaluations, not only single-point gates, must be checked
+(technical report §5.5, `docs/results/PLAN_B_CORE_FINAL.md`).
 
 **Plan B audit (what 20–25 ms would require):**
 [docs/design/PLAN_B_AUDIT.md](docs/design/PLAN_B_AUDIT.md) — 36–40 ms is
@@ -88,13 +97,15 @@ gate catalog, and reproduction protocol).
 
 | Configuration | v29 baseline | **Latest (full gate suite PASS)** | Speedup |
 |---|---:|---:|---:|
-| NH3×32, **128 atoms (32 NH3)**, full PolarMACE | 183.8 ms | **40.95 ms** | **4.49×** |
+| NH3×32, **128 atoms (32 NH3)**, full PolarMACE | 183.8 ms | **38.66 ms** | **4.75×** |
 | NH3×32, 128 atoms, polar-off | 87.2 ms | **19.93 ms** | 4.38× |
 | N2×216, **432 atoms**, full PolarMACE | 477.8 ms/step | **83.47 ms/step** | 5.72× |
 | NH3×32×2×2×2, **1024 atoms (256 NH3)** | 1007.7 ms | **312.1 ms** | 3.23× |
 
 The 128-atom full and polar-off rows are the Plan B-lite final binary
-(`18d5fc94…`): complete gate suite PASS, including 2-rank exact-2-hop parity.
+(`1e324f59…`, rebuilt 2026-10-21 with the write-through fix): complete gate
+suite PASS, including 1-rank and 2-rank exact-2-hop parity. The polar-off row
+was measured on the pre-fix binary and is unaffected by the FP64 team path.
 The 432-atom row is the clean round-0 Plan B-lite measurement (87.82 → 83.47
 ms; another round was externally contended), so cross-session comparisons carry
 a ±2–3 ms caveat. The 1024-atom row is the round-3 speed and was not
@@ -247,17 +258,26 @@ on one A100 80 GB):
 | This work: MACE-OFF23 medium (linear) | FP32 | direct/JIT | 1,296 | **6.31 min; 9.69 clean median** | 8.2 / 12.6 |
 | This work: full PolarMACE | FP64 | materialized + cache + team cutoff, fused MH-1 | 1,296 | 462.6 | 599.54 |
 | This work: full PolarMACE | FP64 | materialized + cache + team cutoff + team MH-1 (team size 64) | 1,296 | 311.3 | 403.97 |
-| **This work: full PolarMACE** | **FP64** | **+ B4 reverse-gather fusion (main tree)** | **1,296** | **261.6** | **339.00** |
-| Ratio polar / linear | | | | **~27–41×** | |
+| **This work: full PolarMACE** | **FP64** | **+ B4 reverse-gather fusion (main tree, write-through fixed)** | **1,296** | **269.2** | **348.97** |
+| Ratio polar / linear | | | | **~28–43×** | |
 
-The current polar best is the **B4 + team** candidate in the main tree
+The current polar best is the **B4 + team** build in the main tree
 (`MATOS_REPLAY_CACHE=1`, UVU x2 smem off, forward sweep off, team cutoff,
-FP64 team MH-1, `MATOS_MH1_TEAM_SIZE=64`, B4 default on). It is **43.5%
-faster** than the fused-MH-1 result (462.6 → 261.6 µs/atom) and **16.3%**
+FP64 team MH-1, `MATOS_MH1_TEAM_SIZE=64`, B4 default on). It is **41.8%
+faster** than the fused-MH-1 result (462.6 → 269.2 µs/atom) and **13.8%**
 faster than team without B4. The linear direct/JIT numbers are the measured
 minimum and the cleanest trial median; the shared A100 produced outliers. The
 4.5 µs/atom target is ~58× away; see
 [docs/results/MH1_TEAM_FP64.md](docs/results/MH1_TEAM_FP64.md).
+
+**Correctness note (2026-10-21).** The first FP64 team build had a
+write-through state bug: repeated evaluations at fixed positions accumulated
+into the previous result (PE drifted −49242.46 → −48812.11 → +47.3M). The
+single-point gate could not see it. After the fix, three evaluations are
+identical to 1e-15, single-point forces match the accepted engine gate to
+1e-15, and a real 10-step NVE MD matches the original pre-team binary to
+**9.8e-15 Å** in position and **1.4e-14 eV/Å** in force. The corrected timing
+is 348.97 ms; the earlier 339.00 ms was measured with the buggy kernel.
 
 **PolarMACE — a different model, not paper-comparable:**
 

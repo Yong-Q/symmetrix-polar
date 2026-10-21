@@ -1,7 +1,9 @@
 # FP64 MH-1 team kernels: −32% at 1,296 atoms
 
-**Status:** measured and parity-gated on the main tree; not yet merged into the
-coordinator's Plan B-lite build. The accepted headline is unchanged.
+**Status:** measured, parity-gated, and **correctness-fixed** on the main tree.
+The original FP64 team enablement had a repeated-evaluation state bug (see
+"Write-through bug" below); the fixed build gives 348.97 ms at 1,296 atoms
+with real-MD parity against the pre-team engine.
 
 ## What changed
 
@@ -37,6 +39,9 @@ LAMMPS 1-rank parity with the team path and the candidate envs:
 dE **2.91e-11 eV** (tol 5e-5), max dF **2.57e-14 eV/Å** (tol 1e-4) —
 **PASS**. The FP64 team reductions preserve the force gate.
 
+This gate is single-point only. It passed even with the write-through bug,
+which is why the repeated-evaluation and real-MD gates below were added.
+
 ## CUPTI trace after the change (1,296 H₂O)
 
 | family | fused trace | team trace |
@@ -52,30 +57,67 @@ the Plan B4 (reverse-gather fusion) target, already present in the isolated B
 tree. A B4 + team-MH-1 build is in progress; the expected next measurement is
 at 1,296 atoms.
 
+## Write-through bug in the FP64 team path (found 2026-10-21, fixed)
+
+The float CUDA team path was protected by forcing
+`mh1_output_write_through_=false`. Removing the float guard for FP64 exposed
+that the **FP64 team forward kernel always used `+=`**, while `evaluate()`
+skips the zero-fill when `mh1_output_write_through_` is true:
+
+```cpp
+if(!(mh1_fast_path&&mh1_output_write_through_))
+    ordered_kokkos_deep_copy(output,Precision(0));
+...
+output(sample,output_index)+=scale*result*mask(output_index);  // team path
+```
+
+The first evaluation uses a freshly zeroed buffer and is correct; every later
+evaluation accumulates into the previous result. This is **not** visible to a
+single-point gate.
+
+Measured drift at fixed positions (three `run 0` evaluations at 128 atoms):
+
+| build | PE eval 0 | PE eval 1 | PE eval 2 | max dF eval 2 |
+|---|---:|---:|---:|---:|
+| original pre-team | −49242.4564153149 | −49242.4564153149 | −49242.4564153149 | 1.0e-15 |
+| team build, before fix | −49242.4564153149 | −48812.106186406 | +47,277,036.78 | 3.3e8 |
+| **team build, after fix** | **−49242.4564153149** | **−49242.4564153149** | **−49242.4564153149** | **1.0e-15** |
+
+The fix branches on `write_through` in the team kernel, matching the vec4 and
+scalar paths. No other numerics change.
+
+**Validation after the fix**
+
+- single point vs the accepted Python-engine gate: max dF **1.0e-15**;
+- 10-step NVE MD (0.5 fs, 300 K initial velocities) vs the original pre-team
+  binary: max Δpos **9.8e-15 Å**, max ΔF **1.4e-14 eV/Å**, PE identical at
+  every printed step.
+
 ## Remaining distance to 4.6 µs/atom
 
-1,296 × 4.6 µs = **5.96 ms/eval**. Current B4+team result 339.00 ms is
-**56.9×** away (261.6 µs/atom). Even setting the MH-1 family to zero would
+1,296 × 4.6 µs = **5.96 ms/eval**. The corrected B4+team result 348.97 ms is
+**58.5×** away (269.2 µs/atom). Even setting the MH-1 family to zero would
 leave >150 µs/atom. The 4.6 number is the linear MACE-OFF23 FP32 5,184-atom result;
 it is not reachable for full PolarMACE with kernel work.
 
-## B4 + team (provisional, not accepted)
+## B4 + team (accepted, after the write-through fix)
 
 The B4 source was cleanly merged into the stable main tree (output_gather
 in `E3TensorProductKokkos::reverse`, gather skipped at the call site) and
-rebuilt. At 1,296 atoms:
+rebuilt. At 1,296 atoms, fixed build:
 
 | configuration | median ms/eval | µs/atom |
 |---|---:|---:|
-| main team, no B4 | 404.83 | 312.4 |
-| **main B4 + team** | **339.00** | **261.6** |
-| saving | **65.8 ms (16.3%)** | **50.8** |
+| main team, no B4 (unfixed binary) | 404.96 | 312.5 |
+| **main B4 + team (fixed)** | **348.97** | **269.2** |
+| saving | **56.0 ms (13.8%)** | **43.3** |
 
-Three rounds: no-B4 404.61 / 404.99 / 404.83; B4+team 394.05 / 339.00 /
-338.87 (round 0 was warmup/contended; rounds 1–2 are the steady state).
-Cumulative from the fused-MH-1 + team-cutoff baseline: 599.54 → 339.00 ms
-(−43.5%). The earlier isolated-B-tree 367.33 ms is superseded by this stable
-main-tree result. The parity gate for the merged binary is running.
+Three clean rounds after the fix: no-B4 404.15 / 404.96 / 406.18; B4+team
+348.97 / 348.72 / 356.30 (one 489.56 ms contended outlier in round 2).
+Cumulative from the fused-MH-1 + team-cutoff baseline: 599.54 → 348.97 ms
+(−41.8%). The earlier 339.00 ms was measured with the buggy kernel; the
+write-through branch costs ~3%, which is the price of correctness. The parity
+gate for the merged binary passes, and the repeated-evaluation gate now holds.
 
 ## 1,296-atom UVU knob check
 

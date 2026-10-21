@@ -15,6 +15,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PYTOOLS = REPO / "pytools"
+# The vendored pytools/PIL is an incomplete copy (no _imaging extension) and
+# would shadow the installed Pillow once PYTOOLS is on sys.path. Import the
+# real Pillow first so fpdf2 can embed figures.
+import PIL  # noqa: E402,F401
+import PIL.Image  # noqa: E402,F401
 if PYTOOLS.exists():
     sys.path.insert(0, str(PYTOOLS))
 
@@ -289,9 +294,9 @@ def cover(pdf: Report):
     pdf.ln(14)
     pdf.set_font("NotoSansSC", "", 11)
     metrics = [
-        ("128 原子（32 NH3），full PolarMACE", "40.95 ms/eval"),
+        ("128 原子（32 NH3），full PolarMACE", "38.66 ms/eval"),
         ("1024 原子（256 NH3），full PolarMACE", "312.1 ms/eval"),
-        ("相对 round-3 build 8 / v29 引擎", "1.190× / 4.49×"),
+        ("相对 round-3 build 8 / v29 引擎", "1.261× / 4.75×"),
         ("全套数值门（含 2-rank）", "PASS"),
         ("RBE 生产精度门", "REJECTED"),
     ]

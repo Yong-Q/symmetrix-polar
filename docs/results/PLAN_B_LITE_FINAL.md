@@ -12,25 +12,39 @@ accepted slices; the accepted result remains build 8 at **48.74 ms/eval**.
 |---|---:|---:|---|
 | Prior B tree default (cache off, UVU x2 smem on) | 49.69 | — | — |
 | Accepted build 8 (reference) | 48.74 | — | gated |
-| **B1 replay cache default (cache=1, smem=0)** | **45.09** | **−4.60** | accepted |
-| **B1 + B4 reverse-gather fusion (final)** | **40.95** | **−8.74** | **accepted, gated** |
+| **B1 replay cache default (cache=1, smem=0)** | **42.79** | **−6.90** | accepted |
+| **B1 + B4 reverse-gather fusion (final)** | **38.66** | **−11.03** | **accepted, gated** |
 
-Final speedup vs accepted build 8: **1.190×** (48.74 → 40.95 ms).
-The 49.69 → 45.09 change in the B1 row also includes making
-`MATOS_UVU_X2_MB_SMEM=0` the default: the same-binary cache off/on A/B on the
-B tree with smem already off is 48.48 → 45.09 (**B1 = 3.39 ms**); the smem
-default correction accounts for the remaining ≈1.2 ms. Build 10's shared-memory
-staging was a regression in the integration and is opt-in here.
+Final speedup vs accepted build 8: **1.261×** (48.74 → 38.66 ms).
+
+**2026-10-21 update — write-through fix.** The FP64 team MH-1 forward kernel
+unconditionally used `+=` while `evaluate()` skipped the zero-fill under
+write-through; repeated evaluations at fixed positions accumulated into the
+previous result. Single-point gates could not see it. The fix branches on
+`write_through` (see `MH1_TEAM_FP64.md`). Re-measured after the fix, the same
+protocol gives **42.79 ms (gather0) → 38.66 ms (B4)**, three rounds,
+median-of-medians: gather0 42.62 / 43.28 / 42.79; fused1 39.15 / 38.30 /
+38.66. B4 = **−4.13 ms (9.6%)**. The old 40.95 ms figure was measured with the
+buggy kernel; it is superseded. Repeat-evaluation drift before the fix:
+−49242.46 → −48812.11 → +47.3M eV; after the fix all three evaluations agree
+to 1e-15.
+
+The B1 row is the same-binary cache+smem default (`MATOS_UVU_X2_MB_SMEM=0`);
+the pre-fix B1 intermediate was 45.09 ms. Build 10's shared-memory staging
+was a regression in the integration and is opt-in here.
 The final configuration is `MATOS_REPLAY_CACHE=1` (default),
 `MATOS_UVU_X2_MB_SMEM=0` (default), `MATOS_REV_GATHER_FUSE=1` (default);
 `MATOS_E3_LINEAR_MERGED_UNPACK=0` and `MATOS_POLAR_SMALL_FUSE=0` remain
 opt-in.
 
-Binary `lammps-b/build-b/lmp` sha256
-**`18d5fc94fda3df98837520b885de48956afa59fb4c81223f9fe5d3f2e7833c64`**
-(197,929,688 B). Python module sha256
+Binary snapshot `snapshot/lmp_b_final_wtfix` sha256
+**`1e324f592198b8575e673d7a5979af331a3dd954cd009d36116f31649f5b8773`**.
+The pre-fix binary was
+`18d5fc94fda3df98837520b885de48956afa59fb4c81223f9fe5d3f2e7833c64`
+(no longer accepted). Python module sha256
 `509daed05b54db5d4c0a0bba72fc1379283dc0d9bc1db0acf7e1e43279e74ac8`
-(built from the same B-tree source, Python 3.12).
+(built from the same B-tree source, Python 3.12; the fix is C++-only, so the
+Python module is unchanged).
 
 ## 1. Gate suite (final binary, defaults)
 
@@ -46,11 +60,15 @@ build. `rc=134` is the pre-existing Kokkos teardown abort **after**
 | module 8 | FD max, parity max | 5.783e-4, 7.191e-7 | **PASS** |
 | end-to-end | 32 frames | 32/32; dE abs max 1.034e-6 eV; dF max 1.624e-7 eV/Å | **PASS** |
 | LAMMPS parity, 1 rank | dE, max dF | 2.910e-11 eV, 2.594e-14 eV/Å | **PASS** |
+| LAMMPS parity, 1 rank, post-fix binary | dE, max dF | 2.910e-11 eV, 2.606e-14 eV/Å | **PASS** |
 | LAMMPS parity, 2 ranks exact 2-hop | dE, max dF | 2.910e-11 eV, 1.6874754349e-6 eV/Å | **PASS** |
+| repeated evaluation, fixed positions | 3 × `run 0` | dPE 0, max dF 1.0e-15 | **PASS** |
 
 These are the build-8 metrics to round-off. B4 and B5 were additionally
 checked bitwise against the prior binary with 17-digit force dumps: dPE = 0,
-max dF ≤ 7.3e-16 for the fused defaults, i.e. cross-process noise.
+max dF ≤ 7.3e-16 for the fused defaults, i.e. cross-process noise. The
+repeated-evaluation gate is new: the earlier suite was single-point and did
+not detect the write-through bug.
 
 ## 2. Slice-by-slice A/B (same binary, interleaved 2 rounds × 12)
 
@@ -61,6 +79,12 @@ run, 1 warmup + 12 measured, median of per-round medians.
 |---|---:|---:|---:|---|
 | **B1** replay cache | 48.48 | 45.09 | **+3.39** | **accepted, default on** |
 | **B4** reverse gather fused into MH-1 reverse | 44.96 | 40.95 | **+4.01** | **accepted, default on** |
+
+Post-fix re-measure (2026-10-21, 3 rounds × 12, same protocol):
+
+| Slice | Off (ms) | On (ms) | Saving | Decision |
+|---|---:|---:|---:|---|
+| **B4** reverse gather fused into MH-1 reverse | 42.79 | **38.66** | **+4.13** | **accepted, default on** |
 | **B5** small-polar zero-fill / store fusion | 41.07 | 41.06 | +0.01 | **neutral, reverted to opt-in** |
 | **B3** e3-linear merged unpack | 40.93 | 46.89 | **−5.97** | **rejected, opt-in only** |
 
@@ -144,12 +168,12 @@ for the wall delta):
 
 ## 7. Remaining gap to 30 ms
 
-**10.95 ms** (40.95 → 30 ms; 1.365×). The remaining budget is dominated by
+**8.66 ms** (38.66 → 30 ms; 1.289×). The remaining budget is dominated by
 polar pipeline ≈14.4 ms (UVU reverse x1/x2 ≈6.3 ms), MH-1 ≈6.8 ms, cuBLAS
 ≈3.6 ms, e3-linear ≈2.4 ms, and the host/launch gap. Closing it needs the
 unlanded work removal (B7/B9) plus launch elimination (B2); the audit's
 33–38 ms envelope for B-lite+B2 is consistent with what landed here
-(40.95 ms without B2/B7). **20–25 ms remains not credible** under the current
+(38.66 ms without B2/B7). **20–25 ms remains not credible** under the current
 FP64 exact-physics contract.
 
 ## 8. Artifacts
