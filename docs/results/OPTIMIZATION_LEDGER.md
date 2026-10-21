@@ -23,11 +23,25 @@ gitignored `bench/` tree; the extracted summary JSONs are committed under
 | + edge-feature tile | 320.97 | 247.7 | `README.md`; `data/ab_edge_features_1296.json` |
 | + path-grouped MH-1 forward | 299.15 | 230.5 | `README.md`; `data/ab_path_grouped_forward_1296.json` (+ clean sandbox `data/ab_path_grouped_forward_sandbox.json`) |
 | + edge-up/scatter tile | 290.77 | 224.1 | `README.md`; `data/ab_edge_up_scatter_1296.json` |
+| **+ A1 UVU tile (main, gates PASS)** | **266.21** | **205.4** | `UVU_TILE_MAIN_1296.md`; `UVU_TILE_MAIN_GATES.md` |
 
-The ladder is cumulative. The 230.5 and 224.1 rows use the stable candidate
-rounds; the baseline rounds in those two A/B files include externally
-contended samples (see `data/README.md`), and the clean baseline rounds agree
-with the preceding ladder value (320.5 and 297.9 ms).
+The ladder is cumulative through the edge-up/scatter row. A1 is a new
+1,296-atom step on the current main tree, not a 128-atom Plan B slice: baseline
+`lmp_main_e0a961d` 290.196 ms (223.92 µs/atom) → candidate `lmp_uvu_tile`
+266.214 ms (205.41 µs/atom), **−8.26%**, interleaved A/B 2×4 samples with
+disjoint ranges. A1 patch `patches/uvu_tile_32x32.patch` (actual default tile
+32×16); candidate sha256 `a9ce6481…`; source-matched gates module 5–8, 32/32,
+1/2-rank parity all PASS.
+
+**128-atom Plan B-micro headline (not a 1,296 row):** 30.33 ms/eval, binary
+`7061ecb0…`, all gates + repeated-eval PASS; source `PLAN_B_MICRO_FINAL.md`.
+The earlier 30.56 ms Plan B-30ms and 30.60 ms pre-fix micro screen are
+historical.
+
+The 230.5 and 224.1 rows use the stable candidate rounds; the baseline rounds
+in those two A/B files include externally contended samples (see
+`data/README.md`), and the clean baseline rounds agree with the preceding
+ladder value (320.5 and 297.9 ms).
 
 ## 2. Per-kernel claims
 

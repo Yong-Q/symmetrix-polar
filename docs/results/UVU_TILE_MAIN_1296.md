@@ -201,3 +201,27 @@ UVU tile 补丁在当前 main `e0a961d` 上稳定带来 **8.26%** 的 1,296 原�
 - 1-rank gate：`.../bench/plan_a_uvu_tile_2026-10-21/{run_lammps_parity_plan_a.py,run_gate_plan_a.sh,gates/a1_uvu_tile/lammps_parity_1rank/,logs/gate_lammps_parity_1rank.log}`
 - 二进制与哈希：`.../bench/plan_a_uvu_tile_2026-10-21/bin/{lmp_main_e0a961d,lmp_uvu_tile,*.sha256}`
 - 绘图脚本：`.../bench/plan_a_uvu_tile_2026-10-21/plot_ab_1296.py`
+
+## 8. Gate status（2026-10-21，source-matched 模块就绪后）
+
+从同一 `plan-a-uvu-tile` 源码树构建了 source-matched Python 模块
+`bench/plan_a_uvu_tile_2026-10-21/pyb_tile/`（configure rc 0、build rc 0；
+`.so` sha256 `f8a1ac6b3d7211e11492c35dba01cc48803ac2582edc08c802488b36e95e5937`），
+并使用未变的候选二进制 `lmp_uvu_tile`（`a9ce6481…`）跑完整 gate suite
+（tag `a1_uvu_tile_full`，全程持有 `.../.tmp/gpu.lock`）：
+
+| Gate | 关键指标 | 判定 |
+|---|---|---|
+| Module 5 | dens abs 6.689e-8 / rel 4.218e-8；stage rel 7.127e-8 | **PASS** |
+| Module 6 | ρ̂ rel 1.316e-15；ΔE abs 8.882e-16 eV | **PASS** |
+| Module 7 | 16/16；worst stage rel 1.174e-7；out 4.546e-7 | **PASS** |
+| Module 8 | FD 5.783e-4；force parity 7.191e-7 eV/Å | **PASS** |
+| End-to-end | 32/32；dE abs 1.034e-6 eV；dF max 1.624e-7 eV/Å | **PASS** |
+| LAMMPS parity 1 rank | dE 2.910e-11 eV；max dF 2.606e-14 eV/Å | **PASS** |
+| LAMMPS parity 2 ranks | dE 2.910e-11 eV；max dF 1.687e-6 eV/Å | **PASS** |
+
+因此上文 §5 中的 “2-rank / source-matched full gate: PENDING” 现已关闭为
+**PASS**。rc=134 仍为结果写出后的 Kokkos/CUDA teardown artifact，非数值失败。
+分支 **READY to merge**，但本次 **未 merge、未 commit、未 push**；上文所有
+1,296 原子 A/B 与 parity 数字保持不变。完整报告见
+`docs/results/UVU_TILE_MAIN_GATES.md`。

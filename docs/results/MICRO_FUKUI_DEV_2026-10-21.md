@@ -1,4 +1,11 @@
-# Plan B-micro: device-side Fukui scalars — measured null result
+# Plan B-micro: device-side Fukui scalars — pre-fix screen (superseded)
+
+> **Superseded by `PLAN_B_MICRO_FINAL.md` (2026-10-21).**  This note covers the
+> first 3-variant screen on the **pre-fix** binary, which measured neutral.
+> The final binary (`7061ecb0…`) fixes the `polar_owned_sum_1` default-buffer
+> bug and two later A/Bs measured **30.557 → 30.325 ms/eval (−0.352 ms)**;
+> all gates PASS.  Use `PLAN_B_MICRO_FINAL.md` for the accepted result.  The
+> null screen below is retained as the historical pre-fix evidence.
 
 **Date:** 2026-10-21
 **System:** 128 NH3 atoms, full PolarMACE, FP64, one A100-80GB.

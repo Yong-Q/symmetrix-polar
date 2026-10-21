@@ -22,11 +22,15 @@ round-3 report (48.74 ms) is the pre-Plan-B baseline:
 [docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md).
 
 **Reference target normalized to 1,296 atoms: 4.5 µs/atom → 5.832 ms/eval.**
-The latest measured 1,296-atom polar result is **224.1 µs/atom,
-49.8× above target**; the linear FP32 path on the same box is 9.69 µs/atom
-(2.15× above). The Plan B slices were **not re-measured at 1,296**, so no
-extrapolated 1,296 headline is claimed. 1024 atoms (256 NH3) remains
-**312.1 ms** (not re-measured under Plan B-lite/B-full).
+The latest measured 1,296-atom polar result is **205.4 µs/atom
+(266.21 ms/eval) with the A1 UVU tile on `main`, all gates PASS**; that is
+**45.7× above target**. The same-box linear FP32 path is 9.69 µs/atom
+(2.15× above). A1 measured 290.20 → 266.21 ms/eval (**−8.26%**) at 1,296
+atoms; the patch is `patches/uvu_tile_32x32.patch` (actual default tile
+32×16), and the source-matched gate report is
+[docs/results/UVU_TILE_MAIN_GATES.md](docs/results/UVU_TILE_MAIN_GATES.md).
+The Plan B-micro 30.33 ms is the 128-atom headline. 1024 atoms (256 NH3)
+remains **312.1 ms** (not re-measured under Plan B-lite/B-full/A1).
 
 **Independent cross-checks:** B-core frozen-tree **38.73 ms** (binary
 `ed331d23…`, all gates PASS), B-full **31.33 ms** (binary `bcecbf90…`), and
@@ -278,20 +282,23 @@ on one A100 80 GB):
 | This work: MACE-OFF23 medium (linear) | FP32 | direct/JIT | 1,296 | **6.31 min; 9.69 clean median** | 8.2 / 12.6 |
 | This work: full PolarMACE | FP64 | materialized + cache + team cutoff, fused MH-1 | 1,296 | 462.6 | 599.54 |
 | This work: full PolarMACE | FP64 | materialized + cache + team cutoff + team MH-1 (team size 64) | 1,296 | 311.3 | 403.97 |
-| **This work: full PolarMACE** | **FP64** | **+ B4 reverse-gather fusion, gather/edge coalescing (main tree)** | **1,296** | **224.1** | **290.4** |
-| Gap to target (polar) | | | | **49.8×** | |
+| This work: full PolarMACE | FP64 | + B4 reverse-gather fusion, gather/edge coalescing (historical main tree) | 1,296 | 224.1 | 290.4 |
+| **This work: full PolarMACE + A1 UVU tile** | **FP64** | **+ UVU 32×16 tile, chunked weight staging (main, gates PASS)** | **1,296** | **205.4** | **266.21** |
+| Gap to target (polar, A1) | | | | **45.7×** | |
 | Gap to target (linear FP32) | | | | **2.15×** | |
 
 The target is normalized to this system: **1,296 × 4.5 µs = 5.832 ms/eval**.
-The current polar best is the **B4 + team** build in the main tree
+The current polar best is the **A1 UVU tile** on main
 (`MATOS_REPLAY_CACHE=1`, UVU x2 smem off, forward sweep off, team cutoff,
-FP64 team MH-1, `MATOS_MH1_TEAM_SIZE=64`, B4 default on). It is **51.6%**
-faster than the fused-MH-1 result (462.6 → 224.1 µs/atom); B4 alone
-saved 13.8%, the gather-tile fix 4.0%, the edge-feature coalescing 3.8%,
-the path-grouped MH-1 forward 6.9%, and edge-up/scatter coalescing 2.8%
+FP64 team MH-1, `MATOS_MH1_TEAM_SIZE=64`, B4 default on, UVU 32×16 tile).
+A1 measured 290.20 → 266.21 ms/eval (**−8.26%**) and all source-matched gates
+PASS. Before A1, the **B4 + team** build was **51.6%** faster than the
+fused-MH-1 result (462.6 → 224.1 µs/atom); B4 alone saved 13.8%, the
+gather-tile fix 4.0%, the edge-feature coalescing 3.8%, the path-grouped
+MH-1 forward 6.9%, and edge-up/scatter coalescing 2.8%
 (230.5 → 224.1 µs/atom). The linear direct/JIT numbers are the measured
 minimum and the cleanest trial median; the shared A100 produced outliers. At
-224.1 µs/atom the polar gap is **49.8×**; the measured linear FP32 path at the
+205.4 µs/atom the polar gap is **45.7×**; the measured linear FP32 path at the
 same atom count is **2.15×** away. Even zeroing the entire MH-1 family leaves
 >150 µs/atom (>30×), so 4.5 µs/atom is not reachable for FP64 PolarMACE with
 kernel work alone; see
@@ -303,8 +310,10 @@ into the previous result (PE drifted −49242.46 → −48812.11 → +47.3M). Th
 single-point gate could not see it. After the fix, three evaluations are
 identical to 1e-15, single-point forces match the accepted engine gate to
 1e-15, and a real 10-step NVE MD matches the original pre-team binary to
-**9.8e-15 Å** in position and **1.4e-14 eV/Å** in force. The corrected timing
-is 224.1 µs/atom; the earlier 269.2 µs/atom was measured with the buggy kernel.
+**9.8e-15 Å** in position and **1.4e-14 eV/Å** in force. The corrected
+pre-A1 timing was 224.1 µs/atom; A1 further lowers the 1,296-atom result to
+**205.4 µs/atom** (all gates PASS). The earlier 269.2 µs/atom was measured
+with the buggy kernel.
 
 **PolarMACE — a different model, not paper-comparable:**
 
