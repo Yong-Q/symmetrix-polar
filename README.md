@@ -1,5 +1,12 @@
 # Symmetrix-Polar
 
+**中文教程／汇报入口（2026-10-21）：**
+[PDF](docs/tutorial/SYMMETRIX_POLAR_TUTORIAL_2026-10-21.pdf) ·
+[离线阅读网页](docs/tutorial/index.html) ·
+[Markdown](docs/tutorial/SYMMETRIX_POLAR_TUTORIAL_2026-10-21.md)。
+从模型概念、数学公式、GPU 执行到历史测试逐步讲解，性能统一为 µs/atom/step。
+数值以具体测试版本、统计规则及其来源为准。
+
 **GPU-accelerated PolarMACE with long-range electrostatics — PolarMACE (MACE-POLAR)
 support for the [Symmetrix-XL](https://github.com/) engine, with a full Ewald
 electrostatic layer. Random Batch Ewald (RBE) is implemented and statistically

@@ -1,0 +1,58 @@
+{
+  "source_commit": "5cdf8a0fd37209a777cb4b47fac5f5e813a0db0f",
+  "atoms": 1296,
+  "precision": "FP64",
+  "hardware": "one A100 80GB",
+  "final_selected_round_medians_ms": [
+    290.773,
+    289.9775
+  ],
+  "final_selected_ms": 290.37525000000005,
+  "final_selected_us_per_atom": 224.05497685185188,
+  "all_round_median_ms": 290.773,
+  "all_round_median_us_per_atom": 224.3618827160494,
+  "selection_note": "Exploratory post-hoc stable-round selection. All excluded rounds remain in the source and all-round plot. Not a prospective dedicated-GPU qualification.",
+  "pairs": [
+    {
+      "name": "消息汇总：重排线程",
+      "before_ms": 346.90575,
+      "after_ms": 333.17,
+      "reduction_pct": 3.959504851101492,
+      "source": "ab_gather_tile_1296.json",
+      "selection": "two clean rounds"
+    },
+    {
+      "name": "边特征：连续访存",
+      "before_ms": 333.72974999999997,
+      "after_ms": 320.96574999999996,
+      "reduction_pct": 3.8246515331641917,
+      "source": "ab_edge_features_1296.json",
+      "selection": "two clean rounds"
+    },
+    {
+      "name": "张量积：复用预收缩",
+      "before_ms": 321.08475,
+      "after_ms": 298.20525000000004,
+      "reduction_pct": 7.125688778429984,
+      "source": "ab_path_grouped_forward_sandbox.json",
+      "selection": "two clean sandbox rounds"
+    },
+    {
+      "name": "边更新：融合与重排",
+      "before_ms": 297.922,
+      "after_ms": 290.37525000000005,
+      "reduction_pct": 2.5331294768429213,
+      "source": "ab_edge_up_scatter_1296.json",
+      "selection": "post-hoc: baseline r2; candidate r1,r2"
+    }
+  ],
+  "historical_endpoint_ms": [
+    599.54,
+    290.37525000000005
+  ],
+  "historical_endpoint_reduction_pct": 51.566993027988104,
+  "historical_endpoint_speed_ratio": 2.064707649842746,
+  "pytorch_128_ms": 94.0,
+  "b30_128_ms": 30.557,
+  "pytorch_128_ratio": 3.076218215138921
+}

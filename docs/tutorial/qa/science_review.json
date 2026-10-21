@@ -1,0 +1,30 @@
+{
+  "source_characters": 34481,
+  "figures": 17,
+  "display_equations": 30,
+  "science_review_scope": [
+    "MACE-POLAR equations and spin conventions",
+    "finite updates versus SCF",
+    "Fourier normalization and Gaussian smearing",
+    "equivariance/body order/channel distinctions",
+    "streaming implementation limits",
+    "FP64 sector example",
+    "JSON-derived normalization and summary statistics",
+    "parity versus physical accuracy"
+  ],
+  "review_outcome": "No blocking mathematical or scientific inconsistency found in source-based review. Not a substitute for GPU regression or target-system physical validation.",
+  "benchmark_execution_this_revision": false,
+  "unit": "µs/atom/step",
+  "notes": [
+    "Full original timing records are unchanged.",
+    "Stable-round estimates and all-round summaries are distinguished.",
+    "Original papers and figures are credited separately from project measurements.",
+    "AI illustrations are qualitative; no synthetic benchmark values are plotted."
+  ],
+  "standalone_document_check": {
+    "editorial_history_mentions": false,
+    "running_example": "432 H2O molecules / 1296 atoms; one energy-force evaluation",
+    "benchmark_and_integration_boundaries_separated": true
+  },
+  "front_flowchart_review": "Three image-generated diagrams inspected: initial and per-layer Fukui; fixed two updates; three energies; full chain differentiation; local MACE also nonlinear; precision/execution configuration not intrinsic; model evaluation distinct from MD integration."
+}
