@@ -1,0 +1,20 @@
+[
+  {
+    "file": "00_project_workflow.png",
+    "tool": "image_gen.imagegen (built-in)",
+    "prompt": "Create a clean Chinese scientific textbook flowchart, white background, landscape 3:2, navy blue and teal, large readable text, precise boxes and arrows, no decorative molecules. Title: “从原子输入到 MD 推进”. Main horizontal flow exactly: “元素、坐标、晶胞” → “邻居图与几何特征” → “PolarMACE 能量与力评估” → “MD 积分” → “更新坐标”. One return arrow from 更新坐标 back to 元素、坐标、晶胞. Separate input above model box: “总电荷与自旋状态”. Above the model box a small labeled block “固定的预训练参数” with arrow into model. Highlight only model evaluation region in pale teal. Bottom exact note: “模型评估与 MD 积分是不同计时范围”. No numerical timings, no equations, no SCF convergence statement. Clear unambiguous left-to-right educational infographic, textbook quality.",
+    "status": "Conceptual flowchart; no measured values; inspected for model and execution semantics."
+  },
+  {
+    "file": "00_polarmace_flow.png",
+    "tool": "image_gen.imagegen (built-in)",
+    "prompt": "Create a scientifically accurate Chinese textbook flowchart on pure white, portrait-ish 3:2 landscape, navy and teal, very readable Chinese labels, clean vector-like diagram. Title “PolarMACE：一次能量与力评估”. Flow starts “原子结构” → “局部 MACE”. Branch one arrow directly from local MACE to “局部能量”. Main branch “局部特征与初始多极” → “初始 Fukui 平衡” → a large pale teal grouped box labeled “全局场更新：固定执行两层”. Inside grouped box show exactly the sequential flow “电荷与自旋密度” → “全局电势与场特征” → “局部多极更新” → “Fukui 平衡”, with a return arrow from final Fukui to density labeled “进入下一层”. Do not depict convergence or indefinite SCF. Below grouped box “最终多极与场特征” branches to two boxes “学习型非局域能量” and “显式静电能量”. The three energy boxes (including local energy) feed “总能量”, which feeds “完整链式求导”, which feeds “原子力”. Footer exact: “两层学习型更新，不是迭代到收敛的 SCF”. Every arrow has a clear endpoint. No numerical performance claims. No complicated math formula.",
+    "status": "Conceptual flowchart; no measured values; inspected for model and execution semantics."
+  },
+  {
+    "file": "00_paths_comparison.png",
+    "tool": "image_gen.imagegen (built-in)",
+    "prompt": "Create a Chinese scientific textbook side-by-side comparison infographic, pure white, navy blue and teal, landscape 3:2, clean spacious boxes and large readable text. Title “标准 MACE 与 PolarMACE：计算路径对照”. Left column heading “标准 MACE 路径”; subtitle “工程分支简称 linear”. Left flow: “原子几何” → “局部等变与多体运算” → “原子能量求和” → “求导得到力”. At bottom left configuration box “当前配置：FP32 / streaming”. Right column heading “PolarMACE 路径”; subtitle “工程分支 MACE_Nonlinear”. Right flow: “原子几何与电子状态” → “局部几何骨干与初始多极” → “全局电势、极化更新与 Fukui 平衡（两层）” → “局部、非局域与静电能量” → “完整链式求导得到力”. At bottom right configuration box “当前配置：FP64 / materialized”. Footer prominent exact scientific clarification: “两条路径都含非线性；精度与执行方式是当前实现配置”. A second footer line “额外开销来自更多计算、反向求导与中间存储”. No speed ratios or benchmark values. Do not claim standard MACE lacks nonlinearity, do not claim PolarMACE cannot stream in principle. Avoid any SCF convergence loop.",
+    "status": "Conceptual flowchart; no measured values; inspected for model and execution semantics."
+  }
+]

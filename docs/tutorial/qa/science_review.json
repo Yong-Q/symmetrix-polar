@@ -1,6 +1,6 @@
 {
-  "source_characters": 31832,
-  "figures": 14,
+  "source_characters": 34481,
+  "figures": 17,
   "display_equations": 30,
   "science_review_scope": [
     "MACE-POLAR equations and spin conventions",
@@ -25,5 +25,6 @@
     "editorial_history_mentions": false,
     "running_example": "432 H2O molecules / 1296 atoms; one energy-force evaluation",
     "benchmark_and_integration_boundaries_separated": true
-  }
+  },
+  "front_flowchart_review": "Three image-generated diagrams inspected: initial and per-layer Fukui; fixed two updates; three energies; full chain differentiation; local MACE also nonlinear; precision/execution configuration not intrinsic; model evaluation distinct from MD integration."
 }

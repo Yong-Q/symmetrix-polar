@@ -22,71 +22,71 @@ Package hyperref Warning: Rerun to get /PageLabels entry.
 *geometry* detected driver: xetex
 [1]
 No file tutorial.toc.
-[1] (/home/qiuyong/.TinyTeX/texmf-dist/tex/latex/lm/omllmm.fd) (/home/qiuyong/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsa.fd) (/home/qiuyong/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsb.fd) [2]
+[1] [2] [3] (/home/qiuyong/.TinyTeX/texmf-dist/tex/latex/lm/omllmm.fd) (/home/qiuyong/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsa.fd) (/home/qiuyong/.TinyTeX/texmf-dist/tex/latex/amsfonts/umsb.fd) [4] [5] [6]
 
 Package longtable Warning: Column widths have changed
-(longtable)                in table 2 on input line 272.
+(longtable)                in table 3 on input line 394.
 
-[3] [4]
-
-Package longtable Warning: Column widths have changed
-(longtable)                in table 3 on input line 386.
-
-[5]
+[7] [8]
 
 Package longtable Warning: Column widths have changed
-(longtable)                in table 4 on input line 446.
+(longtable)                in table 4 on input line 508.
+
+[9]
+
+Package longtable Warning: Column widths have changed
+(longtable)                in table 5 on input line 568.
 
 
-Underfull \hbox (badness 2103) in paragraph at lines 463--467
+Underfull \hbox (badness 2103) in paragraph at lines 585--589
 []\TU/NotoSansCJKsc-Regular.otf(0)/m/n/10 下 面 采 用 明 确 名 称：| \TU/DejaVuSerif(0)/m/n/10 “MACE-OFF23 \TU/NotoSansCJKsc-Regular.otf(0)/m/n/10 的 标 准 \TU/DejaVuSerif(0)/m/n/10 streamed/direct \TU/NotoSansCJKsc-Regular.otf(0)/m/n/10 路 径\TU/DejaVuSerif(0)/m/n/10 ” \TU/NotoSansCJKsc-Regular.otf(0)/m/n/10 与 \TU/DejaVuSerif(0)/m/n/10 “\TU/NotoSansCJKsc-Regular.otf(0)/m/n/10 本 仓 库 当 前 支 持 的 \TU/DejaVuSerif(0)/m/n/10 MACE_
-[6] [7] [8] [9] [10] [11] [12] [13] [14]
+[10] [11] [12] [13] [14] [15] [16] [17] [18]
 
 Package longtable Warning: Column widths have changed
-(longtable)                in table 5 on input line 878.
+(longtable)                in table 6 on input line 1000.
 
-[15] [16]
-
-Package longtable Warning: Column widths have changed
-(longtable)                in table 6 on input line 1045.
-
-[17] [18] [19]
+[19] [20]
 
 Package longtable Warning: Column widths have changed
-(longtable)                in table 7 on input line 1161.
+(longtable)                in table 7 on input line 1167.
 
-[20]
-
-Package longtable Warning: Column widths have changed
-(longtable)                in table 8 on input line 1192.
-
-[21] [22] [23] [24]
+[21] [22] [23]
 
 Package longtable Warning: Column widths have changed
-(longtable)                in table 11 on input line 1430.
+(longtable)                in table 8 on input line 1283.
 
-[25] [26]
-
-Package longtable Warning: Column widths have changed
-(longtable)                in table 12 on input line 1524.
-
+[24]
 
 Package longtable Warning: Column widths have changed
-(longtable)                in table 13 on input line 1557.
+(longtable)                in table 9 on input line 1314.
 
-[27] [28]
+[25] [26] [27] [28]
 
 Package longtable Warning: Column widths have changed
-(longtable)                in table 14 on input line 1671.
+(longtable)                in table 12 on input line 1552.
+
+[29] [30]
+
+Package longtable Warning: Column widths have changed
+(longtable)                in table 13 on input line 1646.
+
+
+Package longtable Warning: Column widths have changed
+(longtable)                in table 14 on input line 1679.
+
+[31] [32]
+
+Package longtable Warning: Column widths have changed
+(longtable)                in table 15 on input line 1793.
 
 
 Package longtable Warning: Table widths have changed. Rerun LaTeX.
 
-[29] (/home/qiuyong/bza/MLLP/symmetrix-polar/docs/tutorial/.build/tutorial.aux)
+[33] (/home/qiuyong/bza/MLLP/symmetrix-polar/docs/tutorial/.build/tutorial.aux)
 
 LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
 
  )
 (see the transcript file for additional information)
-Output written on /home/qiuyong/bza/MLLP/symmetrix-polar/docs/tutorial/.build/tutorial.pdf (30 pages).
+Output written on /home/qiuyong/bza/MLLP/symmetrix-polar/docs/tutorial/.build/tutorial.pdf (34 pages).
 Transcript written on /home/qiuyong/bza/MLLP/symmetrix-polar/docs/tutorial/.build/tutorial.log.

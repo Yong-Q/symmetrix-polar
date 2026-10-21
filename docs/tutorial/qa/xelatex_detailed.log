@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026) (preloaded format=xelatex 2026.7.6)  21 OCT 2026 16:41
+This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026) (preloaded format=xelatex 2026.7.6)  21 OCT 2026 16:57
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1326,133 +1326,143 @@ LaTeX Font Info:    Font shape `TU/DejaVuSans(0)/m/n' will be
 (Font)              scaled to size 8.542pt on input line 160.
  [2]
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(0)/b/n' will be
-(Font)              scaled to size 12.0pt on input line 181.
+(Font)              scaled to size 12.0pt on input line 178.
 LaTeX Font Info:    Font shape `TU/NotoSansCJKsc-Regular.otf(0)/b/n' will be
-(Font)              scaled to size 11.47046pt on input line 181.
+(Font)              scaled to size 11.47046pt on input line 178.
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(0)/m/n' will be
 (Font)              scaled to size 8.0pt on input line 183.
 LaTeX Font Info:    Font shape `TU/NotoSansCJKsc-Regular.otf(0)/m/n' will be
 (Font)              scaled to size 7.64697pt on input line 188.
-LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/b/n' will be
-(Font)              scaled to size 10.0pt on input line 231.
-LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/b/n' will be
-(Font)              scaled to size 7.0pt on input line 231.
-LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/b/n' will be
-(Font)              scaled to size 5.0pt on input line 231.
-LaTeX Font Info:    Font shape `TU/DejaVuSerif(0)/m/n' will be
-(Font)              scaled to size 7.0pt on input line 232.
-LaTeX Font Info:    Font shape `TU/DejaVuSerif(0)/m/n' will be
-(Font)              scaled to size 5.0pt on input line 232.
+File: figures/00_project_workflow.png Graphic file (type bmp)
+<figures/00_project_workflow.png>
  [3
 
 
 ]
+File: figures/00_polarmace_flow.png Graphic file (type bmp)
+<figures/00_polarmace_flow.png>
+ [4]
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/m/n' will be
-(Font)              scaled to size 10.0pt on input line 312.
+(Font)              scaled to size 10.0pt on input line 255.
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/m/n' will be
-(Font)              scaled to size 7.0pt on input line 312.
+(Font)              scaled to size 7.0pt on input line 255.
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/m/n' will be
-(Font)              scaled to size 5.0pt on input line 312.
- [4
+(Font)              scaled to size 5.0pt on input line 255.
+LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/b/n' will be
+(Font)              scaled to size 10.0pt on input line 257.
+LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/b/n' will be
+(Font)              scaled to size 7.0pt on input line 257.
+LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/b/n' will be
+(Font)              scaled to size 5.0pt on input line 257.
+File: figures/00_paths_comparison.png Graphic file (type bmp)
+<figures/00_paths_comparison.png>
+ [5] [6]
+LaTeX Font Info:    Font shape `TU/DejaVuSerif(0)/m/n' will be
+(Font)              scaled to size 7.0pt on input line 354.
+LaTeX Font Info:    Font shape `TU/DejaVuSerif(0)/m/n' will be
+(Font)              scaled to size 5.0pt on input line 354.
+ [7
 
-] [5]
+] [8
+
+] [9]
 LaTeX Font Info:    Font shape `TU/latinmodern-math.otf(1)/m/n' will be
-(Font)              scaled to size 14.45123pt on input line 361.
+(Font)              scaled to size 14.45123pt on input line 483.
 LaTeX Font Info:    Font shape `TU/latinmodern-math.otf(1)/m/n' will be
-(Font)              scaled to size 9.63416pt on input line 361.
+(Font)              scaled to size 9.63416pt on input line 483.
 LaTeX Font Info:    Font shape `TU/latinmodern-math.otf(1)/m/n' will be
-(Font)              scaled to size 7.22562pt on input line 361.
+(Font)              scaled to size 7.22562pt on input line 483.
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/m/n' will be
-(Font)              scaled to size 12.0pt on input line 361.
+(Font)              scaled to size 12.0pt on input line 483.
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/m/n' will be
-(Font)              scaled to size 8.0pt on input line 361.
+(Font)              scaled to size 8.0pt on input line 483.
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/m/n' will be
-(Font)              scaled to size 6.0pt on input line 361.
+(Font)              scaled to size 6.0pt on input line 483.
 LaTeX Font Info:    Font shape `TU/latinmodern-math.otf(2)/m/n' will be
-(Font)              scaled to size 14.4527pt on input line 361.
+(Font)              scaled to size 14.4527pt on input line 483.
 LaTeX Font Info:    Font shape `TU/latinmodern-math.otf(2)/m/n' will be
-(Font)              scaled to size 9.63513pt on input line 361.
+(Font)              scaled to size 9.63513pt on input line 483.
 LaTeX Font Info:    Font shape `TU/latinmodern-math.otf(2)/m/n' will be
-(Font)              scaled to size 7.22635pt on input line 361.
+(Font)              scaled to size 7.22635pt on input line 483.
 LaTeX Font Info:    Font shape `TU/latinmodern-math.otf(3)/m/n' will be
-(Font)              scaled to size 14.44977pt on input line 361.
+(Font)              scaled to size 14.44977pt on input line 483.
 LaTeX Font Info:    Font shape `TU/latinmodern-math.otf(3)/m/n' will be
-(Font)              scaled to size 9.63318pt on input line 361.
+(Font)              scaled to size 9.63318pt on input line 483.
 LaTeX Font Info:    Font shape `TU/latinmodern-math.otf(3)/m/n' will be
-(Font)              scaled to size 7.22488pt on input line 361.
+(Font)              scaled to size 7.22488pt on input line 483.
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/b/n' will be
-(Font)              scaled to size 12.0pt on input line 361.
+(Font)              scaled to size 12.0pt on input line 483.
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/b/n' will be
-(Font)              scaled to size 8.0pt on input line 361.
+(Font)              scaled to size 8.0pt on input line 483.
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(1)/b/n' will be
-(Font)              scaled to size 6.0pt on input line 361.
- [6
+(Font)              scaled to size 6.0pt on input line 483.
+ [10
 
 ]
-Underfull \hbox (badness 2103) in paragraph at lines 463--467
+Underfull \hbox (badness 2103) in paragraph at lines 585--589
 []\TU/NotoSansCJKsc-Regular.otf(0)/m/n/10 下 面 采 用 明 确 名 称：| \TU/DejaVuSerif(0)/m/n/10 “MACE-OFF23 \TU/NotoSansCJKsc-Regular.otf(0)/m/n/10 的 标 准 \TU/DejaVuSerif(0)/m/n/10 streamed/direct \TU/NotoSansCJKsc-Regular.otf(0)/m/n/10 路 径\TU/DejaVuSerif(0)/m/n/10 ” \TU/NotoSansCJKsc-Regular.otf(0)/m/n/10 与 \TU/DejaVuSerif(0)/m/n/10 “\TU/NotoSansCJKsc-Regular.otf(0)/m/n/10 本 仓 库 当 前 支 持 的 \TU/DejaVuSerif(0)/m/n/10 MACE_
  []
 
-[7]
+[11]
 File: figures/concept_local_polarization.png Graphic file (type bmp)
 <figures/concept_local_polarization.png>
 File: figures/references/polar_original_fig1.png Graphic file (type bmp)
 <figures/references/polar_original_fig1.png>
- [8
+ [12
 
-] [9] [10] [11]
+] [13] [14] [15]
 File: figures/concept_store_stream.png Graphic file (type bmp)
 <figures/concept_store_stream.png>
 File: figures/references/symmetrix_original_fig1.png Graphic file (type bmp)
 <figures/references/symmetrix_original_fig1.png>
- [12
+ [16
 
-] [13]
+] [17]
 File: figures/references/symmetrix_original_fig2.png Graphic file (type bmp)
 <figures/references/symmetrix_original_fig2.png>
- [14]
+ [18]
 File: figures/references/symmetrix_original_fig3.png Graphic file (type bmp)
 <figures/references/symmetrix_original_fig3.png>
- [15] [16
+ [19] [20
 
 ]
 File: figures/08_amdahl_example.png Graphic file (type bmp)
 <figures/08_amdahl_example.png>
- [17] [18
+ [21] [22
 
 ]
 File: figures/01_clean_ab.png Graphic file (type bmp)
 <figures/01_clean_ab.png>
- [19]
+ [23]
 File: figures/03_all_samples.png Graphic file (type bmp)
 <figures/03_all_samples.png>
 File: figures/02_history.png Graphic file (type bmp)
 <figures/02_history.png>
- [20] [21] [22
+ [24] [25] [26
 
 ]
 File: figures/07_md_parity.png Graphic file (type bmp)
 <figures/07_md_parity.png>
- [23]
+ [27]
 File: figures/05_reference_128.png Graphic file (type bmp)
 <figures/05_reference_128.png>
 File: figures/06_floor_vs_median.png Graphic file (type bmp)
 <figures/06_floor_vs_median.png>
- [24
+ [28
 
 ]
 File: figures/04_profile.png Graphic file (type bmp)
 <figures/04_profile.png>
- [25] [26] [27
+ [29] [30] [31
 
-] [28
+] [32
 
-] [29
+] [33
 
 ]
 LaTeX Font Info:    Font shape `TU/DejaVuSerif(0)/m/it' will be
-(Font)              scaled to size 10.0pt on input line 1616.
- [30
+(Font)              scaled to size 10.0pt on input line 1738.
+ [34
 
 ] (/home/qiuyong/bza/MLLP/symmetrix-polar/docs/tutorial/.build/tutorial.aux)
  ***********
@@ -1461,12 +1471,12 @@ L3 programming layer <2026/07/01>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 22099 strings out of 469794
- 482246 string characters out of 5468060
- 1017604 words of memory out of 5000000
- 50675 multiletter control sequences out of 15000+600000
+ 22137 strings out of 469794
+ 483634 string characters out of 5468060
+ 1017892 words of memory out of 5000000
+ 50710 multiletter control sequences out of 15000+600000
  637694 words of font info for 159 fonts, out of 8000000 for 9000
  36 hyphenation exceptions out of 8191
  93i,13n,116p,1251b,611s stack positions out of 10000i,1000n,20000p,200000b,200000s
 
-Output written on /home/qiuyong/bza/MLLP/symmetrix-polar/docs/tutorial/.build/tutorial.pdf (31 pages).
+Output written on /home/qiuyong/bza/MLLP/symmetrix-polar/docs/tutorial/.build/tutorial.pdf (35 pages).

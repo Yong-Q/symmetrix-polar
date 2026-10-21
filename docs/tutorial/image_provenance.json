@@ -10,5 +10,20 @@
     "tool": "image_gen.imagegen (built-in)",
     "prompt": "Use case: scientific-educational. Create a clean high-resolution textbook conceptual illustration, pure white background, landscape 3:2. Two large vertically stacked scenes, with exact tiny panel letters A and B only, no other text, no formulas, no numerical data. Topic: storing all intermediate results versus streaming and reusing temporary workspace in GPU inference. A: a left-to-right processing line: small blue input tiles enter a teal computation station, then many wide blue intermediate tensor slabs pile up in an overflowing transparent memory shelf, finally flowing to a small neat receiver accumulator. B: same blue input tiles and same teal computation station, but only one small intermediate tile at a time is immediately added into a compact receiver accumulator and reused; the temporary memory shelf stays shallow. Small arrows show the flow; neither process discards required final results. Represent temporary arrays as abstract blocks, not chemical molecules. Use navy outlines, muted cyan/teal surfaces, one restrained coral accent for excessive storage. Elegant educational infographic rendering with soft shadows and generous negative space, visually understandable without text. No performance or memory-size claim. This analogy illustrates scheduling, not a change to trained weights.",
     "status": "Conceptual illustration; not a computed molecular density or measurement."
+  },
+  {
+    "file": "00_project_workflow.png",
+    "tool": "image_gen.imagegen (built-in)",
+    "status": "Conceptual flowchart; manually inspected; no measured data."
+  },
+  {
+    "file": "00_polarmace_flow.png",
+    "tool": "image_gen.imagegen (built-in)",
+    "status": "Conceptual flowchart; manually inspected; no measured data."
+  },
+  {
+    "file": "00_paths_comparison.png",
+    "tool": "image_gen.imagegen (built-in)",
+    "status": "Conceptual flowchart; manually inspected; no measured data."
   }
 ]

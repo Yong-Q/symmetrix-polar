@@ -10,7 +10,7 @@
 
 - PDF：带页码目录与书签；数学公式为 TeX 矢量排版。
 - index.html：内嵌图片、CSS 与原生 MathML；下载后可离线打开，无需 CDN。
-- figures/：8 张 Python 图的 PNG/PDF/SVG、2 张概念图、4 张原论文图的提取副本。
+- figures/：8 张 Python 图的 PNG/PDF/SVG、5 张 image 概念／流程图、4 张原论文图的提取副本。
 - derived_metrics.json：从已有 JSON 派生的统计与换算，保留筛选规则。
 - image_provenance.json：概念图提示词、工具与用途。
 - qa/：编译与版式检查记录。图表附件使用 Type3 字体／SVG 文字轮廓确保中文完整；最终教程使用高清 PNG，数学公式仍为矢量。
