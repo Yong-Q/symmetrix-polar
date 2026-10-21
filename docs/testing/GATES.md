@@ -84,9 +84,15 @@ state-accumulation bug).
 (dE 2.910e-11 eV, max dF 2.611e-14 eV/Å), 2-rank exact (max dF
 1.687475e-6 eV/Å) **PASS**. Repeated evaluation over three runs: PE
 −49242.45641531493 identical, max dF 6.1e-16–1.06e-15 eV/Å; cross-binary vs
-the 31.33 build PE identical, max dF 6.661e-16. This is the **latest
-full-gate-passing version**; measured gap to 30 ms is 0.56 ms (projected
-30.10 vs the 31.33 accepted build).
+the 31.33 build PE identical, max dF 6.661e-16.
+
+**Plan B-micro (2026-10-21, binary `7061ecb0…`): 30.33 ms/eval.** module 5–8,
+32/32 end-to-end, LAMMPS 1-rank (dE 2.91e-11, dF 2.63e-14 eV/Å) and 2-rank
+exact (max dF 1.687e-6 eV/Å) **PASS**. Repeated evaluation: PE
+−49242.45641531493 ×3, max dF **6.66e-16**; cross-binary vs `f0d3f05a` PE
+identical, max dF 6.73e-16. This is the **latest full-gate-passing version**;
+measured gap to 30 ms is 0.33 ms (projected 30.21 vs the 30.557 accepted
+build).
 
 The two RBE rows are deliberately separate: the P4 implementation/statistics
 gate passes, while the production force gate is rejected. The p-scan and the

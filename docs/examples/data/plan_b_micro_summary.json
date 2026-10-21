@@ -1,0 +1,586 @@
+{
+ "system": "128-atom NH3 (32 molecules), full PolarMACE, FP64, A100-SXM4-80GB",
+ "protocol": {
+  "ab": "interleaved 2 rounds x 12 measured run 1, median of per-round medians, per-run GPU flock",
+  "warmup": "1 run 1",
+  "reference_binary": "bin/lmp_f0d3f05a = accepted 30.557 ms build",
+  "gpu_lock": "/workspace/group/shared/bza/.tmp/gpu.lock",
+  "build_lock": "/workspace/group/shared/bza/.tmp/build.lock"
+ },
+ "headline_ms": {
+  "accepted_gated_f0d3f05a": 30.557,
+  "screened_build": {
+   "source": "ab/final3_full.json (base/revonly/both, 2x12)",
+   "same_session_baseline_ms": 30.676925,
+   "fixed_binary_ms": 30.3249,
+   "saving_ms": 0.35202500000000114,
+   "confirmation_ab": {
+    "source": "ab/final_full.json (base/final, 2x12)",
+    "same_session_baseline_ms": 30.756125,
+    "fixed_binary_ms": 30.408075,
+    "saving_ms": 0.34805000000000064
+   }
+  },
+  "gap_to_30_ms_accepted": 0.5569999999999986,
+  "gap_to_30_ms_same_session": 0.3248999999999995,
+  "projection_vs_accepted": 30.204974999999997
+ },
+ "verdict": {
+  "slice_accepted": true,
+  "reason": "safe, bitwise-equivalent, full gates PASS; saving reproduced in two independent 2x12 A/Bs on the final binary (0.352 and 0.348 ms). The first 3-variant screen measured neutral (0.00 ms), so the conservative range is 0.2-0.35 ms; the accepted value is 0.35 ms.",
+  "attempt_1_tiny_cublas_grouping": "rejected analytically: 36 gemvx + 33 gemmk1 + 19 splitKreduce launches/eval (0.388 ms total) are m=1 / small-K GEMMs spread across 6 e3-linear modules with heterogeneous (k,width) shapes; at most two same-shape calls coexist in one evaluate, so no safe cross-module batch exists",
+  "attempt_2_host_sync_removal": "implemented and ACCEPTED: reverse-only 0.21 ms, forward+reverse 0.35 ms (final3 2x12); bitwise-correct",
+  "attempt_3_e3_pack_unpack_fusion": "not needed after attempt 2 landed 0.35 ms; also higher risk (pending-unpack restructure + flat 1-D mapping) and the previous merged-unpack variant measured slower"
+ },
+ "slices_screen": {
+  "rev_only": {
+   "median_of_medians_ms": 30.57595,
+   "saving_vs_base_ms": 0.025650000000002393
+  },
+  "forward_plus_reverse": {
+   "median_of_medians_ms": 30.603275,
+   "saving_vs_base_ms": -0.0016749999999987608
+  },
+  "forward_increment_ms": -0.027325000000001154
+ },
+ "ab_final3": {
+  "protocol": {
+   "config": "full",
+   "warmup": 1,
+   "measured": 12,
+   "statistic": "median of per-round medians of LAMMPS Loop time",
+   "rounds": 2,
+   "interleaved": true,
+   "order": "alternating",
+   "gpu_state_sampled": true
+  },
+  "variants": {
+   "base": {
+    "round_medians_ms": [
+     30.4786,
+     30.87525
+    ],
+    "median_of_medians_ms": 30.676925,
+    "min_ms": 30.4786
+   },
+   "revonly": {
+    "round_medians_ms": [
+     30.35465,
+     30.58165
+    ],
+    "median_of_medians_ms": 30.46815,
+    "min_ms": 30.35465
+   },
+   "both": {
+    "round_medians_ms": [
+     30.135399999999997,
+     30.5144
+    ],
+    "median_of_medians_ms": 30.3249,
+    "min_ms": 30.135399999999997
+   }
+  }
+ },
+ "ab_final": {
+  "protocol": {
+   "config": "full",
+   "warmup": 1,
+   "measured": 12,
+   "statistic": "median of per-round medians of LAMMPS Loop time",
+   "rounds": 2,
+   "interleaved": true,
+   "order": "alternating",
+   "gpu_state_sampled": true
+  },
+  "variants": {
+   "base": {
+    "round_medians_ms": [
+     30.821550000000002,
+     30.6907
+    ],
+    "median_of_medians_ms": 30.756125,
+    "min_ms": 30.6907
+   },
+   "final": {
+    "round_medians_ms": [
+     30.60445,
+     30.2117
+    ],
+    "median_of_medians_ms": 30.408075,
+    "min_ms": 30.2117
+   }
+  }
+ },
+ "slices_final3": {
+  "rev_only": {
+   "median_of_medians_ms": 30.46815,
+   "saving_vs_base_ms": 0.20877499999999927
+  },
+  "forward_plus_reverse": {
+   "median_of_medians_ms": 30.3249,
+   "saving_vs_base_ms": 0.35202500000000114
+  },
+  "forward_increment_ms": 0.14325000000000188
+ },
+ "binary": {
+  "path": "bin/lmp_micro (fixed final)",
+  "sha256": "7061ecb09962bc0f23af2e9da8024309b0a110f484baaf100fa928a175175095",
+  "bytes": 199523584,
+  "reference": {
+   "path": "bin/lmp_f0d3f05a",
+   "sha256": "f0d3f05aabecb7021dca847c27434fff706a541cf5f62f545f953eadf9daf103",
+   "bytes": 199011656
+  }
+ },
+ "python_module": {
+  "path": "pyb/symmetrix/symmetrix.cpython-312-x86_64-linux-gnu.so",
+  "sha256": "f3dd22327c1d2ac8072690e05c5a2245b430eee527a356f71e85a0cf1a5327aa"
+ },
+ "source": {
+  "tree": "private work/symmetrix (baseline snapshot + apply_fukui_dev.py)",
+  "baseline_hashes": {
+   "libsymmetrix/source/mace_polar_impl.tpp": "6a3da179a0258bdcd3dd6163fa519d1b39fe762dfdd57f23eef13f087c441cbc",
+   "libsymmetrix/source/affine_mlp_kokkos.cpp": "5fcc7bd447c41db0f72362bcd9c1d7459230187eeb4ab397e7fc4ec7ca855f52",
+   "libsymmetrix/source/affine_mlp_kokkos.hpp": "8aeb657adc5ff5fb953917f987be8efdf8806b234b037a4f61cce35fb8859c34",
+   "libsymmetrix/source/e3nn_kokkos.cpp": "d0a2b3b6eb646a14e468aac7c452bdaebc947d2582f0ab84e7429e90eab5f368",
+   "libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp": "2b0d1293e38f2668d3654da61f4bcf257621d9c8a1aca467aa2681ed847794ce",
+   "libsymmetrix/source/mace_nonlinear_kokkos.hpp": "af47943c6a0c2aa7cfe14bfb316f700fbfa88fcd62ddb658baa50587d2246c60",
+   "libsymmetrix/source/e3nn_kokkos.hpp": "7cff64746678163146f44010d85ce7a639189bdd30af112bd7b4d804a477e8b0",
+   "pair_symmetrix/pair_symmetrix_mace_kokkos.cpp": "df3b3f0c92f8d34d898435b13f2b1e91a0c3c229472abfc0353c12f40843543d"
+  },
+  "final_hashes": {
+   "libsymmetrix/source/mace_polar_impl.tpp": "aabb1c954a075b853d540ff5d9833635fc827b26237ca5829fab6a93300ab5b0",
+   "libsymmetrix/source/mace_nonlinear_kokkos.hpp": "1f8d720409a08acd34fdb092675d3d0b2980bd303495e9e270066c759b50a535",
+   "symmetrix/source/cpp/mace_nonlinear_kokkos.cpp": "54e9f0b38079468ba5a4f8edaef256d1486c0924554c3b2729035ad00b5d4b82"
+  }
+ },
+ "gates": {
+  "module5": {
+   "verdict": "PASS"
+  },
+  "module6": {
+   "verdict": "PASS"
+  },
+  "module7": {
+   "verdict": "PASS",
+   "configs": 16
+  },
+  "module8": {
+   "verdict": "PASS"
+  },
+  "endtoend_32": {
+   "verdict": "PASS",
+   "n_pass": 32,
+   "n_total": 32,
+   "dE_abs_max_eV": 1.034321030601859e-06,
+   "dF_max_eV_per_A": 1.6236539757130686e-07
+  },
+  "lammps_parity_1rank": {
+   "pass": true,
+   "dE_eV": 2.9103830456733704e-11,
+   "max_dF_eV_per_A": 2.6269406002236526e-14
+  },
+  "lammps_parity_2rank": {
+   "pass": true,
+   "dE_eV": 2.9103830456733704e-11,
+   "max_dF_eV_per_A": 1.6874754343752858e-06
+  },
+  "note": "rc=134 after GATE PASS is the pre-existing Kokkos/CUDA teardown abort"
+ },
+ "repeated_eval": {
+  "protocol": "three run 0 at fixed positions, 17-digit force dumps",
+  "final_binary": {
+   "pe": [
+    -49242.45641531493,
+    -49242.45641531493,
+    -49242.45641531493
+   ],
+   "dPE_1": 0.0,
+   "dPE_2": 0.0,
+   "max_dF_1": 6.661338147750939e-16,
+   "max_dF_2": 6.661338147750939e-16
+  },
+  "pre_fix_binary": {
+   "pe": [
+    -49242.45641531493,
+    -49242.45641531493,
+    -49242.45641531493
+   ],
+   "dPE_1": 0.0,
+   "dPE_2": 0.0,
+   "max_dF_1": 6.38378239159465e-16,
+   "max_dF_2": 8.881784197001252e-16
+  },
+  "baseline": {
+   "pe": [
+    -49242.45641531493,
+    -49242.45641531493,
+    -49242.45641531493
+   ],
+   "dPE_1": 0.0,
+   "dPE_2": 0.0,
+   "max_dF_1": 7.494005416219807e-16,
+   "max_dF_2": 8.881784197001252e-16
+  },
+  "verdict": "PASS"
+ },
+ "cross_binary": {
+  "pair": "bin/lmp_f0d3f05a vs bin/lmp_micro (final binary)",
+  "pe_identical_17g": true,
+  "max_dF_eV_per_A": 6.730727086790012e-16,
+  "note": "cross-process FP64 noise level; the accepted build itself shows 7.5e-16 between two runs"
+ },
+ "trace": {
+  "tag": "base30 (accepted 30.557 binary)",
+  "gpu_busy_ms": 26.414012,
+  "launches": 1060,
+  "wall_ms": 30.557,
+  "non_kernel_gap_ms": 4.142987999999999,
+  "families": [
+   {
+    "family": "polar pipeline",
+    "total_ms": 11.173885,
+    "launches": 235,
+    "sm_weighted_ms": 5.702036820472412
+   },
+   {
+    "family": "cuBLAS/external",
+    "total_ms": 3.65828,
+    "launches": 272,
+    "sm_weighted_ms": 0.5419674074074073
+   },
+   {
+    "family": "tensor product",
+    "total_ms": 3.6497729999999997,
+    "launches": 12,
+    "sm_weighted_ms": 3.6497729999999997
+   },
+   {
+    "family": "e3nn linear",
+    "total_ms": 2.576396,
+    "launches": 408,
+    "sm_weighted_ms": 1.701531185185185
+   },
+   {
+    "family": "backbone nonlinear",
+    "total_ms": 2.3982849999999996,
+    "launches": 42,
+    "sm_weighted_ms": 1.6154022891846713
+   },
+   {
+    "family": "other",
+    "total_ms": 1.6455910000000002,
+    "launches": 32,
+    "sm_weighted_ms": 1.1042918148148149
+   },
+   {
+    "family": "MLP/dense",
+    "total_ms": 1.272507,
+    "launches": 43,
+    "sm_weighted_ms": 1.0285968859953705
+   },
+   {
+    "family": "Kokkos init/fill",
+    "total_ms": 0.028637999999999997,
+    "launches": 14,
+    "sm_weighted_ms": 0.0009276666666666666
+   },
+   {
+    "family": "radial/spline",
+    "total_ms": 0.010657,
+    "launches": 2,
+    "sm_weighted_ms": 0.0018008356481481482
+   }
+  ],
+  "top_labels": [
+   {
+    "block": 128,
+    "grid": "64x1x1",
+    "regs": 56,
+    "smem": 40960,
+    "occ_theoretical": 0.25,
+    "sm_coverage": 0.14814814814814814,
+    "grid_blocks": 64,
+    "blocks_per_sm": 4,
+    "label": "cuBLAS/external",
+    "family": "cuBLAS/external",
+    "total_ms": 3.65828,
+    "launches": 272,
+    "avg_us": 0.013449558823529412,
+    "sm_weighted_ms": 0.5419674074074073
+   },
+   {
+    "block": 256,
+    "grid": "1024x1x1",
+    "regs": 40,
+    "smem": 6216,
+    "occ_theoretical": 0.75,
+    "sm_coverage": 1.0,
+    "grid_blocks": 1024,
+    "blocks_per_sm": 6,
+    "label": "polar reverse uvu mode0 x2",
+    "family": "polar pipeline",
+    "total_ms": 2.132115,
+    "launches": 10,
+    "avg_us": 213.21150000000003,
+    "sm_weighted_ms": 2.132115
+   },
+   {
+    "block": 128,
+    "grid": "4652x1x1",
+    "regs": 40,
+    "smem": 1056,
+    "occ_theoretical": 0.75,
+    "sm_coverage": 1.0,
+    "grid_blocks": 4652,
+    "blocks_per_sm": 12,
+    "label": "e3 tensor product mh1 team channels",
+    "family": "tensor product",
+    "total_ms": 1.650615,
+    "launches": 2,
+    "avg_us": 825.3075,
+    "sm_weighted_ms": 1.650615
+   },
+   {
+    "block": 256,
+    "grid": "1024x1x1",
+    "regs": 40,
+    "smem": 6216,
+    "occ_theoretical": 0.75,
+    "sm_coverage": 1.0,
+    "grid_blocks": 1024,
+    "blocks_per_sm": 6,
+    "label": "polar reverse uvu mode0 x1",
+    "family": "polar pipeline",
+    "total_ms": 1.453496,
+    "launches": 10,
+    "avg_us": 145.34959999999998,
+    "sm_weighted_ms": 1.453496
+   },
+   {
+    "block": 128,
+    "grid": "512x1x1",
+    "regs": 64,
+    "smem": 0,
+    "occ_theoretical": 0.5,
+    "sm_coverage": 0.5925925925925926,
+    "grid_blocks": 512,
+    "blocks_per_sm": 8,
+    "label": "compiled product reverse",
+    "family": "other",
+    "total_ms": 0.99129,
+    "launches": 2,
+    "avg_us": 495.645,
+    "sm_weighted_ms": 0.5874311111111111
+   },
+   {
+    "block": 128,
+    "grid": "74432x1x1",
+    "regs": 44,
+    "smem": 1088,
+    "occ_theoretical": 0.6875,
+    "sm_coverage": 1.0,
+    "grid_blocks": 74432,
+    "blocks_per_sm": 11,
+    "label": "e3 tensor reverse mh1 team harmonics",
+    "family": "tensor product",
+    "total_ms": 0.974555,
+    "launches": 2,
+    "avg_us": 487.2775,
+    "sm_weighted_ms": 0.974555
+   },
+   {
+    "block": 128,
+    "grid": "4652x1x1",
+    "regs": 48,
+    "smem": 1056,
+    "occ_theoretical": 0.625,
+    "sm_coverage": 1.0,
+    "grid_blocks": 4652,
+    "blocks_per_sm": 10,
+    "label": "e3 tensor reverse mh1 team channels",
+    "family": "tensor product",
+    "total_ms": 0.934491,
+    "launches": 2,
+    "avg_us": 467.2455,
+    "sm_weighted_ms": 0.934491
+   },
+   {
+    "block": 256,
+    "grid": "16x64x1",
+    "regs": 20,
+    "smem": 0,
+    "occ_theoretical": 1.0,
+    "sm_coverage": 1.0,
+    "grid_blocks": 1024,
+    "blocks_per_sm": 8,
+    "label": "e3 linear unpack",
+    "family": "e3nn linear",
+    "total_ms": 0.926519,
+    "launches": 107,
+    "avg_us": 8.659056074766355,
+    "sm_weighted_ms": 0.926519
+   },
+   {
+    "block": 256,
+    "grid": "2x512x1",
+    "regs": 30,
+    "smem": 0,
+    "occ_theoretical": 1.0,
+    "sm_coverage": 1.0,
+    "grid_blocks": 1024,
+    "blocks_per_sm": 8,
+    "label": "nonlinear gather messages",
+    "family": "backbone nonlinear",
+    "total_ms": 0.848858,
+    "launches": 2,
+    "avg_us": 424.429,
+    "sm_weighted_ms": 0.848858
+   },
+   {
+    "block": 256,
+    "grid": "1024x1x1",
+    "regs": 40,
+    "smem": 6216,
+    "occ_theoretical": 0.75,
+    "sm_coverage": 1.0,
+    "grid_blocks": 1024,
+    "blocks_per_sm": 6,
+    "label": "polar uvu mode0",
+    "family": "polar pipeline",
+    "total_ms": 0.768538,
+    "launches": 6,
+    "avg_us": 128.08966666666666,
+    "sm_weighted_ms": 0.768538
+   },
+   {
+    "block": 64,
+    "grid": "4652x1x1",
+    "regs": 39,
+    "smem": 608,
+    "occ_theoretical": 0.8125,
+    "sm_coverage": 1.0,
+    "grid_blocks": 4652,
+    "blocks_per_sm": 26,
+    "label": "affine fused layer norm silu",
+    "family": "MLP/dense",
+    "total_ms": 0.75667,
+    "launches": 22,
+    "avg_us": 34.394090909090906,
+    "sm_weighted_ms": 0.75667
+   },
+   {
+    "block": 256,
+    "grid": "16x64x1",
+    "regs": 16,
+    "smem": 0,
+    "occ_theoretical": 1.0,
+    "sm_coverage": 1.0,
+    "grid_blocks": 1024,
+    "blocks_per_sm": 8,
+    "label": "e3 reverse linear pack",
+    "family": "e3nn linear",
+    "total_ms": 0.705023,
+    "launches": 97,
+    "avg_us": 7.268278350515463,
+    "sm_weighted_ms": 0.705023
+   },
+   {
+    "block": 256,
+    "grid": "256x1x1",
+    "regs": 38,
+    "smem": 18504,
+    "occ_theoretical": 0.75,
+    "sm_coverage": 0.3950617283950617,
+    "grid_blocks": 256,
+    "blocks_per_sm": 6,
+    "label": "polar le uvu mode0",
+    "family": "polar pipeline",
+    "total_ms": 0.681853,
+    "launches": 4,
+    "avg_us": 170.46325000000002,
+    "sm_weighted_ms": 0.269374024691358
+   },
+   {
+    "block": 256,
+    "grid": "2x128x1",
+    "regs": 48,
+    "smem": 0,
+    "occ_theoretical": 0.625,
+    "sm_coverage": 0.4740740740740741,
+    "grid_blocks": 256,
+    "blocks_per_sm": 5,
+    "label": "polar reverse uvu mode1 x1",
+    "family": "polar pipeline",
+    "total_ms": 0.627773,
+    "launches": 2,
+    "avg_us": 313.8865,
+    "sm_weighted_ms": 0.29761090370370374
+   },
+   {
+    "block": 256,
+    "grid": "2x128x1",
+    "regs": 32,
+    "smem": 0,
+    "occ_theoretical": 1.0,
+    "sm_coverage": 0.2962962962962963,
+    "grid_blocks": 256,
+    "blocks_per_sm": 8,
+    "label": "polar uvu mode1",
+    "family": "polar pipeline",
+    "total_ms": 0.624348,
+    "launches": 2,
+    "avg_us": 312.17400000000004,
+    "sm_weighted_ms": 0.184992
+   },
+   {
+    "block": 256,
+    "grid": "2x128x1",
+    "regs": 32,
+    "smem": 0,
+    "occ_theoretical": 1.0,
+    "sm_coverage": 0.2962962962962963,
+    "grid_blocks": 256,
+    "blocks_per_sm": 8,
+    "label": "polar reverse uvu mode1 x2",
+    "family": "polar pipeline",
+    "total_ms": 0.614365,
+    "launches": 2,
+    "avg_us": 307.1825,
+    "sm_weighted_ms": 0.18203407407407407
+   },
+   {
+    "block": 256,
+    "grid": "1x64x1",
+    "regs": 16,
+    "smem": 0,
+    "occ_theoretical": 1.0,
+    "sm_coverage": 0.07407407407407407,
+    "grid_blocks": 64,
+    "blocks_per_sm": 8,
+    "label": "e3 linear pack",
+    "family": "e3nn linear",
+    "total_ms": 0.533242,
+    "launches": 107,
+    "avg_us": 4.983570093457944,
+    "sm_weighted_ms": 0.03949940740740741
+   },
+   {
+    "block": 128,
+    "grid": "37x1x1",
+    "regs": 32,
+    "smem": 0,
+    "occ_theoretical": 1.0,
+    "sm_coverage": 0.02141203703703704,
+    "grid_blocks": 37,
+    "blocks_per_sm": 16,
+    "label": "nonlinear edge features",
+    "family": "backbone nonlinear",
+    "total_ms": 0.504444,
+    "launches": 2,
+    "avg_us": 252.222,
+    "sm_weighted_ms": 0.010801173611111112
+   }
+  ]
+ }
+}

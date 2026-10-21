@@ -101,8 +101,24 @@ Artifacts: `bench/plan_b_full_2026-10-20/` and
 
 Artifacts: `bench/plan_b_30ms_2026-10-21/` and
 `docs/results/PLAN_B_30MS_FINAL.md`. Measured gap to 30 ms: **0.56 ms**;
-accepted-relative projection 30.10 ms. No further safe ≥0.2 ms slice was
-found; 20–25 ms remains not credible.
+accepted-relative projection 30.10 ms.
+
+### Plan B-micro final result (2026-10-21)
+
+| Item | Value |
+|---|---:|
+| 128 atoms (32 NH3), full PolarMACE | **30.33 ms/eval** |
+| Same-session 30.56 baseline | 30.68 ms/eval |
+| Saving | **−0.352 ms** |
+| Slice | 1-rank device Fukui scalars (reverse 0.209 + forward 0.143) |
+| Final binary sha256 | `7061ecb09962bc0f23af2e9da8024309b0a110f484baaf100fa928a175175095` |
+| Gates | module 5–8, 32/32, LAMMPS 1/2-rank, repeated-eval: **PASS** |
+
+Artifacts: `bench/plan_b_micro_2026-10-21/` and
+`docs/results/PLAN_B_MICRO_FINAL.md`. Measured gap to 30 ms: **0.33 ms**;
+accepted-relative projection **30.21 ms**. Remaining wall is GPU work
+(UVU x2 2.13, MH-1 1.65, cuBLAS 3.66, e3 2.58 ms); no further safe ≥0.2 ms
+slice was found. 20–25 ms remains not credible.
 
 The interleaved A/B is deliberate: absolute times are contention-sensitive,
 while same-run ratios are stable. A speed claim without an interleaved baseline
