@@ -335,19 +335,26 @@ with the buggy kernel.
 | **Full PolarMACE (water)** | **FP64** | **1,296** | **materialized + cache + team cutoff** | **462.4** | **599.77** |
 | Full PolarMACE (water) | FP64 | 2,592 | materialized | **OOM** | — |
 | Full PolarMACE (water) | FP64 | 5,184 | materialized | **OOM** | — |
-| Full PolarMACE (water) | FP64 | 1,296 | S1 generic backbone streaming (independent branch, not merged) | 306.5 | 397.2 |
-| **Full PolarMACE (water)** | **FP64** | **5,184** | **S1 generic backbone streaming (first working run)** | **299.4** | **1552.3** |
+| Full PolarMACE (water) | FP64 | 1,296 | S1 generic backbone streaming (historical PoC, not merged) | 306.5 | 397.2 |
+| Full PolarMACE (water) | FP64 | 5,184 | S1 generic backbone streaming (first working run) | 299.4 | 1552.3 |
+| **Full PolarMACE (water)** | **FP64** | **1,296** | **S1.1 node-contiguous tile + fused reverse (independent branch)** | **214.6** | **278.15** |
+| **Full PolarMACE (water)** | **FP64** | **5,184** | **S1.1 node-contiguous tile + fused reverse** | **209.2** | **1084.25** |
 
 The 5,184-atom materialized path is **blocked by device memory**, not kernel
 speed: at 2,592 atoms the workspace already fails a 2.0 GiB allocation after
 filling an A100 80 GB, and 5,184 fails a 0.567 GiB allocation. The S1
 backbone-streaming PoC (independent `s1-backbone-streaming` branch, default
-off) is the first working 5,184-atom full PolarMACE run on one A100:
-**1552.3 ms/eval (299.4 µs/atom), 19.65 GiB peak, rc=0, parity/repeat PASS**.
-At 1,296 it is **36.95% slower** than materialized (290.0 → 397.2 ms) while
-cutting peak VRAM 39.9 → 9.0 GiB (4.43×). It is a capacity/S3 bridge, not a
-1,296 speed win; default remains `materialized`.
-See `docs/results/S1_BACKBONE_STREAMING_POC_RESULTS.md`.
+off) was the first working 5,184-atom full PolarMACE run: **1552.3 ms/eval
+(299.4 µs/atom), 19.65 GiB, parity/repeat PASS**. S1.1
+(`s1.1-tile-cache`, node-contiguous 16k-edge tiles + fused reverse gather)
+improves it to **278.15 ms/eval at 1,296 (3.9% faster than the 289.43 ms
+materialized baseline) with 8.55 GiB peak (4.67× lower)**, and **1084.25
+ms/eval at 5,184 with 19.21 GiB**. S1.1 is numerically correct (128:
+dPE=0, dF=1.8e-15; 1,296: dPE=0, dF=5.8e-13; repeat drift 0). It is still
+an independent branch, not merged; default remains `materialized` until it is
+rebased onto A1 and the full gate suite is rerun. See
+`docs/results/S1_1_TILE_CACHE_RESULTS.md` and
+`docs/results/S1_BACKBONE_STREAMING_POC_RESULTS.md`.
 
 The polar model is not a slower version of the paper's linear model: the
 same-box linear → polar ratio is **7.4×**, FP64 adds ~2×, materialized vs
