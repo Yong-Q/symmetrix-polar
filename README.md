@@ -335,13 +335,19 @@ with the buggy kernel.
 | **Full PolarMACE (water)** | **FP64** | **1,296** | **materialized + cache + team cutoff** | **462.4** | **599.77** |
 | Full PolarMACE (water) | FP64 | 2,592 | materialized | **OOM** | — |
 | Full PolarMACE (water) | FP64 | 5,184 | materialized | **OOM** | — |
+| Full PolarMACE (water) | FP64 | 1,296 | S1 generic backbone streaming (independent branch, not merged) | 306.5 | 397.2 |
+| **Full PolarMACE (water)** | **FP64** | **5,184** | **S1 generic backbone streaming (first working run)** | **299.4** | **1552.3** |
 
-The 5,184-atom polar comparison is currently **blocked by device memory**, not
-by kernel speed: at 2,592 atoms the materialized workspace already fails a
-2.0 GiB allocation after filling an A100 80 GB, and 5,184 fails a 0.567 GiB
-allocation. The paper's 5,184/11.24M-atom capacity is for standard MACE with
-streamed/tiled execution; PolarMACE's graph-wide SCF/Ewald workspace needs a
-tiled polar workspace or multi-GPU to reach that atom count.
+The 5,184-atom materialized path is **blocked by device memory**, not kernel
+speed: at 2,592 atoms the workspace already fails a 2.0 GiB allocation after
+filling an A100 80 GB, and 5,184 fails a 0.567 GiB allocation. The S1
+backbone-streaming PoC (independent `s1-backbone-streaming` branch, default
+off) is the first working 5,184-atom full PolarMACE run on one A100:
+**1552.3 ms/eval (299.4 µs/atom), 19.65 GiB peak, rc=0, parity/repeat PASS**.
+At 1,296 it is **36.95% slower** than materialized (290.0 → 397.2 ms) while
+cutting peak VRAM 39.9 → 9.0 GiB (4.43×). It is a capacity/S3 bridge, not a
+1,296 speed win; default remains `materialized`.
+See `docs/results/S1_BACKBONE_STREAMING_POC_RESULTS.md`.
 
 The polar model is not a slower version of the paper's linear model: the
 same-box linear → polar ratio is **7.4×**, FP64 adds ~2×, materialized vs
