@@ -1,0 +1,14 @@
+
+:root{color-scheme:light;--blue:#154d76;--cyan:#008c9e;--ink:#243544;--muted:#617484}
+*{box-sizing:border-box}body{margin:0;background:#edf3f6;color:var(--ink);font-family:'Noto Sans CJK SC','Microsoft YaHei',sans-serif;line-height:1.85;font-size:17px}
+body>header,body>nav,body>section,body>h1,body>h2,body>h3,body>p,body>table,body>figure,body>ul,body>ol,body>div,body>blockquote{max-width:1000px;margin-left:auto;margin-right:auto}
+body{padding:40px 28px 100px;background:linear-gradient(#e5f2f6 0 400px,#fff 400px)}
+header{padding:35px 0 40px;border-bottom:3px solid var(--cyan)}header .title{font-size:38px;line-height:1.35;color:var(--blue);margin:0 0 20px}header p{color:var(--muted);margin:7px 0}
+h1{font-size:29px;color:var(--blue);line-height:1.5;margin-top:64px!important;border-bottom:2px solid #bee3e8;padding-bottom:15px}h2{font-size:23px;color:var(--cyan);line-height:1.5;margin-top:35px!important}h3{color:var(--blue)}
+#TOC{background:white;border:1px solid #c5dce5;border-radius:10px;padding:25px 30px;margin-top:35px;margin-bottom:45px}#TOC ul{padding-left:25px}#TOC li{margin:5px 0}a{color:var(--blue);text-decoration-thickness:1px;text-underline-offset:3px}
+p{margin-top:15px;margin-bottom:15px}strong{color:var(--blue)}img{display:block;max-width:100%;height:auto;margin:28px auto 12px}figure{margin-top:34px;margin-bottom:34px}figcaption{font-size:14px;line-height:1.7;color:var(--muted);padding:10px 15px;border-left:3px solid var(--cyan);background:#f2f8fa}
+table{border-collapse:collapse;width:100%;font-size:15px;line-height:1.65;margin-top:24px;margin-bottom:28px}th{background:#e8f3f7;color:var(--blue);text-align:left}th,td{padding:11px 12px;border-bottom:1px solid #d4e0e6;vertical-align:top}tr:nth-child(even){background:#f8fbfc}
+code{font-size:.86em;background:#eff4f7;padding:2px 5px;overflow-wrap:anywhere}pre{padding:20px;background:#eff4f7;overflow:auto}math[display='block']{margin:25px auto;overflow-x:auto;overflow-y:hidden;padding:8px;max-width:100%}math{font-family:'STIX Two Math','Cambria Math',math}
+blockquote{border-left:4px solid var(--cyan);background:#f1f7fa;padding:10px 25px;color:var(--muted)}.offline-note{font-size:14px;color:var(--muted);margin-top:35px}
+@media(max-width:700px){body{font-size:16px;padding:20px 16px}header .title{font-size:29px}h1{font-size:25px}h2{font-size:21px}table{display:block;overflow-x:auto}#TOC{padding:18px}}
+@media print{body{background:#fff;padding:0;font-size:11pt}h1{break-before:page}header{break-after:page}#TOC{break-after:page}a{color:inherit}table,figure{break-inside:avoid}}

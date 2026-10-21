@@ -4,3 +4,8 @@ __pycache__/
 *.pyc
 pytools/
 docs/technical/fonts/
+
+# Tutorial build: downloaded reference copies and task-owned caches
+docs/report/sources/
+docs/tutorial/.build/
+docs/report/figures/references/

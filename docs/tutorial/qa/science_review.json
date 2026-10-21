@@ -1,0 +1,24 @@
+{
+  "source_characters": 31583,
+  "figures": 14,
+  "display_equations": 29,
+  "science_review_scope": [
+    "MACE-POLAR equations and spin conventions",
+    "finite updates versus SCF",
+    "Fourier normalization and Gaussian smearing",
+    "equivariance/body order/channel distinctions",
+    "streaming implementation limits",
+    "FP64 sector example",
+    "JSON-derived normalization and summary statistics",
+    "parity versus physical accuracy"
+  ],
+  "review_outcome": "No blocking mathematical or scientific inconsistency found in source-based review. Not a substitute for GPU regression or target-system physical validation.",
+  "benchmark_execution_this_revision": false,
+  "unit": "µs/atom/step",
+  "notes": [
+    "Full original timing records are unchanged.",
+    "Stable-round estimates and all-round summaries are distinguished.",
+    "Original papers and figures are credited separately from project measurements.",
+    "AI illustrations are qualitative; no synthetic benchmark values are plotted."
+  ]
+}
