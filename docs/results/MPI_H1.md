@@ -147,16 +147,27 @@ system (432/1024 atoms) where the ghost ratio is smaller.
 
 ## 6. Operational state
 
-- The 1-GPU remote probe `t-20261019191724-4zbd7` (`queue004`) was still
-  `queued` at the last check; it validates the self-contained remote package
-  and measures 1-rank baselines for 128/432/1024 atoms.
+- **1-GPU remote probe `t-20261019191724-4zbd7` (`queue004`): FINISHED,
+  Success (2026-10-20 06:23 UTC).** The remote package runs on a real
+  A100-SXM4-80GB and reproduced the local round-2-era 1-rank timings:
+  128 atoms **0.611576 s / 5 steps = 122.3 ms/step**, 432 atoms **1.47169 s
+  / 5 = 294.3 ms/step**, 1024 atoms **3.05202 s / 5 = 610.4 ms/step**
+  (`bench/mpi_scaling_2026-10-19/remote/attempt-02/`). This validates the
+  remote runtime, not the Plan B build: the probe predates Plan B.
 - The 2-GPU submit to `devinstance-queue3` returned `SubmitOutcomeUnknown`
-  (Volc CLI exit 255); the local reservation `pending-7dea5a64…` holds 2 GPUs
-  and must be reconciled by task name/workdir before a resubmit.
-- Queue3 reported `freeGpuCount=0`; queue004 has 12 free GPUs but a hard
-  1-GPU/task policy and no 2-GPU flavor.
+  (Volc CLI exit 255). Its visible workdir `remote/attempt-01/` contains only
+  inputs and no logs or dumps, so no remote instance ran; remote acceptance
+  remains unconfirmed. The local reservation `pending-7dea5a64…` still holds
+  2 GPUs and has no remote task id, so the structured status tool cannot
+  reconcile it; this is a MatOS Volc-MCP gap.
+- Queue state on 2026-10-21: `devinstance-queue3` has **0 free GPUs**
+  (32/32 allocated), and `queue004` has **5 free GPUs** but a hard 1-GPU/task
+  policy with no 2-GPU claim option. `volc_vemlp_queues` returns no
+  `recommendedQueues` for `minGpuCount=2`.
 - The 2-rank engine fix removes the last correctness blocker for the 2-GPU
-  test; only queue capacity and the pending reservation remain operational.
+  test; only queue capacity and the stale pending reservation remain
+  operational. The 2-GPU test is ready to resubmit as soon as queue3 frees
+  two A100s.
 
 ## 7. Artifacts
 
