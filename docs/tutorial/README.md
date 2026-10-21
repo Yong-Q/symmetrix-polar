@@ -2,7 +2,7 @@
 
 [打开 PDF](SYMMETRIX_POLAR_TUTORIAL_2026-10-21.pdf) · [打开离线网页](index.html) · [阅读 Markdown](SYMMETRIX_POLAR_TUTORIAL_2026-10-21.md)
 
-本版用于学习与汇报，从原子、能量和力讲起，再解释 MACE 的等变表示、PolarMACE 的全局响应、Symmetrix-XL 的执行方式、GPU 基础、本项目优化、正确性验证和结果比较。末尾包含公式串讲、术语表、汇报问答、旧稿修订表和来源索引。
+本教程用于学习与汇报，从原子、能量和力讲起，再解释 MACE 的等变表示、PolarMACE 的全局响应、Symmetrix-XL 的执行方式、GPU 基础、本项目优化、正确性验证和结果比较。末尾包含公式串讲、术语表、汇报问答和来源索引。
 
 主体为中文，保留 MACE、PolarMACE、Ewald 等通用英文名称。性能统一使用 **µs/atom/step**，数学公式独立排版。原论文图、Python 数据图和 AI 概念插图区分说明，不把概念图当成计算结果。
 
@@ -28,6 +28,6 @@ python harness/build_tutorial_figures.py
 python harness/build_tutorial.py
 ~~~
 
-需要 Python、matplotlib、numpy、Pillow、PyMuPDF、pandoc、XeLaTeX 与可用中文字体。图表使用已提交数据；文献原图提取副本已包含在阅读包中。源文与引用依据见教程附录 E。
+需要 Python、matplotlib、numpy、Pillow、PyMuPDF、pandoc、XeLaTeX 与可用中文字体。图表使用已提交数据；文献原图提取副本已包含在阅读包中。源文与引用依据见教程附录 D。
 
 原论文插图仍归相应权利人，图注保留作者、版本和图号；本仓库代码许可不改变这些图的权利状态。

@@ -70,7 +70,7 @@ HEADER = r"""
   {\large 从原子、能量和力出发，逐步理解 MACE、PolarMACE、\par
    长程静电、GPU 执行与本项目的性能证据。\par}
   \vfill
-  {\color{BookGray}Yong-Q 项目资料 · 基于已提交记录重新核对\par}
+  {\color{BookGray}Yong-Q · Symmetrix-Polar\par}
   \vspace{3mm}
   {\color{BookGray}2026-10-21\par}
   \vspace{9mm}
@@ -135,7 +135,7 @@ def main() -> None:
     common = ["pandoc", "--from=markdown+implicit_figures+tex_math_dollars", "--standalone", "--toc", "--toc-depth=2", "--resource-path=" + str(DOC)]
     run(common + [str(pdf_src), "--to=latex", "--metadata=lang:", "--lua-filter=" + str(lua), "--include-in-header=" + str(header), "-V", "documentclass=ctexart", "-V", "classoption=fontset=none", "-V", "mainfont=DejaVu Serif", "-V", "sansfont=DejaVu Sans", "-V", "monofont=DejaVu Sans Mono", "-V", "CJKsansfont=Noto Sans CJK SC", "-V", "CJKmonofont=Noto Sans CJK SC", "-V", "fontsize=10pt", "-V", "linestretch=1.18", "-V", "geometry=a4paper,top=23mm,bottom=22mm,left=20mm,right=20mm", "-V", "colorlinks=true", "-o", str(tex)], "pandoc_pdf.log")
     tex_content = tex.read_text(encoding="utf-8").replace("MACE\\_Nonlinear/PolarMACE", "MACE\\_\\allowbreak Nonlinear/\\allowbreak PolarMACE")
-    tex_content = re.sub(r"(\\section\{附录\s+E：)", lambda m: "\\setstretch{1.10}\n" + m[1], tex_content)
+    tex_content = re.sub(r"(\\section\{附录\s+D：)", lambda m: "\\setstretch{1.10}\n" + m[1], tex_content)
     tex.write_text(tex_content, encoding="utf-8")
     for attempt in range(1, 4):
         run(["xelatex", "-interaction=nonstopmode", "-halt-on-error", "-output-directory=" + str(BUILD), str(tex)], f"xelatex_pass{attempt}.log")
