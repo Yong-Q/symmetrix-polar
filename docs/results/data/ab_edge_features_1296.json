@@ -1,0 +1,72 @@
+{
+ "results": [
+  {
+   "tag": "base_r0",
+   "binary": "/workspace/group/shared/bza/symmetrix-polar/bench/kernel_round3_2026-10-19/lmp_comp2_base",
+   "rc": 0,
+   "median_ms": 334.089,
+   "us_per_atom": 257.78472222222223,
+   "samples_ms": [
+    333.822,
+    334.518,
+    334.356,
+    333.623
+   ]
+  },
+  {
+   "tag": "comp2_r0",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "rc": 0,
+   "median_ms": 321.305,
+   "us_per_atom": 247.92052469135803,
+   "samples_ms": [
+    321.546,
+    321.05899999999997,
+    322.476,
+    321.064
+   ]
+  },
+  {
+   "tag": "comp2_r1",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "rc": 0,
+   "median_ms": 320.62649999999996,
+   "us_per_atom": 247.3969907407407,
+   "samples_ms": [
+    320.472,
+    319.624,
+    320.781,
+    320.887
+   ]
+  },
+  {
+   "tag": "base_r1",
+   "binary": "/workspace/group/shared/bza/symmetrix-polar/bench/kernel_round3_2026-10-19/lmp_comp2_base",
+   "rc": 0,
+   "median_ms": 333.3705,
+   "us_per_atom": 257.2303240740741,
+   "samples_ms": [
+    333.303,
+    332.912,
+    333.827,
+    333.438
+   ]
+  }
+ ],
+ "summary": {
+  "base": {
+   "medians_ms": [
+    334.089,
+    333.3705
+   ],
+   "median_of_medians_ms": 333.72974999999997
+  },
+  "comp2": {
+   "medians_ms": [
+    321.305,
+    320.62649999999996
+   ],
+   "median_of_medians_ms": 320.96574999999996
+  }
+ }
+}

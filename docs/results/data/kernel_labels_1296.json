@@ -1,0 +1,41 @@
+{
+ "system": "1,296-atom H2O, full PolarMACE, FP64, one A100",
+ "note": "Per-launch GPU time from CUPTI label correlation. Raw traces are under bench/ (gitignored); this file records the extracted values used in the report.",
+ "message_gather_before_ms": 10.26,
+ "message_gather_after_ms": 3.5,
+ "message_gather_reduction": "66%",
+ "edge_features_before_ms_per_launch": 7.27,
+ "edge_features_after_ms_per_launch": 1.02,
+ "edge_up_before_ms_per_eval": 7.81,
+ "edge_up_after_ms_per_eval": 1.7,
+ "scatter_edge_up_before_ms_per_eval": 5.48,
+ "scatter_edge_up_after_ms_per_eval": 1.9,
+ "forward_tp_before_ms_per_eval": 39.52,
+ "forward_tp_after_ms_per_eval": 17.77,
+ "forward_tp_speedup": 2.22,
+ "mh1_reverse_channels_ms_per_eval": 41.63,
+ "mh1_reverse_harmonics_ms_per_eval": 35.1,
+ "mh1_reverse_total_ms_per_eval": 76.73,
+ "mh1_forward_ms_per_eval": 72.9,
+ "mh1_family_fraction_of_gpu_busy": 0.51,
+ "polar_uvu_group_ms_per_eval": 105.83,
+ "polar_uvu_components_ms_per_eval": {
+  "reverse_mode0_x2": 35.0,
+  "reverse_mode0_x1": 24.93,
+  "forward_mode0": 19.23,
+  "le_mode0": 16.21,
+  "mode1": 10.46
+ },
+ "node_edge_group_ms_per_eval": 91.87,
+ "node_edge_components_ms_per_eval": {
+  "gather_messages": 41.05,
+  "edge_features": 28.37,
+  "gather_edge_up": 7.76,
+  "weight_cutoff": 7.31,
+  "reverse_cutoff": 7.38
+ },
+ "cublas_ms_per_eval": 35.83,
+ "ewald_ms_per_eval": 9.56,
+ "host_gap_ms": 8.65,
+ "source": "CUPTI r3e_b4team1296 (pre-opt3); wall 348.97 ms from MH1_TEAM_FP64.md minus GPU busy 340.32 ms from cupti_b4team_1296_summary.json; per-eval = ms/1.296 for \u00b5s/atom."
+}

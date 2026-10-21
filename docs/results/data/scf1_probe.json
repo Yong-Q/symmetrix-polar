@@ -1,0 +1,9 @@
+{
+ "probe": "1-step vs 2-step SCF, same weights, 128 atoms, one A100",
+ "dE_eV": 1.2705099746963242,
+ "max_dF_eV_per_A": 0.10125473829408599,
+ "tol_dE_eV": 5e-05,
+ "tol_max_dF_eV_per_A": 0.0001,
+ "verdict": "FAIL (1000x above tolerance)",
+ "source": "bench/scf1_parity.py (local probe, 2026-10-21)"
+}

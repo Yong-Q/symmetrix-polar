@@ -1,0 +1,100 @@
+{
+ "results": [
+  {
+   "tag": "base_r0",
+   "binary": "/workspace/group/shared/bza/symmetrix-polar/bench/kernel_round3_2026-10-19/lmp_opt3",
+   "rc": 0,
+   "median_ms": 749.1425,
+   "us_per_atom": 578.0420524691358,
+   "samples_ms": [
+    799.162,
+    699.021,
+    699.123,
+    799.1780000000001
+   ]
+  },
+  {
+   "tag": "comp2_r0",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "rc": 0,
+   "median_ms": 549.094,
+   "us_per_atom": 423.68364197530866,
+   "samples_ms": [
+    599.134,
+    599.169,
+    446.47900000000004,
+    499.054
+   ]
+  },
+  {
+   "tag": "comp2_r1",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "rc": 0,
+   "median_ms": 290.773,
+   "us_per_atom": 224.3618827160494,
+   "samples_ms": [
+    290.209,
+    290.596,
+    290.95,
+    291.029
+   ]
+  },
+  {
+   "tag": "base_r1",
+   "binary": "/workspace/group/shared/bza/symmetrix-polar/bench/kernel_round3_2026-10-19/lmp_opt3",
+   "rc": 0,
+   "median_ms": 799.0345,
+   "us_per_atom": 616.5389660493827,
+   "samples_ms": [
+    799.055,
+    798.967,
+    799.121,
+    799.014
+   ]
+  },
+  {
+   "tag": "comp2_r2",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "rc": 0,
+   "median_ms": 289.9775,
+   "us_per_atom": 223.74807098765433,
+   "samples_ms": [
+    289.62,
+    289.896,
+    290.257,
+    290.059
+   ]
+  },
+  {
+   "tag": "base_r2",
+   "binary": "/workspace/group/shared/bza/symmetrix-polar/bench/kernel_round3_2026-10-19/lmp_opt3",
+   "rc": 0,
+   "median_ms": 297.922,
+   "us_per_atom": 229.8780864197531,
+   "samples_ms": [
+    297.768,
+    297.57800000000003,
+    298.74899999999997,
+    298.076
+   ]
+  }
+ ],
+ "summary": {
+  "base": {
+   "medians_ms": [
+    749.1425,
+    799.0345,
+    297.922
+   ],
+   "median_of_medians_ms": 749.1425
+  },
+  "comp2": {
+   "medians_ms": [
+    549.094,
+    290.773,
+    289.9775
+   ],
+   "median_of_medians_ms": 290.773
+  }
+ }
+}

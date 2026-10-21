@@ -50,6 +50,14 @@ the RBE negative result, honest limitations, and a reproduction guide. Its
 source is `docs/technical/TECHNICAL_REPORT.md`; edit the Markdown and rerun
 `harness/make_technical_pdf.py` to extend it.
 
+**汇报版 PDF（中文，11 页，公式数学排版）：**
+[docs/report/SYMMETRIX_POLAR_REPORT_2026-10-21.pdf](docs/report/SYMMETRIX_POLAR_REPORT_2026-10-21.pdf)
+— 线性/非线性模型与维度、每项优化的理论依据、462.6 → 224.1 µs/atom 的实测阶梯、
+正确性门、与 PyTorch/论文/RuNNer 的位置、不足与下一步。源文件为
+`docs/report/SYMMETRIX_POLAR_REPORT_2026-10-21.md`，图由
+`harness/make_report_figures.py` 生成，PDF 由 `harness/make_report_pdf.py` 生成；
+每个数字的 git 来源见 `docs/results/OPTIMIZATION_LEDGER.md`。
+
 PolarMACE extends MACE with a self-consistent, long-range electrostatic layer
 (learned multipolar spin-charge densities, GTO-Ewald k-space electrostatics, a
 Fukui-balanced SCF fixed point). This project brings that layer into the

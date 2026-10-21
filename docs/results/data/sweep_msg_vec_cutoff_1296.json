@@ -1,0 +1,150 @@
+{
+ "results": [
+  {
+   "tag": "base_r0",
+   "extra": {},
+   "rc": 0,
+   "median_ms": 346.84450000000004,
+   "us_per_atom": 267.6269290123457,
+   "samples_ms": [
+    346.841,
+    346.94199999999995,
+    346.848,
+    346.628
+   ]
+  },
+  {
+   "tag": "msg1_r0",
+   "extra": {
+    "MATOS_FWD_MSG_VEC": "1"
+   },
+   "rc": 0,
+   "median_ms": 379.8135,
+   "us_per_atom": 293.06597222222223,
+   "samples_ms": [
+    380.168,
+    379.916,
+    379.488,
+    379.711
+   ]
+  },
+  {
+   "tag": "cutoff_scalar_r0",
+   "extra": {
+    "MATOS_CONV_CUTOFF_BACKEND": "scalar"
+   },
+   "rc": 0,
+   "median_ms": 369.1065,
+   "us_per_atom": 284.80439814814815,
+   "samples_ms": [
+    369.53999999999996,
+    368.48199999999997,
+    369.892,
+    368.67299999999994
+   ]
+  },
+  {
+   "tag": "cutoff_chunked_r0",
+   "extra": {
+    "MATOS_CONV_CUTOFF_BACKEND": "chunked"
+   },
+   "rc": 0,
+   "median_ms": 376.75699999999995,
+   "us_per_atom": 290.70756172839504,
+   "samples_ms": [
+    376.363,
+    376.984,
+    376.53,
+    445.837
+   ]
+  },
+  {
+   "tag": "cutoff_chunked_r1",
+   "extra": {
+    "MATOS_CONV_CUTOFF_BACKEND": "chunked"
+   },
+   "rc": 0,
+   "median_ms": 388.647,
+   "us_per_atom": 299.88194444444446,
+   "samples_ms": [
+    402.329,
+    376.029,
+    377.232,
+    400.06199999999995
+   ]
+  },
+  {
+   "tag": "cutoff_scalar_r1",
+   "extra": {
+    "MATOS_CONV_CUTOFF_BACKEND": "scalar"
+   },
+   "rc": 0,
+   "median_ms": 368.4215,
+   "us_per_atom": 284.2758487654321,
+   "samples_ms": [
+    368.042,
+    367.75600000000003,
+    369.00899999999996,
+    368.801
+   ]
+  },
+  {
+   "tag": "msg1_r1",
+   "extra": {
+    "MATOS_FWD_MSG_VEC": "1"
+   },
+   "rc": 0,
+   "median_ms": 383.05600000000004,
+   "us_per_atom": 295.56790123456796,
+   "samples_ms": [
+    382.56600000000003,
+    382.872,
+    383.24,
+    390.928
+   ]
+  },
+  {
+   "tag": "base_r1",
+   "extra": {},
+   "rc": 0,
+   "median_ms": 347.4415,
+   "us_per_atom": 268.0875771604938,
+   "samples_ms": [
+    347.785,
+    347.233,
+    347.65000000000003,
+    346.935
+   ]
+  }
+ ],
+ "summary": {
+  "base": {
+   "medians_ms": [
+    346.84450000000004,
+    347.4415
+   ],
+   "median_of_medians_ms": 347.14300000000003
+  },
+  "msg1": {
+   "medians_ms": [
+    379.8135,
+    383.05600000000004
+   ],
+   "median_of_medians_ms": 381.43475
+  },
+  "cutoff_scalar": {
+   "medians_ms": [
+    369.1065,
+    368.4215
+   ],
+   "median_of_medians_ms": 368.764
+  },
+  "cutoff_chunked": {
+   "medians_ms": [
+    376.75699999999995,
+    388.647
+   ],
+   "median_of_medians_ms": 382.702
+  }
+ }
+}

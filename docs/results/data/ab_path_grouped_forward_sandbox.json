@@ -1,0 +1,162 @@
+{
+ "results": [
+  {
+   "tag": "main_full_r0",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "model": "full",
+   "rc": 0,
+   "atoms": 1296,
+   "samples_ms": [
+    320.498,
+    320.33299999999997,
+    321.516,
+    320.375
+   ],
+   "median_ms": 320.4365,
+   "us_per_atom": 247.25038580246914,
+   "stderr_tail": ""
+  },
+  {
+   "tag": "cand_full_r0",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl-opt3/symmetrix/build-kernel-r3/lmp",
+   "model": "full",
+   "rc": 0,
+   "atoms": 1296,
+   "samples_ms": [
+    297.788,
+    297.90299999999996,
+    298.039,
+    297.431
+   ],
+   "median_ms": 297.8455,
+   "us_per_atom": 229.81905864197532,
+   "stderr_tail": ""
+  },
+  {
+   "tag": "main_poff_r0",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "model": "poff",
+   "rc": 0,
+   "atoms": 1296,
+   "samples_ms": [
+    197.50699999999998,
+    197.356,
+    197.09799999999998,
+    196.679
+   ],
+   "median_ms": 197.22699999999998,
+   "us_per_atom": 152.1813271604938,
+   "stderr_tail": ""
+  },
+  {
+   "tag": "cand_poff_r0",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl-opt3/symmetrix/build-kernel-r3/lmp",
+   "model": "poff",
+   "rc": 0,
+   "atoms": 1296,
+   "samples_ms": [
+    175.344,
+    175.331,
+    174.924,
+    175.10500000000002
+   ],
+   "median_ms": 175.21800000000002,
+   "us_per_atom": 135.1990740740741,
+   "stderr_tail": ""
+  },
+  {
+   "tag": "cand_full_r1",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl-opt3/symmetrix/build-kernel-r3/lmp",
+   "model": "full",
+   "rc": 0,
+   "atoms": 1296,
+   "samples_ms": [
+    298.72900000000004,
+    297.792,
+    298.401,
+    298.911
+   ],
+   "median_ms": 298.56500000000005,
+   "us_per_atom": 230.37422839506178,
+   "stderr_tail": ""
+  },
+  {
+   "tag": "main_full_r1",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "model": "full",
+   "rc": 0,
+   "atoms": 1296,
+   "samples_ms": [
+    321.805,
+    321.661,
+    322.12800000000004,
+    320.20799999999997
+   ],
+   "median_ms": 321.733,
+   "us_per_atom": 248.25077160493828,
+   "stderr_tail": ""
+  },
+  {
+   "tag": "cand_poff_r1",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl-opt3/symmetrix/build-kernel-r3/lmp",
+   "model": "poff",
+   "rc": 0,
+   "atoms": 1296,
+   "samples_ms": [
+    175.245,
+    175.38,
+    175.55100000000002,
+    175.294
+   ],
+   "median_ms": 175.337,
+   "us_per_atom": 135.2908950617284,
+   "stderr_tail": ""
+  },
+  {
+   "tag": "main_poff_r1",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "model": "poff",
+   "rc": 0,
+   "atoms": 1296,
+   "samples_ms": [
+    196.742,
+    196.649,
+    196.716,
+    196.69500000000002
+   ],
+   "median_ms": 196.70550000000003,
+   "us_per_atom": 151.77893518518522,
+   "stderr_tail": ""
+  }
+ ],
+ "summary": {
+  "main_full": {
+   "us_per_atom": [
+    247.25038580246914,
+    248.25077160493828
+   ],
+   "median": 247.7505787037037
+  },
+  "cand_full": {
+   "us_per_atom": [
+    229.81905864197532,
+    230.37422839506178
+   ],
+   "median": 230.09664351851853
+  },
+  "main_poff": {
+   "us_per_atom": [
+    152.1813271604938,
+    151.77893518518522
+   ],
+   "median": 151.9801311728395
+  },
+  "cand_poff": {
+   "us_per_atom": [
+    135.1990740740741,
+    135.2908950617284
+   ],
+   "median": 135.24498456790127
+  }
+ }
+}

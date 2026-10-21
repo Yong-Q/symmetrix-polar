@@ -1,0 +1,158 @@
+{
+ "results": [
+  {
+   "tag": "base_old_r0",
+   "binary": "/workspace/group/shared/bza/symmetrix-polar/bench/kernel_round3_2026-10-19/lmp_msg_baseline",
+   "extra": {},
+   "rc": 0,
+   "median_ms": 347.6365,
+   "us_per_atom": 268.2380401234568,
+   "samples_ms": [
+    348.04200000000003,
+    347.511,
+    347.762,
+    346.728
+   ]
+  },
+  {
+   "tag": "tile128_r0",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "extra": {
+    "MATOS_FWD_MSG_TILE_Y": "128"
+   },
+   "rc": 0,
+   "median_ms": 334.03700000000003,
+   "us_per_atom": 257.74459876543216,
+   "samples_ms": [
+    334.02700000000004,
+    334.04699999999997,
+    334.775,
+    333.491
+   ]
+  },
+  {
+   "tag": "tile64_r0",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "extra": {
+    "MATOS_FWD_MSG_TILE_Y": "64"
+   },
+   "rc": 0,
+   "median_ms": 333.7885,
+   "us_per_atom": 257.5528549382716,
+   "samples_ms": [
+    334.524,
+    333.77099999999996,
+    333.806,
+    333.37899999999996
+   ]
+  },
+  {
+   "tag": "tile256_r0",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "extra": {
+    "MATOS_FWD_MSG_TILE_Y": "256"
+   },
+   "rc": 0,
+   "median_ms": 333.7475,
+   "us_per_atom": 257.5212191358025,
+   "samples_ms": [
+    334.0,
+    333.495,
+    334.019,
+    333.42
+   ]
+  },
+  {
+   "tag": "tile256_r1",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "extra": {
+    "MATOS_FWD_MSG_TILE_Y": "256"
+   },
+   "rc": 0,
+   "median_ms": 332.33450000000005,
+   "us_per_atom": 256.4309413580247,
+   "samples_ms": [
+    332.967,
+    332.079,
+    332.466,
+    332.20300000000003
+   ]
+  },
+  {
+   "tag": "tile64_r1",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "extra": {
+    "MATOS_FWD_MSG_TILE_Y": "64"
+   },
+   "rc": 0,
+   "median_ms": 332.6345,
+   "us_per_atom": 256.6624228395062,
+   "samples_ms": [
+    332.188,
+    332.63599999999997,
+    332.98299999999995,
+    332.63300000000004
+   ]
+  },
+  {
+   "tag": "tile128_r1",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "extra": {
+    "MATOS_FWD_MSG_TILE_Y": "128"
+   },
+   "rc": 0,
+   "median_ms": 332.303,
+   "us_per_atom": 256.4066358024691,
+   "samples_ms": [
+    332.672,
+    331.81,
+    332.82,
+    331.934
+   ]
+  },
+  {
+   "tag": "base_old_r1",
+   "binary": "/workspace/group/shared/bza/symmetrix-polar/bench/kernel_round3_2026-10-19/lmp_msg_baseline",
+   "extra": {},
+   "rc": 0,
+   "median_ms": 346.175,
+   "us_per_atom": 267.11033950617286,
+   "samples_ms": [
+    345.982,
+    345.25,
+    347.012,
+    346.368
+   ]
+  }
+ ],
+ "summary": {
+  "base_old": {
+   "medians_ms": [
+    347.6365,
+    346.175
+   ],
+   "median_of_medians_ms": 346.90575
+  },
+  "tile128": {
+   "medians_ms": [
+    334.03700000000003,
+    332.303
+   ],
+   "median_of_medians_ms": 333.17
+  },
+  "tile64": {
+   "medians_ms": [
+    333.7885,
+    332.6345
+   ],
+   "median_of_medians_ms": 333.2115
+  },
+  "tile256": {
+   "medians_ms": [
+    333.7475,
+    332.33450000000005
+   ],
+   "median_of_medians_ms": 333.04100000000005
+  }
+ }
+}

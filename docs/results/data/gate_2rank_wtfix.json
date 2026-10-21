@@ -1,0 +1,37 @@
+{
+ "gate": "P5-A",
+ "nproc": 2,
+ "run_steps": 0,
+ "loop_time_s": 0.0022322,
+ "ms_per_eval": null,
+ "system": {
+  "mol": "NH3",
+  "nmol": 32,
+  "atoms": 128,
+  "cell_lengths": [
+   14.736125994561544,
+   14.736125994561544,
+   14.736125994561544
+  ],
+  "rattle": 0.0
+ },
+ "energy": {
+  "lammps": -49242.4564153149,
+  "engine": -49242.456415314926,
+  "dE": 2.9103830456733704e-11,
+  "dE_abs": 2.9103830456733704e-11,
+  "tol_abs": 5e-05,
+  "pass": true
+ },
+ "forces": {
+  "max_dF": 1.6874754347465536e-06,
+  "mean_dF": 1.2217545842930874e-07,
+  "max_engine_force": 1.7581057144722803,
+  "tol_max": 0.0001,
+  "pass": true
+ },
+ "geometry": {
+  "max_position_drift": 4.973799150320701e-14
+ },
+ "pass": true
+}

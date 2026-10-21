@@ -1,0 +1,100 @@
+{
+ "results": [
+  {
+   "tag": "base_r0",
+   "binary": "/workspace/group/shared/bza/symmetrix-polar/bench/kernel_round3_2026-10-19/lmp_edgefeat",
+   "rc": 0,
+   "median_ms": 699.0595000000001,
+   "us_per_atom": 539.3977623456791,
+   "samples_ms": [
+    699.0300000000001,
+    699.0079999999999,
+    699.0889999999999,
+    799.132
+   ]
+  },
+  {
+   "tag": "comp2_r0",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "rc": 0,
+   "median_ms": 299.322,
+   "us_per_atom": 230.95833333333334,
+   "samples_ms": [
+    315.14300000000003,
+    299.29,
+    299.354,
+    299.21999999999997
+   ]
+  },
+  {
+   "tag": "comp2_r1",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "rc": 0,
+   "median_ms": 298.36199999999997,
+   "us_per_atom": 230.21759259259255,
+   "samples_ms": [
+    298.462,
+    299.29699999999997,
+    298.262,
+    297.576
+   ]
+  },
+  {
+   "tag": "base_r1",
+   "binary": "/workspace/group/shared/bza/symmetrix-polar/bench/kernel_round3_2026-10-19/lmp_edgefeat",
+   "rc": 0,
+   "median_ms": 320.539,
+   "us_per_atom": 247.32947530864197,
+   "samples_ms": [
+    321.123,
+    320.297,
+    320.68,
+    320.398
+   ]
+  },
+  {
+   "tag": "comp2_r2",
+   "binary": "/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp",
+   "rc": 0,
+   "median_ms": 299.15099999999995,
+   "us_per_atom": 230.82638888888886,
+   "samples_ms": [
+    299.597,
+    298.64099999999996,
+    299.88599999999997,
+    298.705
+   ]
+  },
+  {
+   "tag": "base_r2",
+   "binary": "/workspace/group/shared/bza/symmetrix-polar/bench/kernel_round3_2026-10-19/lmp_edgefeat",
+   "rc": 0,
+   "median_ms": 998.966,
+   "us_per_atom": 770.8070987654321,
+   "samples_ms": [
+    998.878,
+    899.063,
+    1098.54,
+    999.054
+   ]
+  }
+ ],
+ "summary": {
+  "base": {
+   "medians_ms": [
+    699.0595000000001,
+    320.539,
+    998.966
+   ],
+   "median_of_medians_ms": 699.0595000000001
+  },
+  "comp2": {
+   "medians_ms": [
+    299.322,
+    298.36199999999997,
+    299.15099999999995
+   ],
+   "median_of_medians_ms": 299.15099999999995
+  }
+ }
+}
