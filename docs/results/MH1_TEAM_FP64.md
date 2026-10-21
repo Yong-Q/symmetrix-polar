@@ -2,7 +2,7 @@
 
 **Status:** measured, parity-gated, and **correctness-fixed** on the main tree.
 The original FP64 team enablement had a repeated-evaluation state bug (see
-"Write-through bug" below); the fixed build gives 320.97 ms at 1,296 atoms
+"Write-through bug" below); the fixed build gives 230.5 µs/atom at 1,296 atoms
 with real-MD parity against the pre-team engine.
 
 ## What changed
@@ -137,10 +137,30 @@ thread per edge; each thread wrote 1026 consecutive doubles, so a warp wrote
 (edge, feature) with tile {1,256} gives **333.7 → 321.0 ms (−12.8 ms,
 −3.8%)**. Forces match to 1e-15 and three fixed-geometry evaluations are
 identical. Cumulative from the fused-MH-1 + team-cutoff baseline:
-599.54 → 320.97 ms (−46.5%).
+599.54 → 298.7 ms (−50.2%).
 
 The parity gate for the merged binary passes, and the repeated-evaluation gate
 now holds.
+
+## Path-grouped MH-1 forward (2026-10-21)
+
+The FP64 team forward re-evaluated the sparse Wigner plan for every channel and
+wrote each instruction block at stride `output_width`, spreading every warp
+store across many sectors. The rewrite:
+
+1. precomputes the channel-independent
+   `g[a,c] = sum_b W[a,b,c] * input_2[b]` once per team in scratch;
+2. runs a flat `channel*output_width + component` loop with coalesced stores;
+3. hoists `input_1` into registers and the write-through branch out of the
+   component loop.
+
+| metric | before | after |
+|---|---:|---:|
+| forward tensor product per eval | 39.52 | **17.77** (2.22x) |
+| full polar, 1,296 atoms | 247.7 µs/atom | **230.5 µs/atom** (−6.9%) |
+| polar-off, 1,296 atoms | 152.0 µs/atom | **135.2 µs/atom** (−11.0%) |
+
+Parity: dPE 0, max dF 1.0e-15; three fixed-geometry evaluations identical.
 
 ## 1,296-atom UVU knob check
 
