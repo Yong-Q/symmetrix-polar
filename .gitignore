@@ -4,4 +4,3 @@ __pycache__/
 *.pyc
 pytools/
 docs/technical/fonts/
-docs/report/math_cache/
