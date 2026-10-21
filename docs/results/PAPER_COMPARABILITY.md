@@ -178,10 +178,12 @@ water box is 1,296 atoms; this is the same-size reference for the polar gap:
 
 | Implementation | Precision | Path | µs/atom/step | ms/eval |
 |---|---|---|---:|---:|
+| **Target (4.5 µs/atom)** | — | — | **4.5** | **5.832** |
 | Linear MACE-OFF23 medium | FP32 | direct/JIT | **6.31 min; 9.69 clean median** | 8.2 / 12.6 |
 | Full PolarMACE | FP64 | materialized + replay cache + team cutoff | 462.4 | 599.77 |
-| **Full PolarMACE, B4 + team** | **FP64** | **+ team MH-1, team size 64, B4 gather fusion** | **261.6** | **339.00** |
-| Polar / linear ratio | | | **~27–41×** | |
+| **Full PolarMACE, B4 + team (write-through fixed)** | **FP64** | **+ team MH-1, team size 64, B4 gather fusion** | **257.2** | **333.17** |
+| Gap to 4.5 µs/atom (polar) | | | **57.1×** | |
+| Gap to 4.5 µs/atom (linear) | | | **2.15×** | |
 
 PolarMACE scalar cutoff at the same size: 625.55 ms / 482.7 µs/atom.
 
@@ -198,9 +200,10 @@ nonlinear 112.49 ms = 18.0%, and the whole polar pipeline 111.15 ms = 17.8%.
 
 ## What this means for the headline
 
-- **48.74 ms at 128 atoms (32 NH3) is the correct number for full PolarMACE,
-  float64, 128 atoms.** It is not a paper-comparable throughput number and
-  must not be compared with 4.50 µs/atom at 5,184 atoms.
+- The target is **4.5 µs/atom normalized to 1,296 atoms = 5.832 ms/eval**.
+  The current polar best at 1,296 atoms is **333.17 ms = 257.2 µs/atom**, a
+  **57.1×** gap. The measured linear FP32 direct/JIT path on the same box is
+  9.69 µs/atom, a **2.15×** gap.
 - The paper-comparable statement for the materialized path is: **linear
   MACE-OFF23 at ~6,144 atoms is ~12.3 µs/atom/step (float64)**, i.e. at the
   paper's ML-IAP + cuEquivariance baseline.
@@ -208,8 +211,10 @@ nonlinear 112.49 ms = 18.0%, and the whole polar pipeline 111.15 ms = 17.8%.
   **3.72 µs/atom/step** (median of medians; best 2.72) at 6,144 atoms,
   matching the paper's 4.50 µs/atom A100 value within the system mismatch.
   The 3.1× gap to ML-IAP is therefore closed on this engine.
-- PolarMACE remains materially different: it is materialized-only and 48.74
-  ms at 128 atoms is not a paper-comparable number.
+- PolarMACE remains materially different: it is materialized-only, FP64, and
+  257.2 µs/atom at 1,296 atoms. Even zeroing the MH-1 family leaves
+  >150 µs/atom (>30× above target), so 4.5 µs/atom is not reachable for the
+  full polar model with kernel work alone.
 
 ## Action items
 

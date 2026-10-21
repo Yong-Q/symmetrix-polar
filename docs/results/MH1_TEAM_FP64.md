@@ -2,7 +2,7 @@
 
 **Status:** measured, parity-gated, and **correctness-fixed** on the main tree.
 The original FP64 team enablement had a repeated-evaluation state bug (see
-"Write-through bug" below); the fixed build gives 348.97 ms at 1,296 atoms
+"Write-through bug" below); the fixed build gives 333.17 ms at 1,296 atoms
 with real-MD parity against the pre-team engine.
 
 ## What changed
@@ -93,12 +93,20 @@ scalar paths. No other numerics change.
   binary: max Δpos **9.8e-15 Å**, max ΔF **1.4e-14 eV/Å**, PE identical at
   every printed step.
 
-## Remaining distance to 4.6 µs/atom
+## Remaining distance to 4.5 µs/atom at 1,296 atoms
 
-1,296 × 4.6 µs = **5.96 ms/eval**. The corrected B4+team result 348.97 ms is
-**58.5×** away (269.2 µs/atom). Even setting the MH-1 family to zero would
-leave >150 µs/atom. The 4.6 number is the linear MACE-OFF23 FP32 5,184-atom result;
-it is not reachable for full PolarMACE with kernel work.
+The reference target is normalized to the 1,296-atom H₂O system:
+
+- target: 1,296 × **4.5 µs** = **5.832 ms/eval**;
+- corrected B4+team: **333.17 ms = 257.2 µs/atom**;
+- gap: **57.1×** (333.17 / 5.832).
+
+Even setting the whole MH-1 family to zero would leave >150 µs/atom, i.e.
+>30× above the target. The 4.5 µs/atom number is the **linear MACE-OFF23 FP32
+standard-streaming** result at 5,184 atoms; the FP64 PolarMACE materialized
+path is not comparable and cannot reach it with kernel work alone. The measured
+linear path on the same 1,296-atom box is 9.69 µs/atom (12.56 ms), which is
+**2.15×** above 4.5.
 
 ## B4 + team (accepted, after the write-through fix)
 
@@ -109,15 +117,25 @@ rebuilt. At 1,296 atoms, fixed build:
 | configuration | median ms/eval | µs/atom |
 |---|---:|---:|
 | main team, no B4 (unfixed binary) | 404.96 | 312.5 |
-| **main B4 + team (fixed)** | **348.97** | **269.2** |
+| **main B4 + team (write-through fixed)** | **348.97** | **269.2** |
 | saving | **56.0 ms (13.8%)** | **43.3** |
 
-Three clean rounds after the fix: no-B4 404.15 / 404.96 / 406.18; B4+team
-348.97 / 348.72 / 356.30 (one 489.56 ms contended outlier in round 2).
-Cumulative from the fused-MH-1 + team-cutoff baseline: 599.54 → 348.97 ms
-(−41.8%). The earlier 339.00 ms was measured with the buggy kernel; the
-write-through branch costs ~3%, which is the price of correctness. The parity
-gate for the merged binary passes, and the repeated-evaluation gate now holds.
+Three clean rounds after the write-through fix, before the gather-tile change:
+no-B4 404.15 / 404.96 / 406.18; B4+team 348.97 / 348.72 / 356.30 (one
+489.56 ms contended outlier in round 2). The earlier 339.00 ms was measured
+with the buggy kernel; the write-through branch costs ~3%, which is the price
+of correctness.
+
+**Gather-tile follow-up (2026-10-21):** the nonlinear message gather used the
+default MDRange tiling (nodes in x), so every warp read a different edge row.
+Tile `{1,128}` (feature block in x, one node per block) drops the kernel from
+10.3 to 3.5 ms per launch (−66%) and the 1,296-atom wall time from
+**346.91 → 333.17 ms (−13.7 ms, −4.0%)**. Forces match to 1e-15.
+Cumulative from the fused-MH-1 + team-cutoff baseline: 599.54 → 333.17 ms
+(−44.4%).
+
+The parity gate for the merged binary passes, and the repeated-evaluation gate
+now holds.
 
 ## 1,296-atom UVU knob check
 

@@ -14,7 +14,10 @@ Symmetrix-XL Kokkos engine (183.8 ms), and **2.43×** faster than the PyTorch
 reference (94.0 ms). Plan B-lite adds replay caching (B1) and reverse-gather
 fusion (B4, **−4.13 ms**, 42.79 → 38.66 ms). The earlier 40.95 ms figure was
 measured before the write-through correctness fix; see the note in the 1,296
-comparison below. Full report:
+comparison below. **The reference target is normalized to 1,296 atoms:
+4.5 µs/atom → 5.832 ms/eval.** The measured 1,296-atom polar result is
+**333.17 ms (257.2 µs/atom), 57.1× above target**; the linear FP32 path on the
+same box is 9.69 µs/atom (2.15× above). Full report:
 [docs/results/PLAN_B_LITE_FINAL.md](docs/results/PLAN_B_LITE_FINAL.md).
 The round-3 report (48.74 ms) remains the pre-Plan-B baseline:
 [docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md).
@@ -255,19 +258,26 @@ on one A100 80 GB):
 
 | Implementation | Precision | Path | Atoms | µs/atom/step | ms/eval |
 |---|---|---:|---:|---:|---:|
+| **Target (4.5 µs/atom at 1,296)** | — | — | **1,296** | **4.5** | **5.832** |
 | This work: MACE-OFF23 medium (linear) | FP32 | direct/JIT | 1,296 | **6.31 min; 9.69 clean median** | 8.2 / 12.6 |
 | This work: full PolarMACE | FP64 | materialized + cache + team cutoff, fused MH-1 | 1,296 | 462.6 | 599.54 |
 | This work: full PolarMACE | FP64 | materialized + cache + team cutoff + team MH-1 (team size 64) | 1,296 | 311.3 | 403.97 |
-| **This work: full PolarMACE** | **FP64** | **+ B4 reverse-gather fusion (main tree, write-through fixed)** | **1,296** | **269.2** | **348.97** |
-| Ratio polar / linear | | | | **~28–43×** | |
+| **This work: full PolarMACE** | **FP64** | **+ B4 reverse-gather fusion (main tree, write-through fixed)** | **1,296** | **257.2** | **333.17** |
+| Gap to target (polar) | | | | **57.1×** | |
+| Gap to target (linear FP32) | | | | **2.15×** | |
 
+The target is normalized to this system: **1,296 × 4.5 µs = 5.832 ms/eval**.
 The current polar best is the **B4 + team** build in the main tree
 (`MATOS_REPLAY_CACHE=1`, UVU x2 smem off, forward sweep off, team cutoff,
-FP64 team MH-1, `MATOS_MH1_TEAM_SIZE=64`, B4 default on). It is **41.8%
-faster** than the fused-MH-1 result (462.6 → 269.2 µs/atom) and **13.8%**
-faster than team without B4. The linear direct/JIT numbers are the measured
-minimum and the cleanest trial median; the shared A100 produced outliers. The
-4.5 µs/atom target is ~58× away; see
+FP64 team MH-1, `MATOS_MH1_TEAM_SIZE=64`, B4 default on). It is **44.4%**
+faster than the fused-MH-1 result (462.6 → 257.2 µs/atom); B4 alone
+saved 13.8% (404.96 → 348.97 ms) and the gather-tile fix a further 4.0%
+(346.91 → 333.17 ms). The linear direct/JIT numbers are the measured
+minimum and the cleanest trial median; the shared A100 produced outliers. At
+257.2 µs/atom the polar gap is **57.1×**; the measured linear FP32 path at the
+same atom count is **2.15×** away. Even zeroing the entire MH-1 family leaves
+>150 µs/atom (>30×), so 4.5 µs/atom is not reachable for FP64 PolarMACE with
+kernel work alone; see
 [docs/results/MH1_TEAM_FP64.md](docs/results/MH1_TEAM_FP64.md).
 
 **Correctness note (2026-10-21).** The first FP64 team build had a
@@ -277,7 +287,7 @@ single-point gate could not see it. After the fix, three evaluations are
 identical to 1e-15, single-point forces match the accepted engine gate to
 1e-15, and a real 10-step NVE MD matches the original pre-team binary to
 **9.8e-15 Å** in position and **1.4e-14 eV/Å** in force. The corrected timing
-is 348.97 ms; the earlier 339.00 ms was measured with the buggy kernel.
+is 333.17 ms; the earlier 339.00 ms was measured with the buggy kernel.
 
 **PolarMACE — a different model, not paper-comparable:**
 
