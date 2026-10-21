@@ -182,7 +182,7 @@ water box is 1,296 atoms; this is the same-size reference for the polar gap:
 | Linear MACE-OFF23 medium | FP32 | direct/JIT | **6.31 min; 9.69 clean median** | 8.2 / 12.6 |
 | Full PolarMACE | FP64 | materialized + replay cache + team cutoff | 462.4 | 599.77 |
 | **Full PolarMACE, B4 + team (write-through fixed)** | **FP64** | **+ team MH-1, team size 64, B4 gather fusion** | **247.7** | **320.97** |
-| Gap to 4.5 µs/atom (polar) | | | **51.2×** | |
+| Gap to 4.5 µs/atom (polar) | | | **49.8×** | |
 | Gap to 4.5 µs/atom (linear) | | | **2.15×** | |
 
 PolarMACE scalar cutoff at the same size: 625.55 ms / 482.7 µs/atom.

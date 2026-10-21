@@ -2,7 +2,7 @@
 
 **Status:** measured, parity-gated, and **correctness-fixed** on the main tree.
 The original FP64 team enablement had a repeated-evaluation state bug (see
-"Write-through bug" below); the fixed build gives 230.5 µs/atom at 1,296 atoms
+"Write-through bug" below); the fixed build gives 224.1 µs/atom at 1,296 atoms
 with real-MD parity against the pre-team engine.
 
 ## What changed
@@ -137,7 +137,7 @@ thread per edge; each thread wrote 1026 consecutive doubles, so a warp wrote
 (edge, feature) with tile {1,256} gives **333.7 → 321.0 ms (−12.8 ms,
 −3.8%)**. Forces match to 1e-15 and three fixed-geometry evaluations are
 identical. Cumulative from the fused-MH-1 + team-cutoff baseline:
-599.54 → 298.7 ms (−50.2%).
+599.54 → 290.4 ms (−51.6%).
 
 The parity gate for the merged binary passes, and the repeated-evaluation gate
 now holds.
