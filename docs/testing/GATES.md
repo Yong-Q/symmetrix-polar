@@ -73,6 +73,13 @@ fix; the 0.2% difference is run noise. **Repeated-evaluation checks are
 mandatory** for any FP64 MH-1 team build (the single-point gate cannot see a
 state-accumulation bug).
 
+**Plan B-full (2026-10-21, binary `bcecbf90…`): 31.33 ms/eval.** module 5–8,
+32/32 end-to-end, LAMMPS 1-rank (dE 2.910e-11, max dF 2.608e-14 eV/Å) and
+2-rank exact (max dF 1.687e-6 eV/Å) **PASS**. Repeated evaluation: three
+`run 0` at fixed positions, PE −49242.45641531493 three times, max dF
+≤1.1e-15 eV/Å. This is the **latest full-gate-passing version**; the remaining
+gap to 30 ms is 1.33 ms.
+
 The two RBE rows are deliberately separate: the P4 implementation/statistics
 gate passes, while the production force gate is rejected. The p-scan and the
 final-build p=800 check are in

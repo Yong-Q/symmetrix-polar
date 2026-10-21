@@ -6,34 +6,40 @@ electrostatic layer. Random Batch Ewald (RBE) is implemented and statistically
 validated, but its production force gate is rejected; exact full-k Ewald is the
 production path.**
 
-**Latest gated result (2026-10-21, Plan B-lite, correctness-fixed): 38.66
-ms/eval on 128 atoms (32 NH3 molecules), full nonlinear PolarMACE, FP64, one
-A100; all gates PASS, including 1-rank and 2-rank exact parity.** That is
-**1.261×** over the round-3 build 8 (48.74 ms), **4.75×** over the original
-Symmetrix-XL Kokkos engine (183.8 ms), and **2.43×** faster than the PyTorch
-reference (94.0 ms). Plan B-lite adds replay caching (B1) and reverse-gather
-fusion (B4, **−4.13 ms**, 42.79 → 38.66 ms). The earlier 40.95 ms figure was
-measured before the write-through correctness fix; see the note in the 1,296
-comparison below. **The reference target is normalized to 1,296 atoms:
-4.5 µs/atom → 5.832 ms/eval.** The measured 1,296-atom polar result is
-**333.17 ms (257.2 µs/atom), 57.1× above target**; the linear FP32 path on the
-same box is 9.69 µs/atom (2.15× above). Full report:
-[docs/results/PLAN_B_LITE_FINAL.md](docs/results/PLAN_B_LITE_FINAL.md).
+**Latest gated result (2026-10-21, Plan B-full): 31.33 ms/eval on 128 atoms
+(32 NH3 molecules), full nonlinear PolarMACE, FP64, one A100; all gates PASS,
+including 1-rank and 2-rank exact parity, plus the repeated-evaluation check.**
+That is **1.556×** over the round-3 build 8 (48.74 ms), **5.87×** over the
+original Symmetrix-XL Kokkos engine (183.8 ms), and **3.00×** faster than the
+PyTorch reference (94.0 ms). Plan B-full adds three accepted slices on top of
+B1/B4: **MH-1 FP64 team (3.10 ms)**, **UVU reverse d1 specialization
+(3.83 ms)**, and **team-per-edge reverse cutoff (2.03 ms)**. The intermediate
+38.66 ms write-through-fixed Plan B-lite and the pre-fix 40.95 ms remain
+historical. Full report:
+[docs/results/PLAN_B_FULL_FINAL.md](docs/results/PLAN_B_FULL_FINAL.md).
 The round-3 report (48.74 ms) remains the pre-Plan-B baseline:
 [docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md).
-1024 atoms (256 NH3) remains **312.1 ms** (not re-measured under Plan B-lite).
 
-**Independent cross-check (Plan B-core, frozen tree):** 38.73 ms/eval
-(binary `ed331d23…`, module 5–8, 32/32 end-to-end, LAMMPS 1-rank/2-rank all
-PASS); the 0.2% difference from 38.66 is run noise. Source-integrity note:
-the main-tree FP64 MH-1 team path must keep the write-through / float-only
-guard; repeated evaluations, not only single-point gates, must be checked
-(technical report §5.5, `docs/results/PLAN_B_CORE_FINAL.md`).
+**Reference target normalized to 1,296 atoms: 4.5 µs/atom → 5.832 ms/eval.**
+The latest measured 1,296-atom polar result is **333.17 ms (257.2 µs/atom),
+57.1× above target**; the linear FP32 path on the same box is 9.69 µs/atom
+(2.15× above). B-full's three new slices were **not re-measured at 1,296**,
+so no extrapolated 1,296 headline is claimed. 1024 atoms (256 NH3) remains
+**312.1 ms** (not re-measured under Plan B-lite/B-full).
+
+**Independent cross-checks:** B-core frozen-tree **38.73 ms** (binary
+`ed331d23…`, all gates PASS) and B-full **31.33 ms** (binary `bcecbf90…`,
+all gates + repeated-eval PASS). The 0.2% B-core difference from the 38.66
+intermediate is run noise; B-full extends B-core with the MH-1 FP64 team,
+UVU reverse d1 specialization, and cutoff team slices. Source-integrity note:
+any FP64 MH-1 team build must keep the write-through guard; repeated
+evaluations, not only single-point gates, must be checked (technical report
+§5.5, `docs/results/PLAN_B_FULL_FINAL.md`).
 
 **Plan B audit (what 20–25 ms would require):**
-[docs/design/PLAN_B_AUDIT.md](docs/design/PLAN_B_AUDIT.md) — 36–40 ms is
-credible with host-gap/launch elimination; 20–25 ms needs work removal below
-the current static floor (22.93 ms). Plan B-core is in progress toward 30 ms.
+[docs/design/PLAN_B_AUDIT.md](docs/design/PLAN_B_AUDIT.md) — 30–35 ms is
+credible with the B-full slices; the measured 31.33 ms is inside that band.
+20–25 ms needs work removal below the current static floor (22.93 ms).
 
 **Technical report (extendable PDF, for newcomers):**
 [docs/technical/SYMMETRIX_POLAR_TECHNICAL_REPORT.pdf](docs/technical/SYMMETRIX_POLAR_TECHNICAL_REPORT.pdf)
@@ -100,26 +106,25 @@ gate catalog, and reproduction protocol).
 
 | Configuration | v29 baseline | **Latest (full gate suite PASS)** | Speedup |
 |---|---:|---:|---:|
-| NH3×32, **128 atoms (32 NH3)**, full PolarMACE | 183.8 ms | **38.66 ms** | **4.75×** |
+| NH3×32, **128 atoms (32 NH3)**, full PolarMACE | 183.8 ms | **31.33 ms** | **5.87×** |
 | NH3×32, 128 atoms, polar-off | 87.2 ms | **19.93 ms** | 4.38× |
 | N2×216, **432 atoms**, full PolarMACE | 477.8 ms/step | **83.47 ms/step** | 5.72× |
 | NH3×32×2×2×2, **1024 atoms (256 NH3)** | 1007.7 ms | **312.1 ms** | 3.23× |
 
-The 128-atom full and polar-off rows are the Plan B-lite final binary
-(`1e324f59…`, rebuilt 2026-10-21 with the write-through fix): complete gate
-suite PASS, including 1-rank and 2-rank exact-2-hop parity. The polar-off row
-was measured on the pre-fix binary and is unaffected by the FP64 team path.
-The 432-atom row is the clean round-0 Plan B-lite measurement (87.82 → 83.47
-ms; another round was externally contended), so cross-session comparisons carry
-a ±2–3 ms caveat. The 1024-atom row is the round-3 speed and was not
-re-measured under Plan B-lite. Full-suite numbers: module 5 PASS (dens 6.689e-8
-/ stage 7.127e-8), module 6 ΔE rel 1.018e-15 / abs 7.77e-16 eV, module 7 out
-4.55e-7, module 8 FD 5.78e-4 / parity 7.19e-7, end-to-end 32/32, LAMMPS 1-rank
-dE 2.91e-11 eV / max dF 2.59e-14 eV/Å, 2-rank exact dE 2.91e-11 / max dF
-1.687e-6 eV/Å.
+The 128-atom full row is the Plan B-full final binary (`bcecbf90…`): complete
+gate suite PASS, including 1-rank and 2-rank exact-2-hop parity plus the
+repeated-evaluation check. The polar-off and 432-atom rows are Plan B-lite
+measurements (not re-measured under B-full); the 432-atom row is the clean
+round-0 measurement (87.82 → 83.47 ms, ±2–3 ms cross-session caveat). The
+1024-atom row is the round-3 speed and was not re-measured under Plan B.
+Full-suite numbers: module 5 PASS (dens 6.689e-8 / stage 7.13e-8), module 6
+ΔE rel 1.018e-15 / abs 7.77e-16 eV, module 7 out 4.55e-7, module 8 FD 5.78e-4
+/ parity 7.19e-7, end-to-end 32/32, LAMMPS 1-rank dE 2.91e-11 eV / max dF
+2.61e-14 eV/Å, 2-rank exact dE 2.91e-11 / max dF 1.687e-6 eV/Å; three repeated
+`run 0` PE identical, max dF ≤1.1e-15.
 
 The 128-atom PyTorch `mace_polar` reference is 94.0 ms/eval; the final engine is
-**2.30× faster**. The stale-object finding and the exact per-kernel table are
+**3.00× faster**. The stale-object finding and the exact per-kernel table are
 in [docs/results/KERNEL_ROUND2.md](docs/results/KERNEL_ROUND2.md). The Plan
 B-lite result, slice audit, and remaining gap to 30 ms are in
 **[docs/results/PLAN_B_LITE_FINAL.md](docs/results/PLAN_B_LITE_FINAL.md)**;

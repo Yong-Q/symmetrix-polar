@@ -69,6 +69,23 @@ the 0.2% difference is run noise. Repeated evaluations are mandatory for any
 FP64 MH-1 team build. Artifacts: `bench/plan_b_core_2026-10-20/` and
 `docs/results/PLAN_B_CORE_FINAL.md`.
 
+### Plan B-full final result (2026-10-21)
+
+| Item | Value |
+|---|---:|
+| 128 atoms (32 NH3), full PolarMACE | **31.33 ms/eval** |
+| Same-session B-core baseline | 38.51 ms/eval |
+| Saving | **−7.18 ms (−18.6%)** |
+| MH-1 FP64 team | +3.10 ms |
+| UVU reverse d1 specialization | +3.83 ms |
+| reverse cutoff team | +2.03 ms |
+| UVU forward/LE d1 split | +0.74 ms (rejected, <1 ms bar) |
+| Final binary sha256 | `bcecbf9051cf8ab830e6b3af303fa44e6f0911f95768cfe57a652f7ebaef14ec` |
+| Gates | module 5–8, 32/32, LAMMPS 1/2-rank, repeated-eval: **PASS** |
+
+Artifacts: `bench/plan_b_full_2026-10-20/` and
+`docs/results/PLAN_B_FULL_FINAL.md`. Remaining gap to 30 ms: **1.33 ms**.
+
 The interleaved A/B is deliberate: absolute times are contention-sensitive,
 while same-run ratios are stable. A speed claim without an interleaved baseline
 is not accepted.

@@ -2,14 +2,15 @@
 
 ## 摘要
 
-**版本：** round 3 + Plan B-lite + write-through fix · 2026-10-21  
+**版本：** round 3 + Plan B-full · 2026-10-21  
 **适用读者：** 第一次接触 PolarMACE / Symmetrix-XL / GPU 内核优化的研究者与工程师
 
 在 128 原子（32 个 NH3 分子）的 full PolarMACE 上，单张 A100 的能量+力评估从
-round-2 的 56.50 ms 降到 **38.66 ms**（Plan B-lite：replay cache + gather
-fusion），全部数值门 PASS（含 2-rank exact parity）；round-3 build 8 的
+round-2 的 56.50 ms 降到 **31.33 ms**（Plan B-full：replay cache + gather
+fusion + MH-1 FP64 team + UVU reverse d1 specialization + cutoff team），
+全部数值门 PASS（含 2-rank exact parity 和重复评估检查）；round-3 build 8 的
 48.74 ms 是 Plan B 之前的基线。1024 原子（256 个 NH3 分子）为
-**312.1 ms/eval**（未在 Plan B-lite 下重测）。20–30 ms 的目标尚未达到，
+**312.1 ms/eval**（未在 Plan B-full 下重测）。20–30 ms 的目标还差 1.33 ms，
 剩余瓶颈和未完成项在第 7 节明确列出。
 
 ---
@@ -228,7 +229,8 @@ round-2 的教训：一个“已验收”的二进制可能链接了旧 object�
 | Round 1 | e3nn linear packed GEMM、polar dense reverse | 122.2 ms |
 | Round 2 | UVU/team kernels、project kernels、stale object 修复 | 56.50 ms |
 | Round 3 | MH-1/UVU/affine/k-space 细化、gate 全套复跑 | 48.74 ms |
-| **Plan B-lite** | replay cache（B1）+ reverse-gather fusion（B4），write-through 修复后 | **38.66 ms** |
+| Plan B-lite | replay cache（B1）+ reverse-gather fusion（B4），write-through 修复后 | 38.66 ms |
+| **Plan B-full** | + MH-1 FP64 team + UVU reverse d1 specialization + cutoff team | **31.33 ms** |
 
 ### 4.3 Round 3 切片：哪些有效，哪些无效
 
@@ -276,7 +278,8 @@ gather（约 3.6 ms）、cuBLAS/external（约 3.8 ms）、e3-linear pack/unpack
 
 | 配置 | ms/eval |
 |---|---:|
-| **Plan B-lite 最终（latest full-gate PASS）** | **38.66** |
+| **Plan B-full 最终（latest full-gate PASS）** | **31.33** |
+| Plan B-lite 中间版本（write-through 修复后） | 38.66 |
 | Replay cache only（B1） | 42.79 |
 | Round-3 build 8（Plan B 前基线） | 48.74 |
 | Round-2 验收 | 56.50 |
@@ -288,11 +291,26 @@ gather（约 3.6 ms）、cuBLAS/external（约 3.8 ms）、e3-linear pack/unpack
 
 | 基线 | 倍率 |
 |---|---:|
-| Round-3 build 8 | **1.261×** |
-| Round-2 | **1.462×** |
-| v29 Kokkos 引擎 | **4.75×** |
-| v28 初始 polar | **179.8×** |
-| PyTorch 参考 | **2.43×** |
+| Round-3 build 8 | **1.556×** |
+| Round-2 | **1.803×** |
+| v29 Kokkos 引擎 | **5.87×** |
+| v28 初始 polar | **221.9×** |
+| PyTorch 参考 | **3.00×** |
+
+![Plan B-full speed](figures/fig_09_plan_b_full.png)
+
+*图：Plan B-full 同 session A/B：B-core 38.51 → 31.33 ms（−7.18 ms，
+−18.6%）。三个 accepted slice：MH-1 FP64 team +3.10、UVU reverse d1
+specialization +3.83、cutoff team +2.03 ms。*
+
+**Plan B-full 的 accepted slice（同二进制 A/B）：**
+
+| 切片 | 关闭 | 开启 | 节省 |
+|---|---:|---:|---:|
+| MH-1 FP64 team（write-through 修复） | 35.34 | 32.24 | **+3.10 ms** |
+| UVU reverse d1 specialization + 4-v prefetch | 36.19 | 32.36 | **+3.83 ms** |
+| reverse convolution cutoff team-per-edge | 39.52 | 37.48 | **+2.03 ms** |
+| UVU forward/LE d1 split | 32.58 | 31.84 | +0.74 ms（<1 ms，暂未启用） |
 
 ![Plan B-lite speed](figures/fig_07_plan_b_lite.png)
 
@@ -319,7 +337,7 @@ zero-fill 融合中性（+0.01 ms），也保持 opt-in。两个默认开关是
 
 | 体系 | 原子 | 分子 | ms/eval |
 |---|---:|---:|---:|
-| NH3 1×1×1 | 128 | 32 | **38.66** |
+| NH3 1×1×1 | 128 | 32 | **31.33** |
 | NH3 2×2×2 | 1024 | **256** | **312.1** |
 | NH3 2×4×4 | 4096 | ~1024 | ~1200–1300（外推，未完成实测） |
 
@@ -333,7 +351,7 @@ zero-fill 融合中性（+0.01 ms），也保持 opt-in。两个默认开关是
 
 ### 5.3 引擎比较（最新测量）
 
-**执行模式：** 非线性 PolarMACE 的两行（38.66 / 19.93 ms，Plan B-lite）
+**执行模式：** 非线性 PolarMACE 的两行（31.33 / 19.93 ms，Plan B-full）
 都是
 **materialized** 执行（模型加载日志为 `streamed_edges='materialized'`）。
 generic streamed（19.3 ms）只适用于线性/compact-radial 引擎族；非线性
@@ -346,7 +364,7 @@ kernel 仍然在 materialized 路径里运行**（CUPTI trace 中的
 
 | 配置（最新测量） | 1-rank eval |
 |---|---:|
-| **Full PolarMACE**（128 原子 = 32 NH3） | **38.66 ms** |
+| **Full PolarMACE**（128 原子 = 32 NH3） | **31.33 ms** |
 | Nonlinear backbone（polar off） | 19.93 ms |
 | Linear MACE-OFF23 medium, materialized（Symmetrix 线性路径；不同模型） | 6.6 ms |
 | Linear MACE-OFF23 medium, generic streamed（Symmetrix 通用流式路径；不同模型） | 19.3 ms |
@@ -356,13 +374,13 @@ kernel 仍然在 materialized 路径里运行**（CUPTI trace 中的
 引擎的线性路径可以很快；Full PolarMACE 是 270 MB、83 元素、r_cut 6 Å、512 通道
 非线性 readout，二者不可直接比较。
 
-**38.66/6.6 = 5.86× 的分解（哪些是模型本身，哪些是引擎）：**
+**31.33/6.6 = 4.75× 的分解（哪些是模型本身，哪些是引擎）：**
 
 | 部分 | 时间 | 倍率 | 性质 |
 |---|---:|---:|---|
 | Linear MACE-OFF23 medium | 6.6 ms | 1.00× | 小模型、线性 readout |
 | → Nonlinear PolarMACE backbone | 19.93 ms | **3.0×** | **模型本身**更大/更复杂：270 MB vs 37 MB、83 vs 10 元素、r_cut 6 vs 5 Å、512 通道、2 interactions、非线性 readout |
-| → Full PolarMACE | 38.66 ms | **1.94×** | **模型物理**：polar 长程层（SCF + Ewald） |
+| → Full PolarMACE | 31.33 ms | **1.57×** | **模型物理**：polar 长程层（SCF + Ewald） |
 | 引擎/内核可优化余量 | GPU-busy ≈33.9 ms；host/launch gap ≈7 ms | — | **引擎效率**，不是模型规模 |
 
 所以 7.4× 主要是“这个非线性极化模型更大 + 多了一个长程极化层”，不是同一个模型被引擎拖慢了 7.4×。若要单独测“非线性 readout”的代价，需要一个与 PolarMACE backbone 同规模、只把 readout 改成线性的模型，当前没有这个对照。
@@ -399,13 +417,15 @@ rc 134 出现在每个 gate 的 `GATE PASS` 之后，是已有的 CUDA teardown 
 修复方式：team kernel 与 vec4/scalar 路径一样按 `write_through` 分支。修复后：
 单点力与 Python engine 门一致到 **1.0e-15**；真实 10 步 NVE MD（0.5 fs、
 300 K 初速度）与原始 pre-team 二进制的最大位置差 **9.8e-15 Å**、最大力差
-**1.4e-14 eV/Å**。本文的 38.66 ms 是修复后的实测值；修复前的 40.95 ms 不再
-引用。
+**1.4e-14 eV/Å**。Plan B-lite 的 38.66 ms 和 Plan B-full 的 31.33 ms 都是
+修复后的实测值；修复前的 40.95 ms 不再引用。Plan B-full 还通过了三次
+`run 0` 重复评估：PE −49242.45641531493 三次相同，max dF ≤1.1e-15 eV/Å。
 
 **独立交叉验证（Plan B-core，frozen tree）：** 同一模型、同一 128 原子盒子
 的 frozen-tree build 测得 **38.73 ms/eval**（binary `ed331d23…`），module 5–8、
-32/32 end-to-end、LAMMPS 1-rank/2-rank 全部 PASS；与 38.66 ms 的 0.2% 差异
-在 run 噪声内。该工作还独立确认：shared main tree 的 FP64 MH-1 team 路径
+32/32 end-to-end、LAMMPS 1-rank/2-rank 全部 PASS；B-core 38.73 与
+B-lite 38.66 的 0.2% 差异在 run 噪声内，B-full 在此基础上进一步到 31.33 ms。
+该工作还独立确认：shared main tree 的 FP64 MH-1 team 路径
 必须保留 write-through / float-only guard，验收必须包含**重复评估**检查，
 不能只看单点 gate（详见 `docs/results/PLAN_B_CORE_FINAL.md`）。
 
@@ -436,7 +456,7 @@ RBE 的 P4 **收敛/无偏门 PASS**（斜率 −0.499，同 seed 可复现，�
 
 ## 7. 未完成与不足（诚实清单）
 
-1. **30 ms 目标未达到**：当前 38.66 ms（128 原子，write-through 修复后）；
+1. **30 ms 目标未达到**：当前 31.33 ms（128 原子，Plan B-full），差 1.33 ms；
    20–25 ms 更未达到。剩余 wall 中有约 3–5 ms 是 host/launch gap，其余是
    MH-1、UVU、gather、cuBLAS、e3-linear 等 kernel 的实际工作。
 2. **e3-linear merged unpack 未修好**：多贡献 output block 上有 illegal memory
