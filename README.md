@@ -56,6 +56,24 @@ speed headline is **133.04 at 1,296** and **140.91 at 5,184**. The 1,296
 node/fused arms were measured in one q4 task (2 rounds × 4 arms, 5 steps per
 arm); the 5,184 and 10,368 rows predate the two dataflow changes.
 
+### Clean q4 A/B at 1,296 atoms
+
+Task `t-20261022180640-dslc9`, 1×A100-80GB, dedicated. All values are
+**µs/atom/step**; medians of two rounds.
+
+| Arm | µs/atom/step | Saving vs baseline |
+|---|---:|---:|
+| Baseline (N1 + R1) | 138.91 | — |
+| Node-owned forward | **135.98** | −2.92 (2.1 %) |
+| Fused2 reverse | **136.08** | −2.83 (2.0 %) |
+| **Node-owned + fused2 (default)** | **133.04** | **−5.87 (4.2 %)** |
+
+PE is identical to the baseline on the combined arm; max force difference is
+**4.62e-14 eV/Å**. Both dataflow changes are default-on; set
+`MATOS_MH1_FWD_NODE=0` / `MATOS_MH1_REV_FUSED2=0` to opt out.
+
+![q4 clean A/B](docs/results/figures/Q4_ARCH_AB.png)
+
 - **q4 deployment:** the 1,296 A/B ran on a dedicated q4 A100. Baseline
   138.91, node-owned forward 135.98, fused2 136.08, both **133.04**
   µs/atom/step. Task wall time is dominated by model load and is not a speed
