@@ -1,9 +1,10 @@
 # Theory-first plan for the optimal PolarMACE execution speed
 
 **Date:** 2026-10-22
-**Status:** analysis/planning. No engine edit; the checkpoint weight audit and
-a 512-atom activation-rank probe are complete. The 1,296/multi-snapshot
-validation and the output-error gate are pending.
+**Status:** analysis/planning. The checkpoint weight audit, 512-atom
+activation-rank probe, and rank-truncated E/F gate are complete. **The gate is
+negative: direct low-rank input truncation is rejected.** The two-path
+new-architecture plan is in [`NEW_ARCHITECTURE_TWO_PATHS.md`](NEW_ARCHITECTURE_TWO_PATHS.md).
 **Scope:** FP64 nonlinear PolarMACE, exact GTO-Ewald, 2-step SCF/Fukui, one
 A100-80GB, 1,296 and 5,184 atoms.
 
@@ -69,7 +70,7 @@ remaining single-GPU headroom from 145.75 is **~1.1–1.2×**, not 1.5–2×.
 | Structure | Question | Status |
 |---|---|---|
 | UVU weights | Are the 6 tables low-rank/block-sparse? | **Measured: no.** zero fraction 0; rank 512/512 at 1e-3–1e-6; 99% energy needs 286–380 singular values. Low-rank `C²→Cr` compression is rejected. |
-| Activation/feature rank | Is `X (N×C)` effectively low-rank, so `W X = (W U_r)(U_rᵀX)`? | **Measured: yes, strongly.** 512-atom snapshot, input `512×2048`: `fdcm0` energy ranks 90/99/99.9/99.99 = **9 / 62 / 202 / 362**; `le_q/v` = **10 / 76 / 238 / 399**. Numerical rank at 1e-3 is 488–508 and at 1e-4 is 512, so the tail is nonzero. A rank-256 projection captures >99.9% energy; the output E/F gate is pending. |
+| Activation/feature rank | Is `X (N×C)` effectively low-rank, so `W X = (W U_r)(U_rᵀX)`? | **Measured: yes, strongly.** 512-atom snapshot, input `512×2048`: `fdcm0` energy ranks 90/99/99.9/99.99 = **9 / 62 / 202 / 362**; `le_q/v` = **10 / 76 / 238 / 399**. Numerical rank at 1e-3 is 488–508 and at 1e-4 is 512, so the tail is nonzero. A rank-256 projection captures >99.9% energy, but the output E/F gate **failed**: direct truncation is rejected (see §4.1). |
 | CG/path sparsity | How many tensor-product instructions are exactly skippable? | Planned. Need >50% skippable to beat the current memory/launch-bound path. |
 | SCF contraction | Can 1 step + a cheap Anderson/Jacobian correction match 2 steps? | Planned. 1-step alone fails (dE 1.27 eV); a correction must pass dE/dF gates. |
 | Path-mask block sparsity | Do path masks zero large UVU output blocks? | Planned. If yes, a block-sparse UVU GEMM can skip compute; N1 may already exploit part. |
@@ -111,9 +112,22 @@ generic GEMM/tiling trick, and it composes with the memory/compute-and-release
 schedule: the rank-r features are smaller, stay in L2/shared, and the
 projected weights `W V_r` are small.
 
-The open question is the **output-error gate**, not the existence of the
-structure. The numerical rank at 1e-4 is full, so a rank-128/256 projection is
-an approximation; it must be validated on E/F, not just on the feature energy.
+The output-error gate is decisive, and it **failed**:
+
+| rank r | dE (eV) | max dF (eV/Å) | rms dF (eV/Å) |
+|---:|---:|---:|---:|
+| 32 | +18.818 | 0.2456 | 0.0717 |
+| 64 | +8.333 | 0.2081 | 0.0635 |
+| 128 | +7.833 | 0.2672 | 0.0770 |
+| 256 | −1.996 | 0.1965 | 0.0553 |
+
+The oracle rank-r basis is the best possible basis from the same snapshot; even
+so, r=256 (99.9% feature energy) leaves ~2 eV energy error and ~0.2 eV/Å force
+error. **Feature energy rank is not output-error rank**: the small tail
+singular directions carry force-relevant information. Direct low-rank input
+truncation is therefore **rejected** for the current checkpoint. A **trained**
+latent/low-rank model (Path B) is still possible, but that is a new model, not
+an inference approximation.
 
 ![Full-rank weights, low-rank activations](../results/figures/FEATURE_LOWRANK.png)
 
@@ -127,7 +141,7 @@ an approximation; it must be validated on E/F, not just on the feature energy.
 | Device-side control plane | SCF/Fukui/LE scalars, cooperative grid reduction | 16.12 ms host gap, 24 D2H syncs |
 | One grow-only arena | tile-local lifetime, compute-and-release | peak VRAM; target <10 GiB at 5,184 |
 | CUDA-core/VRAM scheduling | tile size to SM occupancy; L2-resident weights/path tables; 128-bit loads; `cp.async` | occupancy/latency stalls |
-| Low-rank activation projection | data-manifold rank r; `W X = (W V_r)(V_rᵀX)` | UVU/linear FLOPs and feature traffic; `O(N C²)→O(N C r)` |
+| Low-rank activation projection | **rejected** for the current checkpoint (dE 2–19 eV, dF 0.20–0.27 eV/Å even at r=256) | a trained latent model is Path B |
 | Mixed precision + FP64 refinement | TF32/BF16 for GEMM-heavy parts, FP64 residual correction | only the GEMM-bound subset; error-controlled |
 | Multi-GPU V2 | one rank/GPU, owned-only node/polar, narrow halo, device-side Ewald allreduce | scale-out; 1.5–2.6× projected, queue-blocked |
 
@@ -144,9 +158,9 @@ All forward-looking numbers are **[P]** projections, not measurements.
 | Measured N1 | — | 189.3 | 145.75 | 1.00× |
 | CS conservative | persistent SCF + codegen + CUDA Graph | 150–165 | 116–127 | 1.15–1.26× |
 | CS optimistic | + node-owned tensor product | 120–135 | 93–104 | 1.40–1.56× |
-| Math + CS | + activation low-rank / CG sparsity / SCF correction | 100–120 | 77–93 | 1.60–1.90× |
+| Exact math + CS | CG sparsity / joint tensor decomposition / SCF correction | 110–140 | 85–108 | 1.35–1.70× |
 | Multi-GPU V2 | 4×A100, owned-only, narrow halo | 65–100 | 50–77 | 1.9–2.9× |
-| Model/precision change | non-self-consistent or TF32/BF16 | <80 | <62 | >2.3× |
+| New model (Path B) | node-centric Wigner-6j/Gaunt + latent Ewald/PME + MoE | <80 [P] | <62 [P] | >2.3× [P] |
 
 The **1.5× target (97 µs/atom)** requires the CS-optimistic path **and** at
 least one positive mathematical structure. The **2× target (73 µs/atom)** is
@@ -155,10 +169,10 @@ change.
 
 ## 7. Go/no-go decision tree
 
-1. **Activation rank / output gate:** the 512-atom probe shows `r99 = 62–76`
-   (fdcm0) and `76` (LE). Next, run rank-truncated inference at
-   `r = 64/128/256` and measure E/F vs the full model. If `r = 256` passes a
-   documented gate, implement; if only `r ≥ 384` passes, reject.
+1. **Activation rank gate: FAILED.** Oracle rank truncation at
+   `r = 32/64/128/256` gives dE 2–19 eV and dF 0.20–0.27 eV/Å. Do not
+   implement direct low-rank input truncation; a trained latent model is
+   Path B.
 2. **CG/path sparsity**: if >50% of tensor-product instructions are exactly
    skippable, build a sparse instruction-level path; otherwise keep the dense
    path.
@@ -196,5 +210,7 @@ change.
 
 Artifacts: `docs/results/data/uvu_rank_2026-10-22.json`,
 `docs/results/data/feature_rank_2026-10-22.json`,
+`docs/results/theory_rank/rank_truncated_error.json`,
 `docs/results/theory_rank/` (read-only audit scripts), and
-`docs/results/figures/FEATURE_LOWRANK.png`.
+`docs/results/figures/FEATURE_LOWRANK.png`. The negative gate is recorded in
+`docs/results/theory_rank/rank_truncated_error.json`.

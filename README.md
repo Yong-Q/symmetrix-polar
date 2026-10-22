@@ -110,7 +110,8 @@ source are in the [optimization ledger](docs/results/OPTIMIZATION_LEDGER.md).
 - **Start here:** [latest speed & plan](docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md) ·
   [optimization ledger](docs/results/OPTIMIZATION_LEDGER.md) ·
   [progress to 80 µs/atom](docs/results/PROGRESS_TO_80US_2026-10-21.md) ·
-  [theory-first optimal execution plan](docs/design/THEORY_OPTIMAL_EXECUTION_PLAN.md)
+  [theory-first execution plan](docs/design/THEORY_OPTIMAL_EXECUTION_PLAN.md) ·
+  [two-path new architecture](docs/design/NEW_ARCHITECTURE_TWO_PATHS.md)
 - **Model & verification:** [tutorial](docs/tutorial/SYMMETRIX_POLAR_TUTORIAL_2026-10-21.pdf) ·
   [technical report](docs/technical/SYMMETRIX_POLAR_TECHNICAL_REPORT.pdf) ·
   [theory & methods](docs/THEORY_AND_METHODS.md) ·
