@@ -1,0 +1,21 @@
+{
+ "task_id": "t-20261022214602-5vk8x",
+ "queue": "queue004",
+ "gpu": "A100-80GB",
+ "student": "192 max_L=1, fw=5, 2,166 data",
+ "teacher": {
+  "1296": 133.04,
+  "5184": 128.99
+ },
+ "student_speed": {
+  "1296": 116.835,
+  "5184": 121.16
+ },
+ "accuracy": {
+  "valid_432": {
+   "MAE_E_meV_per_atom": 2.1,
+   "MAE_F_meV_per_A": 6.7
+  }
+ },
+ "note": "water speed is out-of-domain for the six-molecule student"
+}

@@ -28,7 +28,7 @@ PolarMACE is a different model.*
 | **Fused reverse alone** | 136.08 µs/atom/step, **−2.83 (2.0 %)**; `MATOS_MH1_REV_FUSED2=0` opts out | `docs/results/FUSED_REVERSE_2026-10-22.md` |
 | **Mathematics-first architecture** | exact-checkpoint route projects **97–115 µs/atom/step**; 90 not supported on one exact-FP64 GPU | `docs/design/MATH_ARCH_2026-10-22.md` |
 | **Path B pruning audit** | zero-shot no-go beyond ~1.1×; rebuild + fine-tune targets 1.5–4× (C=384→320 first) | `docs/results/PATH_B_PRUNING_AUDIT_2026-10-22.md` |
-| **Path B student in engine** | 192 max_L=1: **2.1 meV/atom / 6.7 meV/Å**; **117.8 µs/atom/step** at 1,296 (local, engine); in-domain H2O parity 5.8e-9 eV / ~1e-8 eV/Å | `docs/results/PATH_B_STUDENT128_TRAIN_2026-10-22.md` |
+| **Path B student in engine** | 192 max_L=1: **2.1 meV/atom / 6.7 meV/Å** (432 held-out); **116.84 / 121.16 µs/atom/step** at 1,296 / 5,184 (clean q4) | `docs/results/PATH_B_STUDENT128_TRAIN_2026-10-22.md` |
 | **Path B active learning** | committee of 3, student MD/rattle candidates, force-variance selection, ~240 FP64 teacher labels, 192 retrain; q4 `t-20261022193021-r82s4` | `docs/design/PATH_B_ACTIVE_LEARNING_2026-10-22.md` |
 
 [Latest speed & plan](docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md) ·
@@ -76,6 +76,19 @@ PE is identical to the baseline on the combined arm; max force difference is
 `MATOS_MH1_FWD_NODE=0` / `MATOS_MH1_REV_FUSED2=0` to opt out.
 
 ![q4 clean A/B](docs/results/figures/Q4_ARCH_AB.png)
+
+### Distilled student (narrow-domain six molecules, not exact PolarMACE)
+
+| Model | Held-out samples | MAE E | MAE F | 1,296 | 5,184 |
+|---|---:|---:|---:|---:|---:|
+| 192 max_L=1, fw=5, 2,166 data | 432 | **2.1 meV/atom** | **6.7 meV/Å** | **116.84** | **121.16** |
+| Exact 512 teacher | — | 0 (reference) | 0 (reference) | 133.04 | 128.99 |
+
+All speeds are **µs/atom/step**, clean q4 task `t-20261022214602-5vk8x`
+(1×A100, 2 rounds × 5 steps). The student is trained on six molecules in
+16 Å boxes; the water speed run is out-of-domain and measures execution only.
+The engine needed generic-width fixes (local-electron 4C/C/2C and gate
+activation serialization); in-domain H2O parity is 5.8e-9 eV / ~1e-8 eV/Å.
 
 - **q4 deployment:** the 1,296 A/B ran on a dedicated q4 A100. Baseline
   138.91, node-owned forward 135.98, fused2 136.08, both **133.04**

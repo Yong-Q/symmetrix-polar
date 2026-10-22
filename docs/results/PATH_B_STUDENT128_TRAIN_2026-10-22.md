@@ -48,7 +48,7 @@ dataset passes the gate and runs in the engine:
 
 | Model | Val MAE E | Val MAE F | 1,296 engine speed |
 |---|---:|---:|---:|
-| **192 max_L=1, fw=5, 2,166 data** | **2.1 meV/atom** | **6.7 meV/Å** | **117.8 µs/atom/step** (local) |
+| **192 max_L=1, fw=5, 2,166 data** | **2.1 meV/atom** | **6.7 meV/Å** | **116.84 / 121.16 µs/atom/step** at 1,296 / 5,184 (clean q4 `t-20261022214602-5vk8x`) |
 
 The engine needed two generic-width fixes (local-electron 4C/C/2C invariants
 and the gate activation serialization). On an in-domain single H2O frame the
