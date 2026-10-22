@@ -37,6 +37,14 @@ This is a narrow-domain six-molecule student, not a universal replacement for
 PolarMACE. The model is 25.7 MB (2.04M parameters, 7.5× smaller than the
 teacher).
 
+## Engine compatibility
+
+The passing 128 fw=5 model was trained with `max_L=2`, so its node features
+contain l=2. The Symmetrix engine rejects this (`polar_blocks: node-feature
+l>1 is unsupported`). An engine-compatible **max_L=1** retrain is running as
+`t-20261022194958-jbbjh`; its accuracy and speed must be re-measured before
+claiming the student can replace the teacher in the engine.
+
 ## What was validated
 
 - The full training path (data loading, E0/statistics, polar SCF flags,
