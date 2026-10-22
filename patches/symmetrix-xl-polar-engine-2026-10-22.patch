@@ -1,0 +1,879 @@
+diff --git a/libsymmetrix/source/e3nn_kokkos.cpp b/libsymmetrix/source/e3nn_kokkos.cpp
+index 1316d2b..8e3cc7b 100644
+--- a/libsymmetrix/source/e3nn_kokkos.cpp
++++ b/libsymmetrix/source/e3nn_kokkos.cpp
+@@ -2553,6 +2553,98 @@ E3TensorProductKokkosT<Precision>::E3TensorProductKokkosT(const nlohmann::json&
+         mh1_harmonic_values=toKokkosView(
+             "e3 mh1 harmonic values",harmonic_values);
+ 
++        // Reverse fused plan: regroup the same sparse entries as the edge
++        // reverse kernel by (instruction, global input_2 component).  The
++        // source is the flattened sparse host plan, so this is a
++        // re-association of the exact same terms, not a different operator.
++        {
++            const int instruction_count=mh1_instruction_count_;
++            std::vector<int> reverse_offsets(
++                static_cast<std::size_t>(instruction_count)*17,0);
++            std::size_t reverse_total=0;
++            for(int instruction=0;instruction<instruction_count;
++                ++instruction) {
++                const int input_2_offset=
++                    mh1_instruction_data_host[7*instruction+1];
++                const int output_width=
++                    mh1_instruction_data_host[7*instruction+4];
++                const int component_base=
++                    mh1_instruction_data_host[7*instruction+6];
++                const int first_entry=
++                    mh1_component_offsets_host[component_base];
++                const int last_entry=
++                    mh1_component_offsets_host[component_base+output_width];
++                for(int entry=first_entry;entry<last_entry;++entry) {
++                    const int global_component=input_2_offset
++                        +mh1_sparse_indices_host[3*entry+1];
++                    if(global_component<0||global_component>=16)
++                        throw std::runtime_error(
++                            "e3 mh1 reverse plan component out of range.");
++                    ++reverse_offsets[
++                        static_cast<std::size_t>(instruction)*17
++                        +global_component+1];
++                    ++reverse_total;
++                }
++            }
++            for(int instruction=0;instruction<instruction_count;
++                ++instruction)
++                for(int component=0;component<16;++component)
++                    reverse_offsets[static_cast<std::size_t>(instruction)*17
++                        +component+1]+=reverse_offsets[
++                            static_cast<std::size_t>(instruction)*17
++                            +component];
++            // The per-instruction prefix above starts each instruction at
++            // zero; add the running base so buckets from different
++            // instructions never share slots.
++            int reverse_base=0;
++            for(int instruction=0;instruction<instruction_count;
++                ++instruction) {
++                const int instruction_total=reverse_offsets[
++                    static_cast<std::size_t>(instruction)*17+16];
++                for(int component=0;component<17;++component)
++                    reverse_offsets[static_cast<std::size_t>(instruction)*17
++                        +component]+=reverse_base;
++                reverse_base+=instruction_total;
++            }
++            std::vector<int> reverse_terms(reverse_total*2);
++            std::vector<Precision> reverse_values(reverse_total);
++            std::vector<int> reverse_cursor(reverse_offsets.begin(),
++                reverse_offsets.begin()
++                    +static_cast<std::size_t>(instruction_count)*17);
++            for(int instruction=0;instruction<instruction_count;
++                ++instruction) {
++                const int input_2_offset=
++                    mh1_instruction_data_host[7*instruction+1];
++                const int output_width=
++                    mh1_instruction_data_host[7*instruction+4];
++                const int component_base=
++                    mh1_instruction_data_host[7*instruction+6];
++                const int first_entry=
++                    mh1_component_offsets_host[component_base];
++                const int last_entry=
++                    mh1_component_offsets_host[component_base+output_width];
++                for(int entry=first_entry;entry<last_entry;++entry) {
++                    const int global_component=input_2_offset
++                        +mh1_sparse_indices_host[3*entry+1];
++                    const std::size_t bucket=
++                        static_cast<std::size_t>(instruction)*17
++                        +global_component;
++                    const int slot=reverse_cursor[bucket]++;
++                    reverse_terms[static_cast<std::size_t>(slot)*2]=
++                        mh1_sparse_indices_host[3*entry];
++                    reverse_terms[static_cast<std::size_t>(slot)*2+1]=
++                        mh1_sparse_indices_host[3*entry+2];
++                    reverse_values[slot]=mh1_sparse_values_host[entry];
++                }
++            }
++            set_kokkos_view(
++                mh1_reverse_instruction_offsets,reverse_offsets);
++            set_kokkos_view(
++                mh1_reverse_terms,reverse_terms,reverse_total,2);
++            mh1_reverse_term_values=toKokkosView(
++                "e3 mh1 reverse term values",reverse_values);
++        }
++
+         std::vector<std::vector<InputTerm>> input_terms(
+             mh1_input_1_angular_dimension_);
+         if(mh1_direct_node_layout_) {
+@@ -3051,6 +3143,117 @@ void E3TensorProductKokkosT<Precision>::evaluate(Kokkos::View<const Precision**,
+     }
+ }
+ 
++template<typename Precision>
++bool E3TensorProductKokkosT<Precision>::try_evaluate_node_owned_forward(
++    Kokkos::View<const Precision**,Kokkos::LayoutRight> source_node_values,
++    Kokkos::View<const int*> source_indices,
++    Kokkos::View<const int*> receiver_offsets,
++    int first_edge,int samples,int first_node,int last_node,
++    Kokkos::View<const Precision**,Kokkos::LayoutRight> edge_weights,
++    Kokkos::View<const Precision**,Kokkos::LayoutRight> edge_input_2,
++    Kokkos::View<Precision**,Kokkos::LayoutRight> node_messages) const
++{
++    // The node-owned kernel assigns every output element once, so it needs the
++    // write-through contract.  Without it, fall back to the edge path.
++    if(!(mh1_fast_path&&mh1_output_write_through_)) return false;
++    // All checks use extents only: receiver_offsets lives in device memory and
++    // must not be dereferenced on the host.
++    if(first_edge<0||samples<0||first_node<0||last_node<first_node
++        ||last_node>static_cast<int>(node_messages.extent(0))
++        ||receiver_offsets.extent(0)
++            <static_cast<std::size_t>(last_node)+1
++        ||edge_weights.extent(0)
++            !=static_cast<std::size_t>(samples)
++        ||edge_input_2.extent(0)
++            !=static_cast<std::size_t>(samples)
++        ||source_node_values.extent(1)
++            !=static_cast<std::size_t>(input_1_dimension_)
++        ||node_messages.extent(1)
++            !=static_cast<std::size_t>(output_dimension_)
++        ||edge_weights.extent(1)
++            !=static_cast<std::size_t>(weight_size_)
++        ||edge_input_2.extent(1)
++            !=static_cast<std::size_t>(input_2_dimension_))
++        throw std::invalid_argument(
++            "Kokkos node-owned MH-1 forward dimensions are inconsistent.");
++
++    ProfileRegion profile("symmetrix/mh1/tensor_product/forward_node_owned");
++    auto plan=mh1_instruction_data;
++    auto paths=mh1_path_weights;
++    auto indices=mh1_sparse_indices;
++    auto values=mh1_sparse_values;
++    auto component_offsets=mh1_component_offsets;
++    auto mask=output_mask;
++    const int instruction_count=mh1_instruction_count_;
++    const int multiplicity=mh1_multiplicity_;
++
++    Kokkos::parallel_for(
++        "e3 tensor product mh1 node-owned",
++        Kokkos::MDRangePolicy<Kokkos::Rank<3>>(
++            {0,first_node,0},{multiplicity,last_node,instruction_count},
++            {32,4,1}),
++        KOKKOS_LAMBDA(int channel,int node,int instruction) {
++            const int begin=receiver_offsets(node);
++            const int end=receiver_offsets(node+1);
++            const int input_1_offset=plan(instruction,0);
++            const int input_2_offset=plan(instruction,1);
++            const int output_offset=plan(instruction,2);
++            const int input_width=plan(instruction,3);
++            const int output_width=plan(instruction,4);
++            const int weight_offset=plan(instruction,5);
++            const int component_base=plan(instruction,6);
++            const Precision path=paths(instruction);
++            // output_width is 1, 3, 5, or 7 in this checkpoint.  Specializing
++            // it keeps the component accumulators in registers instead of
++            // spilling a dynamically indexed local array.
++            auto run=[&](auto width_tag) {
++                constexpr int width=decltype(width_tag)::value;
++                Precision accumulator[width];
++                #pragma unroll
++                for(int component=0;component<width;++component)
++                    accumulator[component]=Precision(0);
++                for(int edge=begin;edge<end;++edge) {
++                    const int source=source_indices(edge);
++                    const int local_edge=edge-first_edge;
++                    const Precision scale=path
++                        *edge_weights(local_edge,weight_offset+channel);
++                    #pragma unroll
++                    for(int component=0;component<width;++component) {
++                        Precision sum=Precision(0);
++                        for(int entry=component_offsets(
++                                component_base+component);
++                            entry<component_offsets(
++                                component_base+component+1);++entry)
++                            sum+=values(entry)
++                                *source_node_values(source,input_1_offset
++                                    +channel*input_width+indices(entry,0))
++                                *edge_input_2(local_edge,input_2_offset
++                                    +indices(entry,1));
++                        accumulator[component]+=scale*sum;
++                    }
++                }
++                #pragma unroll
++                for(int component=0;component<width;++component) {
++                    const int output_index=output_offset
++                        +channel*output_width+component;
++                    node_messages(node,output_index)=
++                        accumulator[component]*mask(output_index);
++                }
++            };
++            switch(output_width) {
++                case 1: run(std::integral_constant<int,1>{}); break;
++                case 2: run(std::integral_constant<int,2>{}); break;
++                case 3: run(std::integral_constant<int,3>{}); break;
++                case 4: run(std::integral_constant<int,4>{}); break;
++                case 5: run(std::integral_constant<int,5>{}); break;
++                case 6: run(std::integral_constant<int,6>{}); break;
++                case 7: run(std::integral_constant<int,7>{}); break;
++                default: break;
++            }
++        });
++    return true;
++}
++
+ template<typename Precision>
+ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,Kokkos::LayoutRight> input_1,Kokkos::View<const Precision**,Kokkos::LayoutRight> input_2,Kokkos::View<const Precision**,Kokkos::LayoutRight> dynamic_weights,Kokkos::View<const Precision**,Kokkos::LayoutRight> output_adjoint,Kokkos::View<Precision**,Kokkos::LayoutRight> input_1_adjoint,Kokkos::View<Precision**,Kokkos::LayoutRight> input_2_adjoint,Kokkos::View<Precision**,Kokkos::LayoutRight> weights_adjoint,Kokkos::View<const int*> output_gather) const
+ {
+@@ -3081,6 +3284,9 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
+         auto harmonic_offsets=mh1_harmonic_offsets;
+         auto harmonic_terms=mh1_harmonic_terms;
+         auto harmonic_values=mh1_harmonic_values;
++        auto reverse_offsets=mh1_reverse_instruction_offsets;
++        auto reverse_terms=mh1_reverse_terms;
++        auto reverse_values=mh1_reverse_term_values;
+         const int instruction_count=mh1_instruction_count_;
+         const int multiplicity=mh1_multiplicity_;
+ #ifdef KOKKOS_ENABLE_CUDA
+@@ -3088,7 +3294,209 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
+             Kokkos::Cuda>) {
+         const int channel_team_size=mh1_cuda_channel_team_size_;
+         const int harmonic_team_size=mh1_cuda_harmonic_team_size_;
++        // R1 reverse work removal: per-channel register accumulation and
++        // identity-mask elision.  Default off; same-binary A/B only.
++        const char* regacc_env=std::getenv("MATOS_MH1_REV_REGACC");
++        const bool rev_regacc=regacc_env!=nullptr&&std::atoi(regacc_env)!=0;
++        const bool identity_mask=output_mask_is_identity_;
+         using channel_policy=Kokkos::TeamPolicy<>;
++        // Fused reverse, second design: one team per edge, each thread owns a
++        // contiguous channel set, the 16 d input_2 components live in
++        // registers (b is an unrolled compile-time index), and the cross-
++        // thread reduction is one shared-memory pass.  This removes the
++        // second harmonics kernel and its redundant weight/output-adjoint
++        // reads without the per-entry shared-memory RMW of the first fused
++        // prototype.
++        const char* fused2_env=std::getenv("MATOS_MH1_REV_FUSED2");
++        if(fused2_env!=nullptr&&std::atoi(fused2_env)!=0
++            &&input_2_dimension_==16) {
++            using scratch_view=Kokkos::View<Precision*,
++                Kokkos::DefaultExecutionSpace::scratch_memory_space,
++                Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
++            const std::size_t part_smem=scratch_view::shmem_size(
++                channel_team_size*16);
++            Kokkos::parallel_for(
++                "e3 tensor reverse mh1 fused2",
++                channel_policy(input_1.extent(0),channel_team_size)
++                    .set_scratch_size(0,Kokkos::PerTeam(part_smem)),
++                KOKKOS_LAMBDA(
++                    const typename channel_policy::member_type& team) {
++                    const int sample=team.league_rank();
++                    const int output_sample=gather_output
++                        ?output_gather(sample):sample;
++                    const int thread=team.team_rank();
++                    scratch_view part(team.team_scratch(0),
++                        channel_team_size*16);
++                    // One accumulator per thread, shared by all channels the
++                    // thread owns; the reduction below then sums over threads.
++                    Precision acc2[16];
++                    #pragma unroll
++                    for(int b=0;b<16;++b) acc2[b]=Precision(0);
++                    Kokkos::parallel_for(
++                        Kokkos::TeamThreadRange(team,multiplicity),
++                        [&](const int channel) {
++                        for(int instruction=0;instruction<instruction_count;
++                            ++instruction) {
++                            const int input_1_offset=plan(instruction,0);
++                            const int output_offset=plan(instruction,2);
++                            const int input_width=plan(instruction,3);
++                            const int output_width=plan(instruction,4);
++                            const int weight_offset=plan(instruction,5);
++                            const Precision weight=dynamic_weights(
++                                sample,weight_offset+channel);
++                            const Precision path=paths(instruction);
++                            Precision weight_value=Precision(0);
++                            Precision dx0=Precision(0),dx1=Precision(0),
++                                dx2=Precision(0);
++                            #pragma unroll
++                            for(int b=0;b<16;++b) {
++                                for(int term=reverse_offsets(
++                                        instruction*17+b);
++                                    term<reverse_offsets(
++                                        instruction*17+b+1);++term) {
++                                    const int a=reverse_terms(term,0);
++                                    const int c=reverse_terms(term,1);
++                                    const Precision value=reverse_values(term);
++                                    const int output_index=output_offset
++                                        +channel*output_width+c;
++                                    const Precision mask_value=identity_mask
++                                        ?Precision(1):mask(output_index);
++                                    const Precision common=path
++                                        *value*mask_value
++                                        *output_adjoint(output_sample,
++                                            output_index);
++                                    const Precision first=input_1(sample,
++                                        input_1_offset
++                                            +channel*input_width+a);
++                                    // b is the global input_2 component; the
++                                    // instruction's offset only locates its
++                                    // own slice in the forward kernel.
++                                    const Precision second=input_2(sample,b);
++                                    const Precision contribution=common
++                                        *weight*second;
++                                    weight_value+=common*first*second;
++                                    if(a==0) dx0+=contribution;
++                                    else if(a==1) dx1+=contribution;
++                                    else dx2+=contribution;
++                                    acc2[b]+=common*weight*first;
++                                }
++                            }
++                            const int base=input_1_offset
++                                +channel*input_width;
++                            if(input_width>0)
++                                input_1_adjoint(sample,base)+=dx0;
++                            if(input_width>1)
++                                input_1_adjoint(sample,base+1)+=dx1;
++                            if(input_width>2)
++                                input_1_adjoint(sample,base+2)+=dx2;
++                            weights_adjoint(sample,weight_offset+channel)=
++                                weight_value;
++                        }
++                    });
++                    #pragma unroll
++                    for(int b=0;b<16;++b)
++                        part(thread*16+b)=acc2[b];
++                    team.team_barrier();
++                    if(thread<16) {
++                        Precision result=Precision(0);
++                        for(int t=0;t<team.team_size();++t)
++                            result+=part(t*16+thread);
++                        input_2_adjoint(sample,thread)=result;
++                    }
++                });
++            return;
++        }
++        // New fused reverse kernel: one team per edge computes d input_1,
++        // d weights and the per-component d input_2 in a single sparse-plan
++        // pass.  The harmonic value of entry (instruction,a,b,c) is exactly
++        // values(entry); component = input_2_offset + b.  Opt-in for A/B.
++        const char* fused_env=std::getenv("MATOS_MH1_REV_FUSED");
++        if(fused_env!=nullptr&&std::atoi(fused_env)!=0) {
++            using scratch_view=Kokkos::View<Precision*,
++                Kokkos::DefaultExecutionSpace::scratch_memory_space,
++                Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
++            const int harmonic_dimension=input_2_dimension_;
++            const std::size_t part_smem=scratch_view::shmem_size(
++                channel_team_size*harmonic_dimension);
++            Kokkos::parallel_for(
++                "e3 tensor reverse mh1 fused",
++                channel_policy(input_1.extent(0),channel_team_size)
++                    .set_scratch_size(0,Kokkos::PerTeam(part_smem)),
++                KOKKOS_LAMBDA(
++                    const typename channel_policy::member_type& team) {
++                    const int sample=team.league_rank();
++                    const int output_sample=gather_output
++                        ?output_gather(sample):sample;
++                    const int thread=team.team_rank();
++                    scratch_view part(team.team_scratch(0),
++                        channel_team_size*harmonic_dimension);
++                    for(int component=0;component<harmonic_dimension;
++                        ++component)
++                        part(thread*harmonic_dimension+component)=
++                            Precision(0);
++                    team.team_barrier();
++                    Kokkos::parallel_for(
++                        Kokkos::TeamThreadRange(team,multiplicity),
++                        [&](const int channel) {
++                        for(int instruction=0;instruction<instruction_count;
++                            ++instruction) {
++                            const int input_1_offset=plan(instruction,0);
++                            const int input_2_offset=plan(instruction,1);
++                            const int output_offset=plan(instruction,2);
++                            const int input_width=plan(instruction,3);
++                            const int output_width=plan(instruction,4);
++                            const int weight_offset=plan(instruction,5);
++                            const int component_base=plan(instruction,6);
++                            const int first_entry=component_offsets(
++                                component_base);
++                            const int last_entry=component_offsets(
++                                component_base+output_width);
++                            const Precision weight=dynamic_weights(
++                                sample,weight_offset+channel);
++                            Precision weight_value=Precision(0);
++                            for(int entry=first_entry;entry<last_entry;
++                                ++entry) {
++                                const int a=indices(entry,0);
++                                const int b=indices(entry,1);
++                                const int c=indices(entry,2);
++                                const int output_index=output_offset
++                                    +channel*output_width+c;
++                                const Precision common=paths(instruction)
++                                    *values(entry)*mask(output_index)
++                                    *output_adjoint(output_sample,output_index);
++                                const Precision first=input_1(sample,
++                                    input_1_offset
++                                        +channel*input_width+a);
++                                const Precision second=input_2(sample,
++                                    input_2_offset+b);
++                                input_1_adjoint(sample,input_1_offset
++                                    +channel*input_width+a)+=
++                                    common*weight*second;
++                                weight_value+=(common*first)*second;
++                                part(thread*harmonic_dimension
++                                    +input_2_offset+b)+=
++                                    (common*weight)*first;
++                            }
++                            weights_adjoint(sample,weight_offset+channel)=
++                                weight_value;
++                        }
++                    });
++                    team.team_barrier();
++                    for(int component=0;component<harmonic_dimension;
++                        ++component) {
++                        Precision result=Precision(0);
++                        Kokkos::parallel_reduce(
++                            Kokkos::TeamThreadRange(team,team.team_size()),
++                            [&](const int t,Precision& value) {
++                                value+=part(t*harmonic_dimension+component);
++                            },result);
++                        Kokkos::single(Kokkos::PerTeam(team),[&]() {
++                            input_2_adjoint(sample,component)=result;
++                        });
++                    }
++                });
++            return;
++        }
+         Kokkos::parallel_for(
+             "e3 tensor reverse mh1 team channels",
+             channel_policy(input_1.extent(0),channel_team_size),
+@@ -3114,22 +3522,40 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
+                         const Precision weight=dynamic_weights(
+                             sample,weight_offset+channel);
+                         Precision weight_value=Precision(0);
++                        Precision acc0=Precision(0),acc1=Precision(0),acc2=Precision(0);
+                         for(int entry=first_entry;entry<last_entry;++entry) {
+                             const int a=indices(entry,0);
+                             const int b=indices(entry,1);
+                             const int c=indices(entry,2);
+                             const int output_index=output_offset
+                                 +channel*output_width+c;
++                            const Precision mask_value=identity_mask
++                                ?Precision(1):mask(output_index);
+                             const Precision common=paths(instruction)*values(entry)
+-                                *mask(output_index)
++                                *mask_value
+                                 *output_adjoint(output_sample,output_index);
+                             const Precision first=input_1(sample,input_1_offset
+                                 +channel*input_width+a);
+                             const Precision second=input_2(sample,input_2_offset+b);
+-                            input_1_adjoint(sample,input_1_offset
+-                                +channel*input_width+a)+=common*weight*second;
++                            const Precision contribution=common*weight*second;
++                            if(rev_regacc) {
++                                if(a==0) acc0+=contribution;
++                                else if(a==1) acc1+=contribution;
++                                else if(a==2) acc2+=contribution;
++                                else input_1_adjoint(sample,input_1_offset
++                                    +channel*input_width+a)+=contribution;
++                            } else {
++                                input_1_adjoint(sample,input_1_offset
++                                    +channel*input_width+a)+=contribution;
++                            }
+                             weight_value+=common*first*second;
+                         }
++                        if(rev_regacc) {
++                            const int base=input_1_offset+channel*input_width;
++                            if(input_width>0) input_1_adjoint(sample,base)+=acc0;
++                            if(input_width>1) input_1_adjoint(sample,base+1)+=acc1;
++                            if(input_width>2) input_1_adjoint(sample,base+2)+=acc2;
++                        }
+                         weights_adjoint(sample,weight_offset+channel)=weight_value;
+                 }
+                 });
+@@ -3161,8 +3587,10 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
+                         const int weight_offset=plan(instruction,5);
+                         const int output_index=output_offset
+                             +channel*output_width+c;
++                        const Precision mask_value=identity_mask
++                            ?Precision(1):mask(output_index);
+                         const Precision common=paths(instruction)
+-                            *harmonic_values(term)*mask(output_index)
++                            *harmonic_values(term)*mask_value
+                             *output_adjoint(output_sample,output_index);
+                         channel_result+=common
+                             *dynamic_weights(sample,weight_offset+channel)
+diff --git a/libsymmetrix/source/e3nn_kokkos.hpp b/libsymmetrix/source/e3nn_kokkos.hpp
+index 32109f9..f1e6379 100644
+--- a/libsymmetrix/source/e3nn_kokkos.hpp
++++ b/libsymmetrix/source/e3nn_kokkos.hpp
+@@ -218,6 +218,21 @@ public:
+                   Kokkos::View<const Precision**,Kokkos::LayoutRight> input_2,
+                   Kokkos::View<const Precision**,Kokkos::LayoutRight> weights,
+                   Kokkos::View<Precision**,Kokkos::LayoutRight> output) const;
++    // Node-owned forward: each (receiver node, channel, instruction) thread
++    // walks the node's incoming CSR segment and accumulates directly into
++    // node_messages.  No [E, output] edge-message tensor is materialized and
++    // no separate message-gather launch is needed.  Requires the MH-1 fast
++    // path with write-through output; receiver_offsets is the global CSR
++    // offset array and [first_node,last_node) must be a node-contiguous range
++    // that owns every edge it touches.
++    bool try_evaluate_node_owned_forward(
++        Kokkos::View<const Precision**,Kokkos::LayoutRight> source_node_values,
++        Kokkos::View<const int*> source_indices,
++        Kokkos::View<const int*> receiver_offsets,
++        int first_edge,int samples,int first_node,int last_node,
++        Kokkos::View<const Precision**,Kokkos::LayoutRight> edge_weights,
++        Kokkos::View<const Precision**,Kokkos::LayoutRight> edge_input_2,
++        Kokkos::View<Precision**,Kokkos::LayoutRight> node_messages) const;
+     void reverse(Kokkos::View<const Precision**,Kokkos::LayoutRight> input_1,
+                  Kokkos::View<const Precision**,Kokkos::LayoutRight> input_2,
+                  Kokkos::View<const Precision**,Kokkos::LayoutRight> weights,
+@@ -372,6 +387,12 @@ private:
+     int mh1_forward_g_total_=0;
+     Kokkos::View<Precision*> mh1_path_weights,mh1_sparse_values,
+         mh1_harmonic_values,mh1_input_values,mh1_output_mask_ir_mul;
++    // Reverse fused plan: harmonic terms regrouped by (instruction, b) so one
++    // per-edge team can update d input_1, d weights and d input_2 in one
++    // sparse pass with b as a compile-time (unrolled) index.
++    Kokkos::View<int*> mh1_reverse_instruction_offsets;
++    Kokkos::View<int**,Kokkos::LayoutRight> mh1_reverse_terms;
++    Kokkos::View<Precision*> mh1_reverse_term_values;
+ };
+ 
+ using E3LinearKokkos = E3LinearKokkosT<double>;
+diff --git a/libsymmetrix/source/mace_nonlinear_kokkos.hpp b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
+index c08e964..3029f96 100644
+--- a/libsymmetrix/source/mace_nonlinear_kokkos.hpp
++++ b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
+@@ -615,6 +615,17 @@ public:
+     int polar_uvu_dot_planes=0,polar_uvu_tp_planes=0,
+         polar_uvu_le_q_planes=0,polar_uvu_le_v_planes=0,
+         polar_uvu_scf_planes=0;
++    // V3 control plane: checkpoint-constant UVU path plans are prepared once
++    // on host instead of being re-fetched from device every SCF/reverse step
++    // (24 D2H synchronizations per evaluation).  This is also the prerequisite
++    // for a stable-pointer CUDA graph capture of the 2-step polar pipeline.
++    std::vector<std::vector<int>> polar_host_dot_meta,
++        polar_host_tp_meta;
++    std::vector<std::vector<Precision>> polar_host_dot_pw,
++        polar_host_tp_pw;
++    std::vector<int> polar_host_le_q_meta,polar_host_le_v_meta;
++    std::vector<Precision> polar_host_le_q_pw,polar_host_le_v_pw;
++    bool polar_host_tables_ready=false;
+     // 重放前向值(不触碰⑤导出视图):
+     Kokkos::View<Precision**,Kokkos::LayoutRight> polar_rev_step_potential,
+         polar_rev_step_potential_storage,                                // (N,16)
+@@ -717,6 +728,8 @@ public:
+         double total_charge,double total_spin);
+     // [v2 适配] 模块⑥⑦ 扩展表解析(定义于独立 TU mace_polar_impl.tpp; ctor 于 polar 解析块收尾调用)。
+     void parse_polar_extension_tables();
++    // V3: cache the checkpoint-constant polar UVU host plans once.
++    void prepare_polar_host_tables();
+     // N1: grouped FP64 path-GEMM for the polar UVU (defined in mace_polar_impl.tpp).
+     static bool polar_uvu_gemm_supported(const std::vector<int>& meta);
+     static int polar_uvu_plane_count(const std::vector<int>& meta);
+diff --git a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
+index c51c2d2..13f0133 100644
+--- a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
++++ b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
+@@ -3794,7 +3794,8 @@ MaceNonlinearKokkosT<Precision>::MaceNonlinearKokkosT(const nlohmann::json& data
+         backbone_streaming_supported=conditioning;
+     }
+     if constexpr(std::is_same_v<Precision,float>)
+-        if(!mh1_fast_path)
++        if(!mh1_fast_path
++            &&std::getenv("MATOS_ALLOW_FLOAT32_GENERIC")==nullptr)
+             throw std::invalid_argument(
+                 "Float32 MACE_Nonlinear requires a compatible MACE-MH-1 family fast path.");
+     mh1_pair_spline_lazy_=mh1_fast_path;
+@@ -4973,6 +4974,22 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+             const bool use_stream_tiles=!execution_layer&&!spline_layer
+                 &&streamed_edges==MACEStreamedEdgesMode::generic
+                 &&!stream_edge_tiles.empty();
++            // S2: node-owned forward.  The edge path skips the edge_up gather,
++            // the per-edge message tensor, and the node message gather; the
++            // existing receiver-owned UVU kernel walks each receiver's CSR and
++            // accumulates directly into state.messages.  Opt-in for A/B.
++            const char* s2_env=std::getenv("MATOS_S2_RECEIVER_OWNED");
++            const bool s2_receiver_owned=use_stream_tiles
++                &&interaction.convolution.supports_execution_direct_uvu()
++                &&s2_env!=nullptr&&std::atoi(s2_env)!=0;
++            Kokkos::View<int*> s2_receiver_iota;
++            if(s2_receiver_owned) {
++                s2_receiver_iota=Kokkos::View<int*>(
++                    "s2 receiver iota",num_nodes);
++                Kokkos::parallel_for("s2 receiver iota",num_nodes,
++                    KOKKOS_LAMBDA(int index){s2_receiver_iota(index)=index;});
++                ordered_kokkos_deep_copy(state.messages,Precision(0));
++            }
+             const int stream_tile_count=use_stream_tiles
+                 ?static_cast<int>(stream_edge_tiles.size())
+                 :(edges+streamed_edge_block_size-1)/streamed_edge_block_size;
+@@ -5205,6 +5222,35 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+                     if(!dispatched)
+                         throw std::logic_error(
+                             "Qualified MH-1 Execution UVU forward did not dispatch.");
++                } else if(s2_receiver_owned) {
++                    const int prefix_width=interaction.convolution_weights
++                        .prefix_output_size(num_bessel);
++                    ensure_view(state.raw_weights,state.raw_weights_storage,
++                        samples,std::max(weight_width,prefix_width));
++                    auto phi=Kokkos::subview(state.raw_weights,Kokkos::ALL,
++                        std::make_pair(0,prefix_width));
++                    interaction.convolution_weights
++                        .evaluate_conditioned_prefix_indexed(
++                            radial_block,neigh_types,local_targets,node_types,
++                            first_edge,convolution_source,
++                            convolution_target,phi);
++                    auto active_receivers=Kokkos::subview(s2_receiver_iota,
++                        std::make_pair(tile_first_node,tile_last_node));
++                    Kokkos::View<const Precision**,Kokkos::LayoutRight>
++                        empty_contribution;
++                    const bool dispatched=interaction.convolution
++                        .try_evaluate_execution_uvu_from_nodes(
++                            state.up,neigh_indices,local_targets,
++                            active_receivers,local_offsets,first_edge,phi,
++                            interaction.convolution_weights
++                                .final_linear_weight(num_bessel),
++                            interaction.convolution_weights.final_linear_bias(),
++                            empty_contribution,harmonics_block,local_cutoffs,
++                            !apply_cutoff,state.messages);
++                    if(!dispatched)
++                        throw std::logic_error(
++                            "S2 receiver-owned UVU forward did not dispatch.");
++                    symmetrix_polar_profile_mark("s2:fwd-receiver");
+                 } else {
+                     ensure_view(state.weights,state.weights_storage,
+                         samples,weight_width);
+@@ -5253,6 +5299,27 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+                                 state.weights,state.raw_weights);
+                         symmetrix_polar_profile_mark("s1:fwd-cutoff");
+                     }
++                    const char* node_forward_env=std::getenv(
++                        "MATOS_MH1_FWD_NODE");
++                    const bool node_owned_forward=use_stream_tiles
++                        &&!spline_layer
++                        &&node_forward_env!=nullptr
++                        &&std::atoi(node_forward_env)!=0;
++                    if(node_owned_forward) {
++                        // Node-owned dataflow: accumulate each receiver's
++                        // incoming edges directly into state.messages and skip
++                        // the [samples,message_width] edge-message tensor and
++                        // its gather launch.
++                        const bool dispatched=interaction.convolution
++                            .try_evaluate_node_owned_forward(
++                                up,neigh_indices,local_offsets,first_edge,
++                                samples,tile_first_node,tile_last_node,
++                                state.weights,harmonics_block,state.messages);
++                        if(!dispatched)
++                            throw std::logic_error(
++                                "Node-owned MH-1 forward did not dispatch.");
++                        symmetrix_polar_profile_mark("s1:fwd-node-conv");
++                    } else {
+                     ensure_view(state.edge_up,state.edge_up_storage,samples,up_width);
+                     auto edge_up=state.edge_up;
+                     Kokkos::parallel_for(
+@@ -5315,6 +5382,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+                             });
+                     }
+                     symmetrix_polar_profile_mark("s1:fwd-msggather");
++                    }
+                 }
+                 ensure_view(state.density_matrix,state.density_matrix_storage,samples,1);
+                 if(spline_layer) {
+diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
+index 0c4ac8a..6e5d67d 100644
+--- a/libsymmetrix/source/mace_polar_impl.tpp
++++ b/libsymmetrix/source/mace_polar_impl.tpp
+@@ -267,6 +267,44 @@ void MaceNonlinearKokkosT<Precision>::PolarUpdate::set_e3_linear_workspace(
+     readout_linear_2.set_workspace(workspace);
+ }
+ 
++// V3 control plane: prepare the checkpoint-constant UVU path plans once.
++// Previously every SCF step and every reverse step copied four small views
++// device->host (24 stream synchronizations per evaluation).  The plans never
++// change after construction, so cache them on the host and pass const
++// references into the forward/reverse kernels.  This also makes the polar
++// pipeline pointer-stable for a future CUDA graph capture.
++template<typename Precision>
++void MaceNonlinearKokkosT<Precision>::prepare_polar_host_tables()
++{
++    if(polar_host_tables_ready) return;
++    auto copy_view=[&](const auto& view) {
++        auto mirror=Kokkos::create_mirror_view_and_copy(
++            Kokkos::HostSpace(),view);
++        using value_type=typename decltype(mirror)::value_type;
++        std::vector<value_type> values(mirror.size());
++        for(std::size_t index=0;index<values.size();++index)
++            values[index]=mirror.data()[index];
++        return values;
++    };
++    const int steps=polar_recursion_steps;
++    polar_host_dot_meta.resize(steps);
++    polar_host_tp_meta.resize(steps);
++    polar_host_dot_pw.resize(steps);
++    polar_host_tp_pw.resize(steps);
++    for(int step=0;step<steps;++step) {
++        auto& update=polar_updates[step];
++        polar_host_dot_meta[step]=copy_view(update.uvu_dot_meta);
++        polar_host_tp_meta[step]=copy_view(update.uvu_tp_meta);
++        polar_host_dot_pw[step]=copy_view(update.uvu_dot_path_weight);
++        polar_host_tp_pw[step]=copy_view(update.uvu_tp_path_weight);
++    }
++    polar_host_le_q_meta=copy_view(polar_le_q_meta);
++    polar_host_le_v_meta=copy_view(polar_le_v_meta);
++    polar_host_le_q_pw=copy_view(polar_le_q_path_weight);
++    polar_host_le_v_pw=copy_view(polar_le_v_path_weight);
++    polar_host_tables_ready=true;
++}
++
+ template<typename Precision>
+ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+     Kokkos::View<Precision**,Kokkos::LayoutRight> node_attrs,
+@@ -275,6 +313,7 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+     double total_charge,double total_spin)
+ {
+     symmetrix_polar_profile_mark("pipeline:enter");
++    prepare_polar_host_tables();
+     polar_rev_cache_valid=false;   // Plan B1: invalidate any previous-eval cache
+     // N1 grouped GEMM switch: the Z cache is valid only if every UVU table of
+     // this evaluation took the GEMM path.
+@@ -921,25 +960,15 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+             auto attrs_view=attrs;
+             for(int step=0;step<polar_recursion_steps;++step) {
+                 auto& update=polar_updates[step];
+-                // 路径表主机副本(每步取一次;极小;std::vector 传参规避
+-                // nvcc "泛型 lambda 内不允许 device lambda" 限制)
+-                const auto to_host_vector=[&](const auto& view) {
+-                    const auto mirror=Kokkos::create_mirror_view_and_copy(
+-                        Kokkos::HostSpace(),view);
+-                    std::vector<typename decltype(mirror)::value_type>
+-                        values(mirror.size());
+-                    for(std::size_t i2=0;i2<values.size();++i2)
+-                        values[i2]=mirror.data()[i2];
+-                    return values;
+-                };
+-                const std::vector<int> dot_meta=
+-                    to_host_vector(update.uvu_dot_meta);
+-                const std::vector<Precision> dot_path_weight=
+-                    to_host_vector(update.uvu_dot_path_weight);
+-                const std::vector<int> tp_meta=
+-                    to_host_vector(update.uvu_tp_meta);
+-                const std::vector<Precision> tp_path_weight=
+-                    to_host_vector(update.uvu_tp_path_weight);
++                // V3: checkpoint-constant plans, prepared once on host.
++                const std::vector<int>& dot_meta=
++                    polar_host_dot_meta[step];
++                const std::vector<Precision>& dot_path_weight=
++                    polar_host_dot_pw[step];
++                const std::vector<int>& tp_meta=
++                    polar_host_tp_meta[step];
++                const std::vector<Precision>& tp_path_weight=
++                    polar_host_tp_pw[step];
+                 auto dot_weight=update.uvu_dot_weight;
+                 auto dot_mask=update.uvu_dot_mask;
+                 auto tp_weight=update.uvu_tp_weight;
+@@ -1945,23 +1974,13 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+                             output(node,column)*=mask_view(column);
+                         });
+                 };
+-                const auto le_to_host_vector=[&](const auto& view) {
+-                    const auto mirror=Kokkos::create_mirror_view_and_copy(
+-                        Kokkos::HostSpace(),view);
+-                    std::vector<typename decltype(mirror)::value_type>
+-                        values(mirror.size());
+-                    for(std::size_t i2=0;i2<values.size();++i2)
+-                        values[i2]=mirror.data()[i2];
+-                    return values;
+-                };
+-                const std::vector<int> le_q_meta=
+-                    le_to_host_vector(polar_le_q_meta);
+-                const std::vector<Precision> le_q_path_weight=
+-                    le_to_host_vector(polar_le_q_path_weight);
+-                const std::vector<int> le_v_meta=
+-                    le_to_host_vector(polar_le_v_meta);
+-                const std::vector<Precision> le_v_path_weight=
+-                    le_to_host_vector(polar_le_v_path_weight);
++                // V3: checkpoint-constant LE plans, prepared once on host.
++                const std::vector<int>& le_q_meta=polar_host_le_q_meta;
++                const std::vector<Precision>& le_q_path_weight=
++                    polar_host_le_q_pw;
++                const std::vector<int>& le_v_meta=polar_host_le_v_meta;
++                const std::vector<Precision>& le_v_path_weight=
++                    polar_host_le_v_pw;
+                 auto node_feats=polar_node_feats_e3nn;
+                 polar_uvu_le_q_planes=polar_uvu_plane_count(le_q_meta);
+                 polar_uvu_le_v_planes=polar_uvu_plane_count(le_v_meta);
+@@ -2526,6 +2545,7 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+     const int num_nodes)
+ {
+     if(!polar_enabled) return;
++    prepare_polar_host_tables();
+     // N1 grouped GEMM switch.  The forward sets polar_uvu_z_cache_valid and
+     // the plane layout; a stale/mismatched cache falls back per table.
+     const bool uvu_gemm_on=polar_uvu_gemm_enabled()
+@@ -3636,21 +3656,11 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+                     pe(node,column)+=ra(node,column)+rb(node,column);
+                 });
+         }
+-        const auto to_host_vector=[&](const auto& view) {
+-            const auto mirror=Kokkos::create_mirror_view_and_copy(
+-                Kokkos::HostSpace(),view);
+-            std::vector<typename decltype(mirror)::value_type>
+-                values(mirror.size());
+-            for(std::size_t i2=0;i2<values.size();++i2)
+-                values[i2]=mirror.data()[i2];
+-            return values;
+-        };
+-        const std::vector<int> dot_meta=to_host_vector(update.uvu_dot_meta);
+-        const std::vector<Precision> dot_pw=
+-            to_host_vector(update.uvu_dot_path_weight);
+-        const std::vector<int> tp_meta=to_host_vector(update.uvu_tp_meta);
+-        const std::vector<Precision> tp_pw=
+-            to_host_vector(update.uvu_tp_path_weight);
++        // V3: prepared host plans (no per-step D2H).
++        const std::vector<int>& dot_meta=polar_host_dot_meta[step];
++        const std::vector<Precision>& dot_pw=polar_host_dot_pw[step];
++        const std::vector<int>& tp_meta=polar_host_tp_meta[step];
++        const std::vector<Precision>& tp_pw=polar_host_tp_pw[step];
+         const auto launch_uvu_forward=[&](const std::vector<int>& meta,
+                 const std::vector<Precision>& path_weight,
+                 Kokkos::View<Precision*> weight_view,
+@@ -4427,18 +4437,9 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+             polar_rev_tp_adjoint);
+         symmetrix_polar_profile_mark("rev5b:readout-linears");
+         { // (i) uvu_tp 反向: x1=fmix(→fmix̄), x2=nl_out(→nl̄_out)
+-            const auto to_host_vector=[&](const auto& view) {
+-                const auto mirror=Kokkos::create_mirror_view_and_copy(
+-                    Kokkos::HostSpace(),view);
+-                std::vector<typename decltype(mirror)::value_type>
+-                    values(mirror.size());
+-                for(std::size_t i2=0;i2<values.size();++i2)
+-                    values[i2]=mirror.data()[i2];
+-                return values;
+-            };
+-            const std::vector<int> tp_meta=to_host_vector(update.uvu_tp_meta);
+-            const std::vector<Precision> tp_pw=
+-                to_host_vector(update.uvu_tp_path_weight);
++            // V3: prepared host plan (no per-step D2H).
++            const std::vector<int>& tp_meta=polar_host_tp_meta[step];
++            const std::vector<Precision>& tp_pw=polar_host_tp_pw[step];
+             ordered_kokkos_deep_copy(polar_rev_nlout_adjoint,Precision(0));
+             const int step_base=step*polar_uvu_scf_planes;
+             const bool tp_gemm=uvu_gemm_on
+@@ -4545,19 +4546,9 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+                 });
+         }
+         { // (iv) uvu_dot 反向: x1=fmix(→fmix̄), x2=pe(→pe伴)
+-            const auto to_host_vector=[&](const auto& view) {
+-                const auto mirror=Kokkos::create_mirror_view_and_copy(
+-                    Kokkos::HostSpace(),view);
+-                std::vector<typename decltype(mirror)::value_type>
+-                    values(mirror.size());
+-                for(std::size_t i2=0;i2<values.size();++i2)
+-                    values[i2]=mirror.data()[i2];
+-                return values;
+-            };
+-            const std::vector<int> dot_meta=
+-                to_host_vector(update.uvu_dot_meta);
+-            const std::vector<Precision> dot_pw=
+-                to_host_vector(update.uvu_dot_path_weight);
++            // V3: prepared host plan (no per-step D2H).
++            const std::vector<int>& dot_meta=polar_host_dot_meta[step];
++            const std::vector<Precision>& dot_pw=polar_host_dot_pw[step];
+             ordered_kokkos_deep_copy(polar_rev_pe_adjoint,Precision(0));
+             const bool dot_gemm=uvu_gemm_on
+                 &&polar_uvu_gemm_supported(dot_meta)
