@@ -22,9 +22,14 @@ PolarMACE is a different model.*
 | **10,368-atom capacity** | **149.14 µs/atom/step**, 33.71 GiB peak; 2× the 5,184 capacity on one A100-80GB | q4 task `t-20261022144341-pzc9x`; `docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md` |
 | **R1 reverse MH-1** | exact, **−3.05%** same-binary; dPE 0, max dF 4.9e-16 eV/Å; projected 141.3 µs/atom/step at 1,296 | `docs/results/data/rev_r1_2026-10-22.json` |
 | **Path B six-molecule teacher smoke** | H2O/NH3/C2H4/CH4/C2H6/CO2 labels; 8 configurations × 12 molecules each; no model change | `docs/results/PATH_B_SIX_MOLECULE_SMOKE_2026-10-22.md` |
+| **Node-owned forward dataflow** | exact (dPE 0, max dF 3.9e-14 eV/Å); **7.9–9.7 µs/atom/step** saving in a shared-GPU window, **~137.9 projected**; opt-in `MATOS_MH1_FWD_NODE=1` | `docs/results/NODE_OWNED_FORWARD_2026-10-22.md` |
+| **Mathematics-first architecture** | exact-checkpoint route projects **97–115 µs/atom/step**; 90 not supported on one exact-FP64 GPU | `docs/design/MATH_ARCH_2026-10-22.md` |
+| **Path B pruning audit** | zero-shot no-go beyond ~1.1×; rebuild + fine-tune targets 1.5–4× (C=384→320 first) | `docs/results/PATH_B_PRUNING_AUDIT_2026-10-22.md` |
 
 [Latest speed & plan](docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md) ·
 [Optimization ledger](docs/results/OPTIMIZATION_LEDGER.md) ·
+[Node-owned forward](docs/results/NODE_OWNED_FORWARD_2026-10-22.md) ·
+[Mathematics-first architecture](docs/design/MATH_ARCH_2026-10-22.md) ·
 [Tutorial](docs/tutorial/SYMMETRIX_POLAR_TUTORIAL_2026-10-21.pdf) ·
 [Technical report](docs/technical/SYMMETRIX_POLAR_TECHNICAL_REPORT.pdf) ·
 [中文汇报](docs/report/SYMMETRIX_POLAR_REPORT_2026-10-21.pdf)
