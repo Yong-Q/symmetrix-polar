@@ -29,9 +29,11 @@ not a replacement for PolarMACE. The model is 25.7 MB (2.04M parameters,
 
 1. Increase the dataset (more NVT frames per species; 94 configs/species is
    small), and retrain.
-2. Check the effective force weight: the trainer log reports
-   `WeightedEnergyForcesLoss(energy_weight=1.000, forces_weight=1.000)` while
-   the config requests 50.0; resolve this before the next run.
+2. **Root cause found:** the config used `loss: ef`, which is not a
+   recognized MACE 0.3.16 loss string, so the trainer fell back to
+   `WeightedEnergyForcesLoss(1.0, 1.0)` and ignored `forces_weight: 50.0`.
+   Fixed to `loss: weighted`, 100 epochs; retrain task
+   `t-20261022184841-nq89x` is running.
 3. Then try C=384 pruning + fine-tune as the parameter-reduction route.
 4. Measure student inference in µs/atom/step only after it passes the gate;
    speed without accuracy is not a result.
