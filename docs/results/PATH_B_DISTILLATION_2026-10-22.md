@@ -122,3 +122,11 @@ GPU time estimate is deferred rather than guessed: one measured epoch of the exa
 
 Or run `bash /workspace/group/shared/bza/symmetrix-polar/bench/path_b_distill_2026-10-22/scripts/run_when_gpu_free.sh` unattended: it waits (bounded) for an idle GPU, then executes steps 2-4. It never launches while external compute processes are present. `logs/gpu_gate.log` records each check; if the runner was still active at handoff it will fill in sections 4-6 automatically.
 
+
+## Training result (2026-10-22)
+
+The student128 config was trained on q4 (task `t-20261022182434-bk8kk`,
+1×A100, 349 s, 34 epochs). Held-out metrics: **MAE E 9.5 meV/atom,
+MAE F 32.4 meV/Å, relative F MAE 6.62 %**. The GO gate (≤5 meV/atom,
+≤0.03 eV/Å) is not met; this is a prototype, not a replacement. See
+`docs/results/PATH_B_STUDENT128_TRAIN_2026-10-22.md`.
