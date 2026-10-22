@@ -6,10 +6,20 @@ electrostatics — in the Symmetrix-XL C++/Kokkos/LAMMPS engine.
 | Current best | 5,184 atoms | Paper parity | Single-GPU floor |
 |---:|---:|---:|---:|
 | **145.75 µs/atom** @ 1,296 | **140.91 µs/atom** | **4.47–4.53 vs 4.50** | **~120–130 µs/atom** |
-| FP64 · exact Ewald · 2-step SCF | 730.49 ms/eval · 19.16 GiB | linear MACE FP32, 5,184 atoms | after tensor-product rewrite |
+| FP64 · exact Ewald · 2-step SCF | 19.16 GiB peak · 5,184 atoms | linear MACE FP32, 5,184 atoms | after tensor-product rewrite |
 
 *Paper parity is measured on the paper's linear MACE FP32 workload; full
 PolarMACE is a different model.*
+
+**Latest updates (2026-10-22):**
+
+- **10,368 atoms:** **149.14 µs/atom/step**, 33.71 GiB peak — 2× the 5,184
+  capacity on one A100-80GB; this is a capacity point, not the speed headline.
+- **R1 reverse MH-1:** exact, **−3.05%** same-binary; parity dPE 0 / max dF
+  4.9e-16 eV/Å; projected **141.3 µs/atom/step** at 1,296 on the normal
+  baseline.
+- **Path B six-molecule teacher smoke:** H2O/NH3/C2H4/CH4/C2H6/CO2 labels
+  written (8 configurations × 12 molecules per species); no model change.
 
 [Latest speed & plan](docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md) ·
 [Optimization ledger](docs/results/OPTIMIZATION_LEDGER.md) ·
@@ -21,12 +31,16 @@ PolarMACE is a different model.*
 
 ## Results
 
-| Workload | Precision | Atoms | Path | µs/atom/step | ms/eval |
-|---|---|---:|---|---:|---:|
-| **Full PolarMACE** | **FP64** | **1,296** | **generic streaming** | **145.75** | **188.89** |
-| Full PolarMACE | FP64 | 5,184 | generic streaming | **140.91** | **730.49** |
-| Linear MACE-OFF23 | FP32 | 5,184 | direct/JIT | 4.47–4.53 | — |
-| Paper Symmetrix-XL | FP32 | 5,184 | standard streaming | 4.50 | — |
+| Workload | Precision | Atoms | Path | µs/atom/step |
+|---|---|---:|---|---:|
+| **Full PolarMACE** | **FP64** | **1,296** | **generic streaming** | **145.75** |
+| Full PolarMACE | FP64 | 5,184 | generic streaming | **140.91** |
+| Full PolarMACE (capacity) | FP64 | 10,368 | generic streaming | 149.14 |
+| Linear MACE-OFF23 | FP32 | 5,184 | direct/JIT | 4.47–4.53 |
+| Paper Symmetrix-XL | FP32 | 5,184 | standard streaming | 4.50 |
+
+*10,368 is a capacity point; the speed headline is 140.91 at 5,184 and 145.75
+at 1,296.*
 
 - **q4 validation:** same binary, 145.75 µs/atom vs local 146.06 (within
   0.2%); 69 s end-to-end, of which 16 s is LAMMPS (model load ~15 s).
@@ -54,7 +68,8 @@ interface are unchanged. All gains are execution changes:
 - **S1.1** — node-contiguous streamed-edge tiles + fused reverse.
 - **A1** — 32×16 UVU tile with chunked weight staging.
 - **N1** — grouped FP64 path-GEMM: 6 UVU tables, 20 planes, Z cache, fused
-  epilogue. This is the main win: **−25.87%** (255.35 → 189.30 ms at 1,296).
+  epilogue. This is the main win: **−25.87%** (197.03 → 146.06 µs/atom/step
+  at 1,296).
 - **B4 + team MH-1** — reverse gather, write-through fix, team size 64;
   together with the message/edge/path tiles: 462.6 → 224.1 µs/atom.
 - **V3** — prepared path-plan cache; removes ~24 D2H syncs/eval and is the
