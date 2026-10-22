@@ -25,6 +25,7 @@ PolarMACE is a different model.*
 | **Node-owned forward dataflow** | exact (dPE 0, max dF 3.9e-14 eV/Å); **7.9–9.7 µs/atom/step** saving in a shared-GPU window, **~137.9 projected**; opt-in `MATOS_MH1_FWD_NODE=1` | `docs/results/NODE_OWNED_FORWARD_2026-10-22.md` |
 | **Mathematics-first architecture** | exact-checkpoint route projects **97–115 µs/atom/step**; 90 not supported on one exact-FP64 GPU | `docs/design/MATH_ARCH_2026-10-22.md` |
 | **Path B pruning audit** | zero-shot no-go beyond ~1.1×; rebuild + fine-tune targets 1.5–4× (C=384→320 first) | `docs/results/PATH_B_PRUNING_AUDIT_2026-10-22.md` |
+| **Path B distillation dataset + trainer** | 457 train / 107 valid six-molecule configs; 2.04M-param student config; training pending an idle GPU | `docs/results/PATH_B_DISTILLATION_2026-10-22.md` |
 
 [Latest speed & plan](docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md) ·
 [Optimization ledger](docs/results/OPTIMIZATION_LEDGER.md) ·
