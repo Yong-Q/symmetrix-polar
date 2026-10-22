@@ -222,3 +222,22 @@ the slower materialized path (155.25 µs/atom). The corrected generic run is
 145.75 µs/atom, matching the local N1 median within 0.12%. queue004 does not
 change single-GPU speed; it is an offload/parallelism route. Four independent
 1-GPU tasks can run concurrently under the 4-GPU user cap.
+
+### 10,368-atom capacity smoke (2026-10-22)
+
+Task `t-20261022144341-pzc9x`, queue004 1×A100-80GB, `Success` in 77 s. Same
+`lmp_gemm` (sha256 `093982d5…`) and model (`0e98f0ae…`) as the 1,296 runs;
+`streamed_edges generic`; 10,368 water atoms (2×2×2 replication of the
+1,296-atom box).
+
+| atoms | median s/eval | µs/atom | peak GPU | PE |
+|---:|---:|---:|---:|---:|
+| 5,184 | 0.7305 | 140.91 | 19.16 GiB | stable |
+| **10,368** | **1.54626** | **149.14** | **34,519 MiB (33.71 GiB)** | **−7,167,513.9810534371 eV stable** |
+
+The 10,368-atom run is **2× the 5,184 capacity** at 1.76× the memory and
+**+5.8% per-atom time**; no OOM on the 80 GB A100. The first attempt
+`t-20261022144203-g67lk` failed at `run 0` because the ASE-written data file
+omitted masses (`Not all per-type masses are set`); attempt-02 added
+`mass 1 15.999` / `mass 2 1.008`. Source:
+`bench/q4_polar_10368_2026-10-22/attempt-02/`.

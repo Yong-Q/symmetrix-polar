@@ -27,6 +27,7 @@ one MPI rank. `µs/atom = 1000 × ms/eval / atoms`.
 | Full PolarMACE | FP64 | 1,296 | generic | **145.75** | 188.891 |
 | Full PolarMACE | FP64 | 1,296 | materialized | 155.25 | 201.207 |
 | Full PolarMACE | FP64 | 5,184 | generic | **140.91** | 730.49 |
+| Full PolarMACE | FP64 | 10,368 | generic | **149.14** | 1,546.26 |
 | Linear MACE-OFF23 | FP32 | 5,184 | direct/JIT | 4.47–4.53 | — |
 | Linear MACE-OFF23 | FP64 | 6,144 | materialized | 12.26 | 75.32 |
 | Paper Symmetrix-XL | FP32 | 5,184 | standard streaming | 4.50 | — |
@@ -36,6 +37,11 @@ q4 tasks: `t-20261022132315-b97jc` (materialized, 64 s) and
 `t-20261022132500-94hhz` (generic, 69 s), both `Success`. Binary `lmp_gemm`
 sha256 `093982d5…`, model sha256 `0e98f0ae…`, PE
 −895939.24763167975 eV in both.
+
+- **Capacity:** `t-20261022144341-pzc9x`, **10,368 water atoms**, 33.71 GiB
+  peak, PE −7,167,513.9810534371 eV stable, **1.54626 s/eval = 149.14
+  µs/atom**; 2× the 5,184 capacity at +5.8% per-atom time, no OOM on the
+  80 GB A100.
 
 ## Where the 146 µs/atom goes (post-N1 CUPTI)
 
