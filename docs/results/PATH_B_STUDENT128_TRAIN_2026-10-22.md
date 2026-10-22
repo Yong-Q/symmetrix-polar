@@ -59,11 +59,16 @@ dataset passes the gate and runs in the engine:
 |---|---:|---:|---:|
 | **192 max_L=1, fw=5, 2,166 data** | **2.1 meV/atom** | **6.7 meV/Å** | **116.84 / 121.16 µs/atom/step** at 1,296 / 5,184 (clean q4 `t-20261022214602-5vk8x`) |
 
-The engine needed two generic-width fixes (local-electron 4C/C/2C invariants
-and the gate activation serialization). On an in-domain single H2O frame the
-engine matches the PyTorch student to **5.8e-9 eV** in energy and ~1e-8 eV/Å
-in forces. The 1,296-water speed benchmark is out-of-domain for the
-six-molecule student, so it measures execution speed, not accuracy.
+The engine needed three generic-width fixes: local-electron 4C/C/2C
+invariants, gate activation serialization, and a runtime N1 UVU GEMM width.
+On an in-domain single H2O frame the engine matches the PyTorch student to
+**5.8e-9 eV** in energy and ~1e-8 eV/Å in forces. The 1,296-water speed
+benchmark is out-of-domain for the six-molecule student, so it measures
+execution speed, not accuracy.
+
+The runtime-width N1 path gives **no measurable gain at C=192** (0.15237 vs
+0.15305 s/step, ~0.4%); fixed engine overhead, not UVU width, dominates. The
+clean q4 result remains **116.84 / 121.16 µs/atom/step** at 1,296 / 5,184.
 
 ## What was validated
 

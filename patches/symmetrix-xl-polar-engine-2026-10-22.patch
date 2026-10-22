@@ -536,7 +536,7 @@ index 32109f9..f1e6379 100644
  
  using E3LinearKokkos = E3LinearKokkosT<double>;
 diff --git a/libsymmetrix/source/mace_nonlinear_kokkos.hpp b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
-index c08e964..3029f96 100644
+index c08e964..a4ca34a 100644
 --- a/libsymmetrix/source/mace_nonlinear_kokkos.hpp
 +++ b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
 @@ -615,6 +615,17 @@ public:
@@ -557,15 +557,28 @@ index c08e964..3029f96 100644
      // 重放前向值(不触碰⑤导出视图):
      Kokkos::View<Precision**,Kokkos::LayoutRight> polar_rev_step_potential,
          polar_rev_step_potential_storage,                                // (N,16)
-@@ -717,6 +728,8 @@ public:
+@@ -717,8 +728,10 @@ public:
          double total_charge,double total_spin);
      // [v2 适配] 模块⑥⑦ 扩展表解析(定义于独立 TU mace_polar_impl.tpp; ctor 于 polar 解析块收尾调用)。
      void parse_polar_extension_tables();
 +    // V3: cache the checkpoint-constant polar UVU host plans once.
 +    void prepare_polar_host_tables();
      // N1: grouped FP64 path-GEMM for the polar UVU (defined in mace_polar_impl.tpp).
-     static bool polar_uvu_gemm_supported(const std::vector<int>& meta);
+-    static bool polar_uvu_gemm_supported(const std::vector<int>& meta);
++    bool polar_uvu_gemm_supported(const std::vector<int>& meta) const;
      static int polar_uvu_plane_count(const std::vector<int>& meta);
+     void polar_uvu_gemm_compute_z(int num_nodes,
+         const std::vector<int>& meta,
+@@ -1144,6 +1157,9 @@ private:
+     // 经该列映射转换:e3nn 列 c 的取值为 -(内部列 (c+1)%3)。映射在 ctor 内按
+     // lr_source_maps[0].irreps_in 构造(仅 l=0 直通与 l=1 循环,l>1 拒绝)。
+     int polar_feature_width=0;
++    // N1 grouped UVU GEMM width C (512 for the teacher, 192 for the distilled
++    // student).  Inferred from the l=0 multiplicity of the polar node irreps.
++    int polar_uvu_gemm_width=512;
+     Kokkos::View<int*> polar_basis_source;
+     Kokkos::View<Precision*> polar_basis_sign;
+     Kokkos::View<Precision**,Kokkos::LayoutRight> polar_node_feats_e3nn,
 diff --git a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
 index c51c2d2..bfdc3e8 100644
 --- a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
@@ -677,9 +690,18 @@ index c51c2d2..bfdc3e8 100644
                  ensure_view(state.density_matrix,state.density_matrix_storage,samples,1);
                  if(spline_layer) {
 diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
-index 0c4ac8a..9238edb 100644
+index 0c4ac8a..2073d8d 100644
 --- a/libsymmetrix/source/mace_polar_impl.tpp
 +++ b/libsymmetrix/source/mace_polar_impl.tpp
+@@ -107,7 +107,7 @@ inline bool polar_uvu_gemm_enabled()
+ 
+ // The checkpoint UVU tables are dense 512x512 path matrices.  Anything else
+ // keeps the legacy kernels (correctness fallback, not a tuning path).
+-constexpr int kPolarUvuGemmWidth=512;
++constexpr int kPolarUvuGemmWidthDefault=512;
+ constexpr int kPolarUvuGemmMaxPaths=8;
+ 
+ // POD epilogue plan (captured by value into the device lambda).
 @@ -267,6 +267,44 @@ void MaceNonlinearKokkosT<Precision>::PolarUpdate::set_e3_linear_workspace(
      readout_linear_2.set_workspace(workspace);
  }
@@ -768,6 +790,15 @@ index 0c4ac8a..9238edb 100644
                  auto dot_weight=update.uvu_dot_weight;
                  auto dot_mask=update.uvu_dot_mask;
                  auto tp_weight=update.uvu_tp_weight;
+@@ -960,7 +989,7 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+                         ensure_view(polar_uvu_z_cache,
+                             polar_uvu_z_cache_storage,
+                             polar_recursion_steps*polar_uvu_scf_planes+8,
+-                            num_nodes,kPolarUvuGemmWidth);
++                            num_nodes,polar_uvu_gemm_width);
+                 }
+                 const bool uvu_gemm_step_ok=uvu_gemm_on
+                     &&polar_uvu_gemm_supported(dot_meta)
 @@ -1945,23 +1974,13 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
                              output(node,column)*=mask_view(column);
                          });
@@ -832,6 +863,62 @@ index 0c4ac8a..9238edb 100644
      } else polar_le_enabled=false;
  }
  
+@@ -2231,7 +2257,7 @@ void MaceNonlinearKokkosT<Precision>::parse_polar_extension_tables()
+ // =====================================================================================
+ template<typename Precision>
+ bool MaceNonlinearKokkosT<Precision>::polar_uvu_gemm_supported(
+-    const std::vector<int>& meta)
++    const std::vector<int>& meta) const
+ {
+     const int paths=static_cast<int>(meta.size())/8;
+     if(paths<=0||paths>kPolarUvuGemmMaxPaths) return false;
+@@ -2239,7 +2265,7 @@ bool MaceNonlinearKokkosT<Precision>::polar_uvu_gemm_supported(
+     for(int p=0;p<paths;++p) {
+         const int mul1=meta[p*8+4],mul2=meta[p*8+5],
+             mode=meta[p*8+6],d1=meta[p*8+7];
+-        if(mul1!=kPolarUvuGemmWidth||mul2!=kPolarUvuGemmWidth)
++        if(mul1!=polar_uvu_gemm_width||mul2!=polar_uvu_gemm_width)
+             return false;
+         if(mode!=0&&mode!=1) return false;
+         if(d1!=1&&d1!=3) return false;
+@@ -2274,11 +2300,11 @@ void MaceNonlinearKokkosT<Precision>::polar_uvu_gemm_compute_z(
+         const int planes=polar_uvu_plane_count(meta);
+         if(static_cast<int>(polar_uvu_z_cache.extent(0))<plane_base+planes
+             ||static_cast<int>(polar_uvu_z_cache.extent(1))!=num_nodes
+-            ||static_cast<int>(polar_uvu_z_cache.extent(2))<kPolarUvuGemmWidth)
++            ||static_cast<int>(polar_uvu_z_cache.extent(2))<polar_uvu_gemm_width)
+             throw std::runtime_error(
+                 "polar uvu gemm: Z cache is not sized for this table.");
+         ensure_view(polar_uvu_x2_pack,polar_uvu_x2_pack_storage,4,
+-            num_nodes,kPolarUvuGemmWidth);
++            num_nodes,polar_uvu_gemm_width);
+         auto pack=polar_uvu_x2_pack;
+         auto zcache=polar_uvu_z_cache;
+         // Pack the X2 operand planes.  d1=1 planes are contiguous slices of
+@@ -2295,7 +2321,7 @@ void MaceNonlinearKokkosT<Precision>::polar_uvu_gemm_compute_z(
+                 const int src_offset=in2_off+((mode==0)?c:0);
+                 Kokkos::parallel_for("polar uvu gemm pack",
+                     Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
+-                        {num_nodes,kPolarUvuGemmWidth}),
++                        {num_nodes,polar_uvu_gemm_width}),
+                     KOKKOS_LAMBDA(int node,int v) {
+                         pack(dst,node,v)=x2(node,src_offset+v*stride);
+                     });
+@@ -2416,11 +2442,11 @@ void MaceNonlinearKokkosT<Precision>::polar_uvu_gemm_reverse(
+         if(!z_valid)
+             polar_uvu_gemm_compute_z(num_nodes,meta,weight_view,x2,plane_base);
+         ensure_view(polar_rev_uvu_mixed_bar,
+-            polar_rev_uvu_mixed_bar_storage,num_nodes,kPolarUvuGemmWidth);
++            polar_rev_uvu_mixed_bar_storage,num_nodes,polar_uvu_gemm_width);
+         ensure_view(polar_uvu_p,polar_uvu_p_storage,
+-            num_nodes,kPolarUvuGemmWidth);
++            num_nodes,polar_uvu_gemm_width);
+         ensure_view(polar_uvu_dx2,polar_uvu_dx2_storage,
+-            num_nodes,kPolarUvuGemmWidth);
++            num_nodes,polar_uvu_gemm_width);
+         auto mixed_bar=polar_rev_uvu_mixed_bar;
+         auto pview=polar_uvu_p;
+         auto dx2=polar_uvu_dx2;
 @@ -2526,6 +2552,7 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
      const int num_nodes)
  {
