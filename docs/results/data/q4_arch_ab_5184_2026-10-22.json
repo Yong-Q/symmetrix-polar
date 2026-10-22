@@ -1,0 +1,46 @@
+{
+ "task_id": "t-20261022182725-fgpwv",
+ "queue": "queue004",
+ "flavor": "ml.pni2.3xlarge",
+ "gpu": "A100-80GB",
+ "atoms": 5184,
+ "rounds": 2,
+ "steps_per_arm": 5,
+ "arms": {
+  "base_r1": {
+   "median_us_per_atom": 135.038,
+   "pe_eV": "-3594089.8566636513"
+  },
+  "both_r1": {
+   "median_us_per_atom": 128.985,
+   "pe_eV": "-3594089.8566636513"
+  },
+  "base_r2": {
+   "median_us_per_atom": 135.455,
+   "pe_eV": "-3594089.8566636513"
+  },
+  "both_r2": {
+   "median_us_per_atom": 128.996,
+   "pe_eV": "-3594089.8566636513"
+  }
+ },
+ "round_medians": {
+  "base": {
+   "us_per_atom": 135.246
+  },
+  "both": {
+   "us_per_atom": 128.991,
+   "saving_us_per_atom": 6.256,
+   "saving_pct": 4.63
+  }
+ },
+ "runtime_days_per_ns": {
+  "1fs": 7.74,
+  "0.5fs": 15.48,
+  "2fs": 3.87
+ },
+ "defaults": {
+  "MATOS_MH1_FWD_NODE": "on",
+  "MATOS_MH1_REV_FUSED2": "on"
+ }
+}

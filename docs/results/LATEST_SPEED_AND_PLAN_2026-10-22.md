@@ -1,13 +1,18 @@
 # Latest speed and plan — 2026-10-22
 
+> **Superseded later on 2026-10-22:** node-owned forward + fused2 reverse are
+> now default. Clean q4 A/B: **133.04 µs/atom/step at 1,296** and
+> **128.99 µs/atom/step at 5,184**. The 145.75 / 140.91 numbers below are the
+> pre-dataflow N1 baseline and are kept for history.
+
 **Scope:** full nonlinear PolarMACE, FP64, exact GTO-Ewald, one A100-SXM4-80GB,
-one MPI rank. `µs/atom = 1000 × ms/eval / atoms`.
+one MPI rank. All speed values in this document are **µs/atom/step**.
 
 ## TL;DR
 
-- **Best full PolarMACE:** **145.75 µs/atom/step at 1,296 atoms**
-  (188.891 ms/eval, `streamed_edges generic`) and **140.91 µs/atom at 5,184
-  atoms** (730.49 ms/eval, 19.16 GiB).
+- **Current best (default):** **133.04 µs/atom/step at 1,296 atoms** and
+  **128.99 µs/atom/step at 5,184 atoms** with node-owned forward + fused2.
+- **Pre-dataflow N1 baseline:** 145.75 at 1,296 and 140.91 at 5,184.
 - queue004 matches local within **0.12%**; a 1,296-atom task takes **69 s
   end-to-end** (LAMMPS 16 s, of which ~15 s is the 317 MB model load).
 - On the Symmetrix-XL paper's own workload (linear MACE-OFF23, FP32,

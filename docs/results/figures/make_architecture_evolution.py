@@ -108,7 +108,7 @@ ax_b.text(0.02, 0.30, "Measured end-to-end (clean q4 A/B):",
           fontsize=8.2, color="#333333")
 ax_b.text(0.02, 0.21, "133.04 µs/atom/step at 1,296 atoms",
           fontsize=10.0, color="#1f4e79", fontweight="bold")
-ax_b.text(0.02, 0.11, "138.91 baseline → 133.04 (−4.2%); 140.91 at 5,184",
+ax_b.text(0.02, 0.11, "138.91 → 133.04 (−4.2%) at 1,296; 128.99 at 5,184",
           fontsize=7.8, color="#666666")
 
 # ---------------------------------------------------------------- panel (c)
@@ -121,11 +121,11 @@ ax_c.text(0.66, 0.92, "Measured effect", fontsize=8.0, fontweight="bold",
 
 rows = [
     ("S1.1 node-contiguous streamed-edge tiles + fused reverse",
-     "253.84 ms @1,296; 8.55 GiB"),
+     "195.9 µs/atom; 8.55 GiB"),
     ("A1 UVU 32×16 tile, chunked weight staging",
-     "290.20 → 266.21 ms (−8.26%)"),
-    ("N1 grouped FP64 path-GEMM (6 tables, 20 planes)",
-     "255.35 → 189.30 ms (−25.87%)"),
+     "223.9 → 205.4 µs/atom (−8.26%)"),
+    ("N1 grouped FP64 path-GEMM (6 tables, 20 planes; historical)",
+     "197.0 → 146.1 µs/atom (−25.87%)"),
     ("Team MH-1 + B4 + message/edge/path tiles",
      "462.6 → 224.1 µs/atom"),
     ("V3 prepared path-plan cache",
@@ -157,7 +157,7 @@ ladder = [462.6, 311.3, 269.3, 257.1, 247.7, 230.5, 224.1, 205.4, 195.9,
           146.1, 138.9, 133.0]
 labels = ["fused\nMH-1", "+FP64\nteam", "+B4\ngather", "+msg\ntile",
           "+edge\nfeat", "+path\ngrouped", "+edge-\nup", "+A1\nUVU",
-          "+S1.1", "+N1\nGEMM", "+R1", "+node+\nfused2"]
+          "+S1.1", "+N1\n(hist.)", "+R1", "+node+\nfused2"]
 x = list(range(len(ladder)))
 ax_d.plot(x, ladder, "-o", color="#4c78a8", lw=1.8, ms=5.5, zorder=3)
 ax_d.fill_between(x, ladder, 0, color="#4c78a8", alpha=0.08, zorder=1)
