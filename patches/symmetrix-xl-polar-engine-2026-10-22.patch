@@ -677,7 +677,7 @@ index c51c2d2..bfdc3e8 100644
                  ensure_view(state.density_matrix,state.density_matrix_storage,samples,1);
                  if(spline_layer) {
 diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
-index 0c4ac8a..6e5d67d 100644
+index 0c4ac8a..9238edb 100644
 --- a/libsymmetrix/source/mace_polar_impl.tpp
 +++ b/libsymmetrix/source/mace_polar_impl.tpp
 @@ -267,6 +267,44 @@ void MaceNonlinearKokkosT<Precision>::PolarUpdate::set_e3_linear_workspace(
@@ -799,7 +799,40 @@ index 0c4ac8a..6e5d67d 100644
                  auto node_feats=polar_node_feats_e3nn;
                  polar_uvu_le_q_planes=polar_uvu_plane_count(le_q_meta);
                  polar_uvu_le_v_planes=polar_uvu_plane_count(le_v_meta);
-@@ -2526,6 +2545,7 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+@@ -2204,17 +2223,24 @@ void MaceNonlinearKokkosT<Precision>::parse_polar_extension_tables()
+             ||polar_le_linear_up_v.input_dimension()!=16)
+             throw std::invalid_argument(
+                 "polar_blocks: local_electron_energy linear_up inputs must be 8/16.");
+-        if(polar_le_linear_up_q.output_dimension()!=2048
+-            ||polar_le_linear_up_v.output_dimension()!=2048)
++        // The local-electron head width follows the checkpoint channel count
++        // C: linear_up outputs 4C, dot_products outputs C, MLP maps 2C -> 1.
++        // The teacher has C=512 (2048/512/1024); a distilled 192-channel
++        // student has C=192 (768/192/384).  Keep the same invariants without
++        // hard-coding the teacher width.
++        const int le_width=polar_le_linear_up_q.output_dimension()/4;
++        if(le_width<=0
++            ||polar_le_linear_up_v.output_dimension()!=4*le_width)
+             throw std::invalid_argument(
+-                "polar_blocks: local_electron_energy linear_up outputs must be 2048.");
+-        if(static_cast<int>(polar_le_q_mask.extent(0))!=512
+-            ||static_cast<int>(polar_le_v_mask.extent(0))!=512)
++                "polar_blocks: local_electron_energy linear_up outputs must be 4C.");
++        if(static_cast<int>(polar_le_q_mask.extent(0))!=le_width
++            ||static_cast<int>(polar_le_v_mask.extent(0))!=le_width)
+             throw std::invalid_argument(
+-                "polar_blocks: local_electron_energy dot_products outputs must be 512.");
+-        if(polar_le_mlp.input_size()!=1024||polar_le_mlp.output_size()!=1)
++                "polar_blocks: local_electron_energy dot_products outputs must be C.");
++        if(polar_le_mlp.input_size()!=2*le_width
++            ||polar_le_mlp.output_size()!=1)
+             throw std::invalid_argument(
+-                "polar_blocks: local_electron_energy mlp must map 1024 -> 1.");
++                "polar_blocks: local_electron_energy mlp must map 2C -> 1.");
+     } else polar_le_enabled=false;
+ }
+ 
+@@ -2526,6 +2552,7 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
      const int num_nodes)
  {
      if(!polar_enabled) return;
@@ -807,7 +840,7 @@ index 0c4ac8a..6e5d67d 100644
      // N1 grouped GEMM switch.  The forward sets polar_uvu_z_cache_valid and
      // the plane layout; a stale/mismatched cache falls back per table.
      const bool uvu_gemm_on=polar_uvu_gemm_enabled()
-@@ -3636,21 +3656,11 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+@@ -3636,21 +3663,11 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
                      pe(node,column)+=ra(node,column)+rb(node,column);
                  });
          }
@@ -834,7 +867,7 @@ index 0c4ac8a..6e5d67d 100644
          const auto launch_uvu_forward=[&](const std::vector<int>& meta,
                  const std::vector<Precision>& path_weight,
                  Kokkos::View<Precision*> weight_view,
-@@ -4427,18 +4437,9 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+@@ -4427,18 +4444,9 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
              polar_rev_tp_adjoint);
          symmetrix_polar_profile_mark("rev5b:readout-linears");
          { // (i) uvu_tp 反向: x1=fmix(→fmix̄), x2=nl_out(→nl̄_out)
@@ -856,7 +889,7 @@ index 0c4ac8a..6e5d67d 100644
              ordered_kokkos_deep_copy(polar_rev_nlout_adjoint,Precision(0));
              const int step_base=step*polar_uvu_scf_planes;
              const bool tp_gemm=uvu_gemm_on
-@@ -4545,19 +4546,9 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+@@ -4545,19 +4553,9 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
                  });
          }
          { // (iv) uvu_dot 反向: x1=fmix(→fmix̄), x2=pe(→pe伴)

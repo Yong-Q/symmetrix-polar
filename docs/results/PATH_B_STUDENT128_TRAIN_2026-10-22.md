@@ -41,9 +41,20 @@ teacher).
 
 The passing 128 fw=5 model was trained with `max_L=2`, so its node features
 contain l=2. The Symmetrix engine rejects this (`polar_blocks: node-feature
-l>1 is unsupported`). An engine-compatible **max_L=1** retrain is running as
-`t-20261022194958-jbbjh`; its accuracy and speed must be re-measured before
-claiming the student can replace the teacher in the engine.
+l>1 is unsupported`).
+
+The engine-compatible **192 max_L=1** student on the expanded 2,166-config
+dataset passes the gate and runs in the engine:
+
+| Model | Val MAE E | Val MAE F | 1,296 engine speed |
+|---|---:|---:|---:|
+| **192 max_L=1, fw=5, 2,166 data** | **2.1 meV/atom** | **6.7 meV/Å** | **117.8 µs/atom/step** (local) |
+
+The engine needed two generic-width fixes (local-electron 4C/C/2C invariants
+and the gate activation serialization). On an in-domain single H2O frame the
+engine matches the PyTorch student to **5.8e-9 eV** in energy and ~1e-8 eV/Å
+in forces. The 1,296-water speed benchmark is out-of-domain for the
+six-molecule student, so it measures execution speed, not accuracy.
 
 ## What was validated
 
