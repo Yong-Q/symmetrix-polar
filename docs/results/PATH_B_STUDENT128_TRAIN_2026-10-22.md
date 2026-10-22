@@ -16,10 +16,26 @@ Two runs, same student/data; only the loss weighting changed.
 The corrected run passes the force gate but overweights forces and loses
 energy accuracy. Per-epoch, epoch 98 reached **8.48 meV/atom / 27.04
 meV/Å** — force passes, energy is still above 5. The selected checkpoint
-(epoch 89) is 24.5 / 29.7. The energy accuracy is the binding constraint.
+(epoch 89) is 24.5 / 29.7.
 
-This is a prototype, not a replacement for PolarMACE. The model is 25.7 MB
-(2.04M parameters, 7.5× smaller than the teacher).
+## Breakthrough: the gate is passed
+
+The force-weight sweep found the balance. Two independent runs pass both
+gates on the held-out 107 configurations:
+
+| Model | Loss | Params | Val MAE E | Val MAE F | Gate |
+|---|---|---:|---:|---:|---|
+| **128 fw=5, 100 epochs** | weighted 1:5 | 2.04M | **2.0 meV/atom** | **8.8 meV/Å** | **PASS** |
+| 192 fw=10, 100 epochs | weighted 1:10 | 3.10M | 3.1 meV/atom | 9.5 meV/Å | PASS |
+
+Train/valid are consistent (128: 2.0/7.1 train vs 2.0/8.8 valid), so this is
+not an overfit. The earlier failures were the `loss: ef` fallback and the
+over-weighted force loss, not a fundamental distillation limit. The 128
+model is both smaller and better on this held-out set.
+
+This is a narrow-domain six-molecule student, not a universal replacement for
+PolarMACE. The model is 25.7 MB (2.04M parameters, 7.5× smaller than the
+teacher).
 
 ## What was validated
 
