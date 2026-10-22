@@ -1,0 +1,375 @@
+{
+ "model": "/workspace/group/shared/bza/task3_sampling_database/mlip/models/mace-polar/MACE-POLAR-1-M.model",
+ "keys": [
+  "field_dependent_charges_maps.0.dot_products.weight",
+  "field_dependent_charges_maps.0.tp_out.weight",
+  "field_dependent_charges_maps.1.dot_products.weight",
+  "field_dependent_charges_maps.1.tp_out.weight",
+  "local_electron_energy.dot_products_q.weight",
+  "local_electron_energy.dot_products_v.weight"
+ ],
+ "stacked": [
+  {
+   "key": "field_dependent_charges_maps.0.dot_products.weight",
+   "numel": 524288,
+   "shape_stored": [
+    524288
+   ],
+   "zero_fraction": 0.0,
+   "s_max": 832.9383789000772,
+   "s_min": 16.339623108995838,
+   "rank_1e-3": 512,
+   "rank_1e-4": 512,
+   "rank_1e-5": 512,
+   "rank_1e-6": 512,
+   "energy_rank_90": 163,
+   "energy_rank_99": 371,
+   "energy_rank_999": 481,
+   "energy_rank_9999": 508,
+   "top10_singular": [
+    832.9383789000772,
+    686.5163438194805,
+    575.4000641211958,
+    553.4572255221723,
+    529.3605992103595,
+    481.5958054544042,
+    451.91866277214615,
+    441.15428281666647,
+    427.0933420911399,
+    417.8944667443844
+   ]
+  },
+  {
+   "key": "field_dependent_charges_maps.0.tp_out.weight",
+   "numel": 524288,
+   "shape_stored": [
+    524288
+   ],
+   "zero_fraction": 0.0,
+   "s_max": 309.11731919537874,
+   "s_min": 5.552788519281738,
+   "rank_1e-3": 512,
+   "rank_1e-4": 512,
+   "rank_1e-5": 512,
+   "rank_1e-6": 512,
+   "energy_rank_90": 147,
+   "energy_rank_99": 370,
+   "energy_rank_999": 477,
+   "energy_rank_9999": 507,
+   "top10_singular": [
+    309.11731919537874,
+    293.8369485116431,
+    285.41223134280085,
+    275.7019832214994,
+    268.90368206648594,
+    262.18609391266153,
+    256.59732136722397,
+    253.9033633148276,
+    248.34501360427416,
+    242.93780240042796
+   ]
+  },
+  {
+   "key": "field_dependent_charges_maps.1.dot_products.weight",
+   "numel": 524288,
+   "shape_stored": [
+    524288
+   ],
+   "zero_fraction": 0.0,
+   "s_max": 893.693793934292,
+   "s_min": 16.981788853691423,
+   "rank_1e-3": 512,
+   "rank_1e-4": 512,
+   "rank_1e-5": 512,
+   "rank_1e-6": 512,
+   "energy_rank_90": 180,
+   "energy_rank_99": 380,
+   "energy_rank_999": 484,
+   "energy_rank_9999": 509,
+   "top10_singular": [
+    893.693793934292,
+    766.4546783880508,
+    626.1075945500988,
+    458.1183886177214,
+    442.95775537547723,
+    439.1182827283655,
+    426.6230104687109,
+    413.8465385425385,
+    412.1472035490724,
+    405.5509117724369
+   ]
+  },
+  {
+   "key": "field_dependent_charges_maps.1.tp_out.weight",
+   "numel": 524288,
+   "shape_stored": [
+    524288
+   ],
+   "zero_fraction": 0.0,
+   "s_max": 305.4433733144898,
+   "s_min": 4.227301162806873,
+   "rank_1e-3": 512,
+   "rank_1e-4": 512,
+   "rank_1e-5": 512,
+   "rank_1e-6": 512,
+   "energy_rank_90": 133,
+   "energy_rank_99": 355,
+   "energy_rank_999": 471,
+   "energy_rank_9999": 506,
+   "top10_singular": [
+    305.4433733144898,
+    287.48057412435855,
+    277.5197464656821,
+    261.1361105150238,
+    256.1064299124892,
+    251.9156420465579,
+    241.83216132123147,
+    234.63467271103136,
+    228.21539286618875,
+    220.5257489895229
+   ]
+  },
+  {
+   "key": "local_electron_energy.dot_products_q.weight",
+   "numel": 524288,
+   "shape_stored": [
+    524288
+   ],
+   "zero_fraction": 0.0,
+   "s_max": 1244.706307066002,
+   "s_min": 8.634075590488395,
+   "rank_1e-3": 512,
+   "rank_1e-4": 512,
+   "rank_1e-5": 512,
+   "rank_1e-6": 512,
+   "energy_rank_90": 21,
+   "energy_rank_99": 340,
+   "energy_rank_999": 474,
+   "energy_rank_9999": 507,
+   "top10_singular": [
+    1244.706307066002,
+    1001.7848800230139,
+    790.5010461304486,
+    631.2093470722184,
+    532.0168059658898,
+    220.5250577142575,
+    185.05395283179445,
+    180.99318452168097,
+    153.98485562330782,
+    139.0929944416587
+   ]
+  },
+  {
+   "key": "local_electron_energy.dot_products_v.weight",
+   "numel": 524288,
+   "shape_stored": [
+    524288
+   ],
+   "zero_fraction": 0.0,
+   "s_max": 1438.2653810785077,
+   "s_min": 6.874343390547155,
+   "rank_1e-3": 512,
+   "rank_1e-4": 512,
+   "rank_1e-5": 512,
+   "rank_1e-6": 512,
+   "energy_rank_90": 10,
+   "energy_rank_99": 286,
+   "energy_rank_999": 452,
+   "energy_rank_9999": 502,
+   "top10_singular": [
+    1438.2653810785077,
+    1329.8182078836796,
+    618.4434352564707,
+    578.9736480028653,
+    512.9071339093385,
+    465.141214493971,
+    399.8217347578902,
+    241.3706659591121,
+    215.29201811225673,
+    207.3749064463976
+   ]
+  }
+ ],
+ "per_path": [
+  {
+   "key": "field_dependent_charges_maps.0.dot_products.weight",
+   "path": 0,
+   "rank_1e-4": 511,
+   "rank_1e-6": 512,
+   "energy_rank_90": 76,
+   "energy_rank_99": 263,
+   "top5_singular": [
+    825.2987606148087,
+    678.5139137661962,
+    560.812085475099,
+    543.155564470889,
+    515.8075915152095
+   ]
+  },
+  {
+   "key": "field_dependent_charges_maps.0.dot_products.weight",
+   "path": 1,
+   "rank_1e-4": 511,
+   "rank_1e-6": 512,
+   "energy_rank_90": 117,
+   "energy_rank_99": 272,
+   "top5_singular": [
+    378.47453478434494,
+    370.8384653514648,
+    357.61680782972695,
+    346.98468034172055,
+    340.06478355671857
+   ]
+  },
+  {
+   "key": "field_dependent_charges_maps.0.tp_out.weight",
+   "path": 0,
+   "rank_1e-4": 511,
+   "rank_1e-6": 512,
+   "energy_rank_90": 123,
+   "energy_rank_99": 294,
+   "top5_singular": [
+    165.30547429884044,
+    114.60394543372212,
+    109.82382885954888,
+    106.819144104233,
+    104.74239835326883
+   ]
+  },
+  {
+   "key": "field_dependent_charges_maps.0.tp_out.weight",
+   "path": 1,
+   "rank_1e-4": 512,
+   "rank_1e-6": 512,
+   "energy_rank_90": 124,
+   "energy_rank_99": 315,
+   "top5_singular": [
+    291.4004588315171,
+    273.6513632643716,
+    265.82059098269355,
+    263.3924510569577,
+    256.3772250394698
+   ]
+  },
+  {
+   "key": "field_dependent_charges_maps.1.dot_products.weight",
+   "path": 0,
+   "rank_1e-4": 511,
+   "rank_1e-6": 512,
+   "energy_rank_90": 80,
+   "energy_rank_99": 265,
+   "top5_singular": [
+    886.3395668573538,
+    758.0977794878636,
+    614.6479125221025,
+    433.98453005497475,
+    424.0545754944167
+   ]
+  },
+  {
+   "key": "field_dependent_charges_maps.1.dot_products.weight",
+   "path": 1,
+   "rank_1e-4": 512,
+   "rank_1e-6": 512,
+   "energy_rank_90": 135,
+   "energy_rank_99": 283,
+   "top5_singular": [
+    420.1668578445231,
+    379.9233350537928,
+    368.1623730075588,
+    352.41953660841756,
+    328.824577252379
+   ]
+  },
+  {
+   "key": "field_dependent_charges_maps.1.tp_out.weight",
+   "path": 0,
+   "rank_1e-4": 512,
+   "rank_1e-6": 512,
+   "energy_rank_90": 112,
+   "energy_rank_99": 284,
+   "top5_singular": [
+    114.87230234941029,
+    111.14202841913884,
+    106.35478968062583,
+    102.18142943651095,
+    93.26983020834152
+   ]
+  },
+  {
+   "key": "field_dependent_charges_maps.1.tp_out.weight",
+   "path": 1,
+   "rank_1e-4": 512,
+   "rank_1e-6": 512,
+   "energy_rank_90": 113,
+   "energy_rank_99": 305,
+   "top5_singular": [
+    290.09418206174394,
+    277.99195691768824,
+    263.67525156927627,
+    242.47884798326328,
+    242.11045904049615
+   ]
+  },
+  {
+   "key": "local_electron_energy.dot_products_q.weight",
+   "path": 0,
+   "rank_1e-4": 510,
+   "rank_1e-6": 512,
+   "energy_rank_90": 46,
+   "energy_rank_99": 275,
+   "top5_singular": [
+    790.2413495543657,
+    632.3614433220126,
+    532.0976184246491,
+    219.08258572273013,
+    181.13568251600182
+   ]
+  },
+  {
+   "key": "local_electron_energy.dot_products_q.weight",
+   "path": 1,
+   "rank_1e-4": 510,
+   "rank_1e-6": 512,
+   "energy_rank_90": 4,
+   "energy_rank_99": 242,
+   "top5_singular": [
+    1244.2570544676444,
+    1000.1774572521972,
+    181.9887305089798,
+    152.231661482365,
+    137.67223512975187
+   ]
+  },
+  {
+   "key": "local_electron_energy.dot_products_v.weight",
+   "path": 0,
+   "rank_1e-4": 510,
+   "rank_1e-6": 512,
+   "energy_rank_90": 5,
+   "energy_rank_99": 203,
+   "top5_singular": [
+    1437.6692256121305,
+    1328.8869973799176,
+    615.5437623012159,
+    578.1449458983933,
+    464.85489633799307
+   ]
+  },
+  {
+   "key": "local_electron_energy.dot_products_v.weight",
+   "path": 1,
+   "rank_1e-4": 510,
+   "rank_1e-6": 512,
+   "energy_rank_90": 68,
+   "energy_rank_99": 259,
+   "top5_singular": [
+    515.9680088897475,
+    402.27323681737664,
+    240.0388275374683,
+    214.76986256082688,
+    122.74538432713494
+   ]
+  }
+ ]
+}
