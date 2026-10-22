@@ -37,6 +37,15 @@ This is a narrow-domain six-molecule student, not a universal replacement for
 PolarMACE. The model is 25.7 MB (2.04M parameters, 7.5× smaller than the
 teacher).
 
+## Active learning result
+
+The fixed committee active-learning loop selected 240 frames from 840
+student-MD/rattle candidates (40/species) and retrained a 192 max_L=1 student
+on 457+240=697 frames. Held-out result: **9.2 meV/atom / 9.8 meV/Å** — force
+passes, energy fails. Active selection did not beat the random 2,166-config
+expansion (2.1 / 6.7), so the best student remains the expanded-data 192L1
+model. The active pipeline itself is validated end-to-end.
+
 ## Engine compatibility
 
 The passing 128 fw=5 model was trained with `max_L=2`, so its node features
