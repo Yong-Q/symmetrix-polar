@@ -97,18 +97,18 @@ draw_box(ax_b, 0.415, 0.46, w2, 0.14,
          "2-step SCF\n+ exact Ewald", "#fde2cf", "#777777", fs=6.8)
 # kernels
 draw_box(ax_b, 0.615, 0.46, w2, 0.32,
-         "optimized\nkernels\nS1.1·A1·N1\nB4·team·V3", "#d9ead3", "#777777", fs=6.5)
+         "optimized\nkernels\nS1.1·A1·N1·B4\nR1·node-fwd\nfused2", "#d9ead3", "#777777", fs=6.2)
 # arrows: 1->2, 2->model, model->kernels, kernels->A100
 draw_arrow(ax_b, xs2[0] + w2, 0.62, xs2[1], 0.62)
 draw_arrow(ax_b, xs2[1] + w2, 0.62, 0.415, 0.62)
 draw_arrow(ax_b, 0.415 + w2, 0.62, 0.615, 0.62)
 draw_arrow(ax_b, 0.615 + w2, 0.62, 0.815, 0.62)
 
-ax_b.text(0.02, 0.30, "Measured end-to-end:",
+ax_b.text(0.02, 0.30, "Measured end-to-end (clean q4 A/B):",
           fontsize=8.2, color="#333333")
-ax_b.text(0.02, 0.21, "145.75 µs/atom/step at 1,296 atoms",
+ax_b.text(0.02, 0.21, "133.04 µs/atom/step at 1,296 atoms",
           fontsize=10.0, color="#1f4e79", fontweight="bold")
-ax_b.text(0.02, 0.11, "140.91 µs/atom at 5,184 atoms; parity with local A100",
+ax_b.text(0.02, 0.11, "138.91 baseline → 133.04 (−4.2%); 140.91 at 5,184",
           fontsize=7.8, color="#666666")
 
 # ---------------------------------------------------------------- panel (c)
@@ -130,44 +130,51 @@ rows = [
      "462.6 → 224.1 µs/atom"),
     ("V3 prepared path-plan cache",
      "~24 D2H syncs/eval removed"),
-    ("queue004 packaged offload (same binary/model)",
-     "145.75 = local within 0.2%"),
+    ("R1 reverse MH-1 register accumulation",
+     "−3.05% same-binary"),
+    ("Node-owned forward dataflow",
+     "−2.92 µs/atom (q4)"),
+    ("Fused2 reverse dataflow",
+     "−2.83 µs/atom (q4)"),
+    ("q4 clean A/B, both default-on",
+     "138.91 → 133.04 (−4.2%)"),
 ]
-row_y = [0.78, 0.67, 0.56, 0.45, 0.34, 0.23]
+row_y = [0.82 - 0.088 * i for i in range(len(rows))]
 for i, ((left, right), yy) in enumerate(zip(rows, row_y)):
     ax_c.add_patch(FancyBboxPatch(
-        (0.01, yy - 0.045), 0.98, 0.09,
+        (0.01, yy - 0.040), 0.98, 0.080,
         boxstyle="round,pad=0.004,rounding_size=0.008",
         linewidth=0.0, facecolor="#f4f7fb" if i % 2 == 0 else "#ffffff"))
-    ax_c.text(0.02, yy, left, fontsize=6.9, va="center", color="#222222")
-    ax_c.text(0.66, yy, right, fontsize=6.9, va="center", color="#1f4e79",
+    ax_c.text(0.02, yy, left, fontsize=6.4, va="center", color="#222222")
+    ax_c.text(0.66, yy, right, fontsize=6.4, va="center", color="#1f4e79",
               fontweight="bold")
-ax_c.text(0.02, 0.10,
+ax_c.text(0.02, 0.018,
           "Weights, equations, FP64, exact Ewald, and the LAMMPS interface are unchanged.",
-          fontsize=7.6, color="#666666")
+          fontsize=7.0, color="#666666")
 
 # ---------------------------------------------------------------- panel (d)
-ladder = [462.6, 311.3, 269.3, 257.1, 247.7, 230.5, 224.1, 205.4, 195.9, 146.1]
+ladder = [462.6, 311.3, 269.3, 257.1, 247.7, 230.5, 224.1, 205.4, 195.9,
+          146.1, 138.9, 133.0]
 labels = ["fused\nMH-1", "+FP64\nteam", "+B4\ngather", "+msg\ntile",
           "+edge\nfeat", "+path\ngrouped", "+edge-\nup", "+A1\nUVU",
-          "+S1.1", "+N1\nGEMM"]
+          "+S1.1", "+N1\nGEMM", "+R1", "+node+\nfused2"]
 x = list(range(len(ladder)))
 ax_d.plot(x, ladder, "-o", color="#4c78a8", lw=1.8, ms=5.5, zorder=3)
 ax_d.fill_between(x, ladder, 0, color="#4c78a8", alpha=0.08, zorder=1)
 for xi, v in zip(x, ladder):
-    ax_d.text(xi, v + 8, f"{v:g}", ha="center", va="bottom", fontsize=7.1,
+    ax_d.text(xi, v + 8, f"{v:g}", ha="center", va="bottom", fontsize=6.6,
               fontweight="bold" if xi in (0, len(ladder) - 1) else "normal")
 ax_d.axhline(80, color="#d62728", ls="--", lw=1.0)
-ax_d.text(9.35, 84, "80 target", ha="right", va="bottom", fontsize=7.4,
+ax_d.text(11.35, 84, "80 target", ha="right", va="bottom", fontsize=7.4,
           color="#d62728")
 ax_d.axhline(40, color="#d62728", ls=":", lw=1.0)
-ax_d.text(9.35, 44, "40 stretch", ha="right", va="bottom", fontsize=7.4,
+ax_d.text(11.35, 44, "40 stretch", ha="right", va="bottom", fontsize=7.4,
           color="#d62728")
-ax_d.text(4.6, 420, "3.17× total\n462.6 → 146.1 µs/atom", ha="center",
+ax_d.text(5.6, 420, "3.48× total\n462.6 → 133.0 µs/atom", ha="center",
           va="top", fontsize=7.8,
           bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="#bbbbbb",
                     alpha=0.95))
-ax_d.set_xlim(-0.5, 9.5)
+ax_d.set_xlim(-0.5, 11.5)
 ax_d.set_ylim(0, 500)
 ax_d.set_xticks(x)
 ax_d.set_xticklabels(labels, fontsize=6.8)
@@ -180,9 +187,10 @@ fig.suptitle("Symmetrix-Polar architecture evolution and measured speed "
              "(2026-10-22)", fontsize=13, fontweight="bold")
 fig.text(0.5, 0.012,
          "Sources: docs/results/OPTIMIZATION_LEDGER.md; "
-         "docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md. "
+         "docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md; "
+         "q4 A/B t-20261022180640-dslc9. "
          "The polar model's weights and equations are unchanged; all gains are execution changes.",
-         ha="center", va="bottom", fontsize=7.8, color="#444444")
+         ha="center", va="bottom", fontsize=7.6, color="#444444")
 fig.tight_layout(rect=[0, 0.045, 1, 0.955])
 for ext in ("png", "pdf"):
     fig.savefig(OUT / f"ARCHITECTURE_EVOLUTION.{ext}", dpi=140,
