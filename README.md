@@ -5,8 +5,8 @@ electrostatics — in the Symmetrix-XL C++/Kokkos/LAMMPS engine.
 
 | Best 1,296 | Best 5,184 | Paper parity | Single-GPU floor |
 |---:|---:|---:|---:|
-| **145.75 µs/atom/step** | **140.91 µs/atom/step** | **4.47–4.53 vs 4.50 µs/atom/step** | **~120–130 µs/atom/step** |
-| FP64 · exact Ewald · 2-step SCF | FP64 · 19.16 GiB peak | linear MACE FP32, 5,184 atoms | projection |
+| **133.04 µs/atom/step** | **140.91 µs/atom/step** | **4.47–4.53 vs 4.50 µs/atom/step** | **~120–130 µs/atom/step** |
+| FP64 · exact Ewald · 2-step SCF · node-owned forward + fused2 reverse | FP64 · 19.16 GiB peak | linear MACE FP32, 5,184 atoms | projection |
 
 **Definition:** `µs/atom/step = 10^6 × seconds per evaluation / atoms`.
 All speed values in this README use **µs/atom/step**. Task wall times are
@@ -22,8 +22,9 @@ PolarMACE is a different model.*
 | **10,368-atom capacity** | **149.14 µs/atom/step**, 33.71 GiB peak; 2× the 5,184 capacity on one A100-80GB | q4 task `t-20261022144341-pzc9x`; `docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md` |
 | **R1 reverse MH-1** | exact, **−3.05%** same-binary; dPE 0, max dF 4.9e-16 eV/Å; projected 141.3 µs/atom/step at 1,296 | `docs/results/data/rev_r1_2026-10-22.json` |
 | **Path B six-molecule teacher smoke** | H2O/NH3/C2H4/CH4/C2H6/CO2 labels; 8 configurations × 12 molecules each; no model change | `docs/results/PATH_B_SIX_MOLECULE_SMOKE_2026-10-22.md` |
-| **Node-owned forward dataflow** | exact (dPE 0, max dF 3.9e-14 eV/Å); **7.9–9.7 µs/atom/step** saving in a shared-GPU window, **~137.9 projected**; opt-in `MATOS_MH1_FWD_NODE=1` | `docs/results/NODE_OWNED_FORWARD_2026-10-22.md` |
-| **Fused reverse MH-1 (fused2)** | exact (max dF 4.97e-14 eV/Å) but no measured gain under the shared GPU; not promoted, opt-in only | `docs/results/FUSED_REVERSE_2026-10-22.md` |
+| **Clean q4 A/B: node-owned + fused2** | **133.04 µs/atom/step**, **−5.87 (4.2 %)** vs the 138.91 baseline; exact (PE identical on the combined arm, max dF 4.62e-14 eV/Å); both default on | q4 `t-20261022180640-dslc9`; `docs/results/NODE_OWNED_FORWARD_2026-10-22.md` |
+| **Node-owned forward alone** | 135.98 µs/atom/step, **−2.92 (2.1 %)**; `MATOS_MH1_FWD_NODE=0` opts out | same q4 run |
+| **Fused reverse alone** | 136.08 µs/atom/step, **−2.83 (2.0 %)**; `MATOS_MH1_REV_FUSED2=0` opts out | `docs/results/FUSED_REVERSE_2026-10-22.md` |
 | **Mathematics-first architecture** | exact-checkpoint route projects **97–115 µs/atom/step**; 90 not supported on one exact-FP64 GPU | `docs/design/MATH_ARCH_2026-10-22.md` |
 | **Path B pruning audit** | zero-shot no-go beyond ~1.1×; rebuild + fine-tune targets 1.5–4× (C=384→320 first) | `docs/results/PATH_B_PRUNING_AUDIT_2026-10-22.md` |
 | **Path B distillation dataset + trainer** | 457 train / 107 valid six-molecule configs; 2.04M-param student config; training pending an idle GPU | `docs/results/PATH_B_DISTILLATION_2026-10-22.md` |
@@ -42,17 +43,22 @@ PolarMACE is a different model.*
 
 | System | Model | Precision | Atoms | Execution path | µs/atom/step | Peak GPU | Evidence |
 |---|---|---|---:|---|---:|---:|---|
-| Water | Full PolarMACE | FP64 | 1,296 | generic streaming | **145.75** | — | q4 `t-20261022132500-94hhz` |
+| Water | Full PolarMACE | FP64 | 1,296 | generic + node-owned forward + fused2 reverse | **133.04** | — | q4 `t-20261022180640-dslc9` |
+| Water | Full PolarMACE | FP64 | 1,296 | generic streaming (N1 baseline) | 138.91 | — | same q4 run |
+| Water | Full PolarMACE | FP64 | 1,296 | generic streaming (N1, older) | 145.75 | — | q4 `t-20261022132500-94hhz` |
 | Water | Full PolarMACE | FP64 | 5,184 | generic streaming | **140.91** | 19.16 GiB | N1 smoke |
 | Water | Full PolarMACE | FP64 | 10,368 | generic streaming | 149.14 | 33.71 GiB | q4 `t-20261022144341-pzc9x` (capacity) |
 | OFF23 water | Linear MACE-OFF23 | FP32 | 5,184 | direct/JIT | 4.47–4.53 | — | paper-parity run |
 | OFF23 water | Paper Symmetrix-XL | FP32 | 5,184 | standard streaming | 4.50 | — | paper |
 
 All rows use **µs/atom/step**. The 10,368 row is a **capacity point**; the
-speed headline is **140.91 at 5,184** and **145.75 at 1,296**.
+speed headline is **133.04 at 1,296** and **140.91 at 5,184**. The 1,296
+node/fused arms were measured in one q4 task (2 rounds × 4 arms, 5 steps per
+arm); the 5,184 and 10,368 rows predate the two dataflow changes.
 
-- **q4 deployment:** same binary, 145.75 vs local 146.06 µs/atom/step (within
-  0.2%). Task wall time is 69 s (dominated by model load) and is not a speed
+- **q4 deployment:** the 1,296 A/B ran on a dedicated q4 A100. Baseline
+  138.91, node-owned forward 135.98, fused2 136.08, both **133.04**
+  µs/atom/step. Task wall time is dominated by model load and is not a speed
   metric.
 - **Production runtime at 5,184 atoms** (derived from 140.91 µs/atom/step):
   **8.45 days per 1 ns** at 1 fs, **16.9 days** at 0.5 fs, **4.23 days** at
@@ -85,12 +91,19 @@ interface are unchanged. All gains are execution changes:
   together with the message/edge/path tiles: 462.6 → 224.1 µs/atom/step.
 - **V3** — prepared path-plan cache; removes ~24 D2H syncs/eval and is the
   CUDA Graph prerequisite.
+- **R1** — reverse MH-1 per-channel register accumulation and identity-mask
+  elision; **−3.05 %** same-binary.
+- **Node-owned forward** — receiver-node accumulation; drops the
+  `[edges, message_width]` tensor and message gather; **−2.92 µs/atom/step**.
+- **Fused2 reverse** — one team per edge, 16 `d input_2` accumulators in
+  registers, one shared reduction; **−2.83 µs/atom/step**.
 - **queue004** — packaged binary/model offload; same speed as local.
 
 N1 binary `lmp_gemm` sha256 `093982d5…7fa8a03`. Patches:
 [`polar_uvu_gemm_n1.patch`](patches/polar_uvu_gemm_n1.patch) ·
 [`path_plan_cache_v3.patch`](patches/path_plan_cache_v3.patch) ·
-[`symmetrix-xl-polar-support.patch`](patches/symmetrix-xl-polar-support.patch).
+[`symmetrix-xl-polar-support.patch`](patches/symmetrix-xl-polar-support.patch) ·
+[`symmetrix-xl-polar-engine-2026-10-22.patch`](patches/symmetrix-xl-polar-engine-2026-10-22.patch).
 
 ## Quick start
 

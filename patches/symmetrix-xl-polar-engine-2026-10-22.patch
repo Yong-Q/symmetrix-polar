@@ -1,5 +1,5 @@
 diff --git a/libsymmetrix/source/e3nn_kokkos.cpp b/libsymmetrix/source/e3nn_kokkos.cpp
-index 1316d2b..8e3cc7b 100644
+index 1316d2b..a079e89 100644
 --- a/libsymmetrix/source/e3nn_kokkos.cpp
 +++ b/libsymmetrix/source/e3nn_kokkos.cpp
 @@ -2553,6 +2553,98 @@ E3TensorProductKokkosT<Precision>::E3TensorProductKokkosT(const nlohmann::json&
@@ -229,7 +229,7 @@ index 1316d2b..8e3cc7b 100644
          const int instruction_count=mh1_instruction_count_;
          const int multiplicity=mh1_multiplicity_;
  #ifdef KOKKOS_ENABLE_CUDA
-@@ -3088,7 +3294,209 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
+@@ -3088,7 +3294,210 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
              Kokkos::Cuda>) {
          const int channel_team_size=mh1_cuda_channel_team_size_;
          const int harmonic_team_size=mh1_cuda_harmonic_team_size_;
@@ -247,8 +247,9 @@ index 1316d2b..8e3cc7b 100644
 +        // reads without the per-entry shared-memory RMW of the first fused
 +        // prototype.
 +        const char* fused2_env=std::getenv("MATOS_MH1_REV_FUSED2");
-+        if(fused2_env!=nullptr&&std::atoi(fused2_env)!=0
-+            &&input_2_dimension_==16) {
++        // Default on; MATOS_MH1_REV_FUSED2=0 opts out.
++        if(input_2_dimension_==16
++            &&(fused2_env==nullptr||std::atoi(fused2_env)!=0)) {
 +            using scratch_view=Kokkos::View<Precision*,
 +                Kokkos::DefaultExecutionSpace::scratch_memory_space,
 +                Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
@@ -439,7 +440,7 @@ index 1316d2b..8e3cc7b 100644
          Kokkos::parallel_for(
              "e3 tensor reverse mh1 team channels",
              channel_policy(input_1.extent(0),channel_team_size),
-@@ -3114,22 +3522,40 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
+@@ -3114,22 +3523,40 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
                          const Precision weight=dynamic_weights(
                              sample,weight_offset+channel);
                          Precision weight_value=Precision(0);
@@ -483,7 +484,7 @@ index 1316d2b..8e3cc7b 100644
                          weights_adjoint(sample,weight_offset+channel)=weight_value;
                  }
                  });
-@@ -3161,8 +3587,10 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
+@@ -3161,8 +3588,10 @@ void E3TensorProductKokkosT<Precision>::reverse(Kokkos::View<const Precision**,K
                          const int weight_offset=plan(instruction,5);
                          const int output_index=output_offset
                              +channel*output_width+c;
@@ -566,7 +567,7 @@ index c08e964..3029f96 100644
      static bool polar_uvu_gemm_supported(const std::vector<int>& meta);
      static int polar_uvu_plane_count(const std::vector<int>& meta);
 diff --git a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
-index c51c2d2..13f0133 100644
+index c51c2d2..bfdc3e8 100644
 --- a/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
 +++ b/libsymmetrix/source/mace_nonlinear_kokkos_impl.tpp
 @@ -3794,7 +3794,8 @@ MaceNonlinearKokkosT<Precision>::MaceNonlinearKokkosT(const nlohmann::json& data
@@ -638,35 +639,36 @@ index c51c2d2..13f0133 100644
                  } else {
                      ensure_view(state.weights,state.weights_storage,
                          samples,weight_width);
-@@ -5253,6 +5299,27 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5253,6 +5299,28 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                                  state.weights,state.raw_weights);
                          symmetrix_polar_profile_mark("s1:fwd-cutoff");
                      }
 +                    const char* node_forward_env=std::getenv(
 +                        "MATOS_MH1_FWD_NODE");
++                    // Default on; MATOS_MH1_FWD_NODE=0 opts out.
 +                    const bool node_owned_forward=use_stream_tiles
 +                        &&!spline_layer
-+                        &&node_forward_env!=nullptr
-+                        &&std::atoi(node_forward_env)!=0;
++                        &&(node_forward_env==nullptr
++                            ||std::atoi(node_forward_env)!=0);
++                    bool node_forward_done=false;
 +                    if(node_owned_forward) {
 +                        // Node-owned dataflow: accumulate each receiver's
 +                        // incoming edges directly into state.messages and skip
 +                        // the [samples,message_width] edge-message tensor and
 +                        // its gather launch.
-+                        const bool dispatched=interaction.convolution
++                        node_forward_done=interaction.convolution
 +                            .try_evaluate_node_owned_forward(
 +                                up,neigh_indices,local_offsets,first_edge,
 +                                samples,tile_first_node,tile_last_node,
 +                                state.weights,harmonics_block,state.messages);
-+                        if(!dispatched)
-+                            throw std::logic_error(
-+                                "Node-owned MH-1 forward did not dispatch.");
-+                        symmetrix_polar_profile_mark("s1:fwd-node-conv");
-+                    } else {
++                        if(node_forward_done)
++                            symmetrix_polar_profile_mark("s1:fwd-node-conv");
++                    }
++                    if(!node_forward_done) {
                      ensure_view(state.edge_up,state.edge_up_storage,samples,up_width);
                      auto edge_up=state.edge_up;
                      Kokkos::parallel_for(
-@@ -5315,6 +5382,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
+@@ -5315,6 +5383,7 @@ void MaceNonlinearKokkosT<Precision>::compute_node_energies_forces(int num_nodes
                              });
                      }
                      symmetrix_polar_profile_mark("s1:fwd-msggather");

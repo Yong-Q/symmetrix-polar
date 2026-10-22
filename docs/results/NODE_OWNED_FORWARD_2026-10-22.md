@@ -1,10 +1,27 @@
 # Node-owned forward dataflow — 2026-10-22
 
-**Scope:** full PolarMACE, FP64, exact 2-step SCF, 1×A100-80GB (shared).
+**Scope:** full PolarMACE, FP64, exact 2-step SCF, 1×A100-80GB.
 **Change:** forward MH-1 tensor product writes receiver-node messages directly;
 the `[edges, message_width]` edge-message tensor and the separate message
-gather are removed. Opt-in `MATOS_MH1_FWD_NODE=1`; default off until a clean
-idle-GPU A/B confirms the gain.
+gather are removed. **Default on** after the clean q4 A/B below;
+`MATOS_MH1_FWD_NODE=0` opts out.
+
+## Clean q4 A/B (decisive)
+
+One q4 task (`t-20261022180640-dslc9`, 1×A100, 2 rounds × 4 arms, 5 steps per
+arm) on 1,296 water. All speeds in **µs/atom/step**.
+
+| Arm | q4 median | Saving vs baseline |
+|---|---:|---:|
+| Baseline (N1 + R1) | 138.91 | — |
+| Node-owned forward | **135.98** | **2.92 (2.1 %)** |
+| Fused2 reverse | 136.08 | 2.83 (2.0 %) |
+| **Node-owned + fused2** | **133.04** | **5.87 (4.2 %)** |
+
+PE is identical to the baseline on the baseline/node/both arms; the fused2-only
+arm differs by 1.1e-10 eV, inside the 1e-9 eV gate. Force parity for the default
+combination is **4.62e-14 eV/Å** (gate 1e-8). The clean q4 baseline is itself
+lower than the old local 145.75 because R1 is on and the q4 GPU is dedicated.
 
 ## What changed
 
@@ -35,35 +52,21 @@ write-through output and falls back to the edge path otherwise.
 
 The force gate is 1e-8 eV/Å, so the new dataflow is exact.
 
-## Speed in the same contention window
+## Local shared-GPU window (superseded)
 
-The A100 was shared and busy during the measurement (`nvidia-smi` reported
-100 % utilization and 1.6–1.9 GiB from other processes), so absolute values
-are inflated. Two profiled runs were taken back to back in one window.
-All speeds below are **µs/atom/step** at 1,296 atoms.
-
-| Path | Profiled window | Projected clean |
-|---|---:|---:|
-| Edge forward | 280.9 | 145.75 |
-| Node-owned forward | 271.2 | **~137.9** |
-| Saving | **9.7** | **~7.9** |
-
-The node-owned path removes the `[edges, message_width]` edge-message tensor
-and the message gather. The measured saving is **7.9–9.7 µs/atom/step**, i.e.
-**5–7 %**. The clean 137.9 projection is the 145.75 baseline minus the
-7.9 µs/atom/step measured saving; it is a projection, not a clean measurement.
-
-A formal interleaved wall-clock A/B could not resolve the ratio in this
-window: per-round on/off ratios were 0.970 and 1.365 because the external GPU
-load moved between arms. It must be rerun on an idle GPU before promotion.
+Before the q4 run, a local shared-GPU window showed the forward conv+gather
+phase at **280.9 → 271.2 µs/atom/step** and projected a 7.9 µs/atom/step
+saving. The clean q4 A/B above is the authoritative number: **2.92
+µs/atom/step** for the forward alone. The local projection was optimistic
+because the shared-GPU window moved under the two arms.
 
 ## Why this is not 100 on its own
 
-The change attacks the forward edge-message materialization, about
-**7.9 µs/atom/step** on the clean baseline. The remaining budget to
-100 µs/atom/step is dominated by:
+The change attacks the forward edge-message materialization, **2.92
+µs/atom/step** on the clean baseline (5.87 together with fused2). The
+remaining budget to 100 µs/atom/step is dominated by:
 
-- reverse MH-1 conv (~34.7 µs/atom/step in the same window),
+- reverse MH-1 conv,
 - polar SCF/Ewald/LE chain plus host gap (~28 µs/atom/step clean),
 - small FP64 GEMM/MLP/e3-linear launches.
 

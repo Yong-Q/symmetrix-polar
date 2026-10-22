@@ -1,0 +1,67 @@
+{
+ "task_id": "t-20261022180640-dslc9",
+ "queue": "queue004",
+ "flavor": "ml.pni2.3xlarge",
+ "gpu": "A100-80GB",
+ "atoms": 1296,
+ "rounds": 2,
+ "steps_per_arm": 5,
+ "arms": {
+  "base_r1": {
+   "median_us_per_atom": 138.927,
+   "pe_eV": "-895939.24763167975"
+  },
+  "node_r1": {
+   "median_us_per_atom": 135.914,
+   "pe_eV": "-895939.24763167975"
+  },
+  "rev_r1": {
+   "median_us_per_atom": 136.096,
+   "pe_eV": "-895939.24763167964"
+  },
+  "both_r1": {
+   "median_us_per_atom": 133.182,
+   "pe_eV": "-895939.24763167975"
+  },
+  "base_r2": {
+   "median_us_per_atom": 138.883,
+   "pe_eV": "-895939.24763167975"
+  },
+  "node_r2": {
+   "median_us_per_atom": 136.049,
+   "pe_eV": "-895939.24763167975"
+  },
+  "rev_r2": {
+   "median_us_per_atom": 136.056,
+   "pe_eV": "-895939.24763167975"
+  },
+  "both_r2": {
+   "median_us_per_atom": 132.895,
+   "pe_eV": "-895939.24763167975"
+  }
+ },
+ "round_medians": {
+  "node": {
+   "us_per_atom": 135.981,
+   "saving_us_per_atom": 2.924,
+   "saving_pct": 2.11
+  },
+  "rev": {
+   "us_per_atom": 136.076,
+   "saving_us_per_atom": 2.829,
+   "saving_pct": 2.04
+  },
+  "both": {
+   "us_per_atom": 133.039,
+   "saving_us_per_atom": 5.867,
+   "saving_pct": 4.22
+  },
+  "base": {
+   "us_per_atom": 138.905
+  }
+ },
+ "defaults": {
+  "MATOS_MH1_FWD_NODE": "on",
+  "MATOS_MH1_REV_FUSED2": "on"
+ }
+}
