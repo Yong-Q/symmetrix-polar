@@ -1,0 +1,661 @@
+From 482537cca61c2ce100452f7e2f187275a90e2e22 Mon Sep 17 00:00:00 2001
+From: matos <matos@local>
+Date: Wed, 21 Oct 2026 15:24:05 +0000
+Subject: [PATCH] perf(polar): grouped FP64 path-GEMM UVU forward/reverse
+
+Replace the per-node/per-path polar UVU kernels with 20 grouped FP64
+path GEMMs (6 UVU tables: two field-dependent-charge blocks with dot/tp
+plus LE q/v), a fused Hadamard/mask epilogue, a reusable saved-Z cache,
+and the two adjoint passes reformulated as the same GEMMs.  Legacy
+kernels remain selectable with MATOS_POLAR_UVU_GEMM=0.
+
+1,296 canonical interleaved A/B: 255.35 -> 189.30 ms (-25.9%).
+5,184 smoke: 988.28 -> 730.04 ms.  Parity 128/1,296: dPE=0,
+max dF <= 5.8e-13.
+---
+ libsymmetrix/source/mace_nonlinear_kokkos.hpp |  41 ++
+ libsymmetrix/source/mace_polar_impl.tpp       | 490 +++++++++++++++++-
+ 2 files changed, 507 insertions(+), 24 deletions(-)
+
+diff --git a/libsymmetrix/source/mace_nonlinear_kokkos.hpp b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
+index eaa91db..c08e964 100644
+--- a/libsymmetrix/source/mace_nonlinear_kokkos.hpp
++++ b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
+@@ -602,6 +602,19 @@ public:
+     // round-3 forward/replay/LE UVU split-reduction partials: (S,N,mul1)
+     Kokkos::View<Precision***,Kokkos::LayoutRight> polar_fwd_uvu_partial,
+         polar_fwd_uvu_partial_storage;
++    // N1: grouped FP64 path-GEMM machinery (MATOS_POLAR_UVU_GEMM=0 restores
++    // the per-node kernels).  Z planes are node-major [N,512] copies of
++    // Z_p = W_p @ X2_p^T, shared by the forward epilogue and the reverse.
++    Kokkos::View<Precision***,Kokkos::LayoutRight> polar_uvu_z_cache,
++        polar_uvu_z_cache_storage;                                  // (P,N,512)
++    Kokkos::View<Precision***,Kokkos::LayoutRight> polar_uvu_x2_pack,
++        polar_uvu_x2_pack_storage;                                  // (4,N,512)
++    Kokkos::View<Precision**,Kokkos::LayoutRight> polar_uvu_p,
++        polar_uvu_p_storage,polar_uvu_dx2,polar_uvu_dx2_storage;    // (N,512)
++    bool polar_uvu_z_cache_valid=false;
++    int polar_uvu_dot_planes=0,polar_uvu_tp_planes=0,
++        polar_uvu_le_q_planes=0,polar_uvu_le_v_planes=0,
++        polar_uvu_scf_planes=0;
+     // 重放前向值(不触碰⑤导出视图):
+     Kokkos::View<Precision**,Kokkos::LayoutRight> polar_rev_step_potential,
+         polar_rev_step_potential_storage,                                // (N,16)
+@@ -704,6 +717,34 @@ public:
+         double total_charge,double total_spin);
+     // [v2 适配] 模块⑥⑦ 扩展表解析(定义于独立 TU mace_polar_impl.tpp; ctor 于 polar 解析块收尾调用)。
+     void parse_polar_extension_tables();
++    // N1: grouped FP64 path-GEMM for the polar UVU (defined in mace_polar_impl.tpp).
++    static bool polar_uvu_gemm_supported(const std::vector<int>& meta);
++    static int polar_uvu_plane_count(const std::vector<int>& meta);
++    void polar_uvu_gemm_compute_z(int num_nodes,
++        const std::vector<int>& meta,
++        Kokkos::View<Precision*> weight_view,
++        Kokkos::View<const Precision**,Kokkos::LayoutRight> x2,
++        int plane_base);
++    void polar_uvu_gemm_forward(int num_nodes,
++        const std::vector<int>& meta,
++        const std::vector<Precision>& path_weight,
++        Kokkos::View<Precision*> weight_view,
++        Kokkos::View<Precision*> mask_view,
++        Kokkos::View<const Precision**,Kokkos::LayoutRight> x1,
++        Kokkos::View<const Precision**,Kokkos::LayoutRight> x2,
++        Kokkos::View<Precision**,Kokkos::LayoutRight> output,
++        int plane_base);
++    void polar_uvu_gemm_reverse(int num_nodes,
++        const std::vector<int>& meta,
++        const std::vector<Precision>& path_weight,
++        Kokkos::View<Precision*> weight_view,
++        Kokkos::View<Precision*> mask_view,
++        Kokkos::View<const Precision**,Kokkos::LayoutRight> x1,
++        Kokkos::View<const Precision**,Kokkos::LayoutRight> x2,
++        Kokkos::View<const Precision**,Kokkos::LayoutRight> out_adj,
++        Kokkos::View<Precision**,Kokkos::LayoutRight> x1_adj,
++        Kokkos::View<Precision**,Kokkos::LayoutRight> x2_adj,
++        int plane_base,bool z_valid);
+ 
+ private:
+     struct SphericalHarmonicsState;
+diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
+index 5a4074f..0c4ac8a 100644
+--- a/libsymmetrix/source/mace_polar_impl.tpp
++++ b/libsymmetrix/source/mace_polar_impl.tpp
+@@ -6,8 +6,10 @@
+ 
+ #include "mace_nonlinear_kokkos.hpp"
+ #include "tools_kokkos.hpp"
++#include "KokkosBlas.hpp"
+ 
+ #include <cstdlib>  // [dbg] std::getenv/atoi(POLAR_DBG_SKIP 通道隔离)
++#include <type_traits>
+ 
+ namespace {
+ 
+@@ -95,6 +97,25 @@ inline bool polar_replay_cache_enabled()
+     return value!=nullptr&&std::atoi(value)!=0;
+ }
+ 
++// N1: grouped FP64 path-GEMM UVU.  MATOS_POLAR_UVU_GEMM=0 keeps the legacy
++// per-node/per-path kernels for A/B and rollback.  Default is on.
++inline bool polar_uvu_gemm_enabled()
++{
++    const char* value=std::getenv("MATOS_POLAR_UVU_GEMM");
++    return value==nullptr||std::atoi(value)!=0;
++}
++
++// The checkpoint UVU tables are dense 512x512 path matrices.  Anything else
++// keeps the legacy kernels (correctness fallback, not a tuning path).
++constexpr int kPolarUvuGemmWidth=512;
++constexpr int kPolarUvuGemmMaxPaths=8;
++
++// POD epilogue plan (captured by value into the device lambda).
++struct PolarUvuGemmPath {
++    int in1_off,in2_off,out_off,z_base,mul1,mul2,mode,d1;
++    double pw,inv_sqrt;
++};
++
+ // UVU team tiling.  The uvu inner products stream one node's x1/x2 vector row
+ // per (node,u) or (node,v) thread; when tile_m divides a warp exactly, a warp
+ // owns one node row and the row load becomes a warp-wide broadcast instead of
+@@ -255,6 +276,14 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+ {
+     symmetrix_polar_profile_mark("pipeline:enter");
+     polar_rev_cache_valid=false;   // Plan B1: invalidate any previous-eval cache
++    // N1 grouped GEMM switch: the Z cache is valid only if every UVU table of
++    // this evaluation took the GEMM path.
++    const bool uvu_gemm_on_all=polar_uvu_gemm_enabled()
++        &&std::is_same_v<Precision,double>;
++    polar_uvu_z_cache_valid=false;
++    polar_uvu_dot_planes=0;polar_uvu_tp_planes=0;
++    polar_uvu_le_q_planes=0;polar_uvu_le_v_planes=0;
++    polar_uvu_scf_planes=0;
+     const int owned_nodes=polar_owned_node_count(num_nodes);
+     // 工作密度: ②/⑤ 在其上改写; ① 的原始累积(polar_spin_charge_density)
+     // 保持只读(修复 ① 门语义漂移: 该视图此前被 ②/⑤ 原地改写)。
+@@ -915,6 +944,32 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+                 auto dot_mask=update.uvu_dot_mask;
+                 auto tp_weight=update.uvu_tp_weight;
+                 auto tp_mask=update.uvu_tp_mask;
++                // N1: grouped FP64 GEMM path.  The first step fixes the per-table
++                // plane counts; every later step must match them exactly.
++                const bool uvu_gemm_on=polar_uvu_gemm_enabled()
++                    &&std::is_same_v<Precision,double>;
++                if(uvu_gemm_on&&step==0) {
++                    polar_uvu_dot_planes=polar_uvu_plane_count(dot_meta);
++                    polar_uvu_tp_planes=polar_uvu_plane_count(tp_meta);
++                    polar_uvu_scf_planes=polar_uvu_dot_planes
++                        +polar_uvu_tp_planes;
++                    polar_uvu_z_cache_valid=
++                        polar_uvu_gemm_supported(dot_meta)
++                        &&polar_uvu_gemm_supported(tp_meta);
++                    if(polar_uvu_z_cache_valid)
++                        ensure_view(polar_uvu_z_cache,
++                            polar_uvu_z_cache_storage,
++                            polar_recursion_steps*polar_uvu_scf_planes+8,
++                            num_nodes,kPolarUvuGemmWidth);
++                }
++                const bool uvu_gemm_step_ok=uvu_gemm_on
++                    &&polar_uvu_gemm_supported(dot_meta)
++                    &&polar_uvu_gemm_supported(tp_meta)
++                    &&polar_uvu_plane_count(dot_meta)==polar_uvu_dot_planes
++                    &&polar_uvu_plane_count(tp_meta)==polar_uvu_tp_planes
++                    &&static_cast<int>(polar_uvu_z_cache.extent(0))
++                        >=polar_recursion_steps*polar_uvu_scf_planes+8
++                    &&static_cast<int>(polar_uvu_z_cache.extent(1))==num_nodes;
+                 const auto launch_uvu=[&](const std::vector<int>& meta,
+                         const std::vector<Precision>& path_weight,
+                         Kokkos::View<Precision*> weight_view,
+@@ -1264,8 +1319,16 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+                         pe_view(node,column)+=scratch_a(node,column)
+                             +scratch_b(node,column);
+                     });
+-                launch_uvu(dot_meta,dot_path_weight,dot_weight,dot_mask,
+-                    features_mixed_view,pe_view,dp_view);
++                if(uvu_gemm_step_ok)
++                    polar_uvu_gemm_forward(num_nodes,dot_meta,
++                        dot_path_weight,dot_weight,dot_mask,
++                        features_mixed_view,pe_view,dp_view,
++                        step*polar_uvu_scf_planes);
++                else {
++                    launch_uvu(dot_meta,dot_path_weight,dot_weight,dot_mask,
++                        features_mixed_view,pe_view,dp_view);
++                    polar_uvu_z_cache_valid=false;
++                }
+                 update.source_embedding.evaluate(attrs_view,se_view);
+                 Kokkos::parallel_for("polar nl concat",
+                     Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
+@@ -1418,8 +1481,17 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+                             nl_out_view(node,o)=acc;
+                         });
+                 }
+-                launch_uvu(tp_meta,tp_path_weight,tp_weight,tp_mask,
+-                    features_mixed_view,nl_out_view,tp_view);
++                if(uvu_gemm_step_ok)
++                    polar_uvu_gemm_forward(num_nodes,tp_meta,
++                        tp_path_weight,tp_weight,tp_mask,
++                        features_mixed_view,nl_out_view,tp_view,
++                        step*polar_uvu_scf_planes
++                            +polar_uvu_dot_planes);
++                else {
++                    launch_uvu(tp_meta,tp_path_weight,tp_weight,tp_mask,
++                        features_mixed_view,nl_out_view,tp_view);
++                    polar_uvu_z_cache_valid=false;
++                }
+                 // 读出: linear_1 → Gate → linear_mid → Gate → linear_2
+                 update.readout_linear_1.evaluate(tp_view,ro1_view);
+                 const Precision gate_scalar_cst=update.gate_scalar_cst;
+@@ -1891,12 +1963,36 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+                 const std::vector<Precision> le_v_path_weight=
+                     le_to_host_vector(polar_le_v_path_weight);
+                 auto node_feats=polar_node_feats_e3nn;
+-                launch_le_uvu(num_nodes,le_q_meta,le_q_path_weight,
+-                    polar_le_q_weight,polar_le_q_mask,node_feats,
+-                    polar_le_q_up,polar_le_dot_q);
+-                launch_le_uvu(num_nodes,le_v_meta,le_v_path_weight,
+-                    polar_le_v_weight,polar_le_v_mask,node_feats,
+-                    polar_le_v_up,polar_le_dot_v);
++                polar_uvu_le_q_planes=polar_uvu_plane_count(le_q_meta);
++                polar_uvu_le_v_planes=polar_uvu_plane_count(le_v_meta);
++                const int le_base=polar_recursion_steps
++                    *polar_uvu_scf_planes;
++                const bool le_gemm_ok=uvu_gemm_on_all
++                    &&polar_uvu_z_cache_valid
++                    &&polar_uvu_gemm_supported(le_q_meta)
++                    &&polar_uvu_gemm_supported(le_v_meta)
++                    &&static_cast<int>(polar_uvu_z_cache.extent(0))
++                        >=le_base+polar_uvu_le_q_planes
++                            +polar_uvu_le_v_planes
++                    &&static_cast<int>(polar_uvu_z_cache.extent(1))==num_nodes;
++                if(le_gemm_ok) {
++                    polar_uvu_gemm_forward(num_nodes,le_q_meta,
++                        le_q_path_weight,polar_le_q_weight,
++                        polar_le_q_mask,node_feats,polar_le_q_up,
++                        polar_le_dot_q,le_base);
++                    polar_uvu_gemm_forward(num_nodes,le_v_meta,
++                        le_v_path_weight,polar_le_v_weight,
++                        polar_le_v_mask,node_feats,polar_le_v_up,
++                        polar_le_dot_v,le_base+polar_uvu_le_q_planes);
++                } else {
++                    launch_le_uvu(num_nodes,le_q_meta,le_q_path_weight,
++                        polar_le_q_weight,polar_le_q_mask,node_feats,
++                        polar_le_q_up,polar_le_dot_q);
++                    launch_le_uvu(num_nodes,le_v_meta,le_v_path_weight,
++                        polar_le_v_weight,polar_le_v_mask,node_feats,
++                        polar_le_v_up,polar_le_dot_v);
++                    polar_uvu_z_cache_valid=false;
++                }
+             }
+             {
+                 auto invar=polar_le_invar,dot_q=polar_le_dot_q,dot_v=polar_le_dot_v;
+@@ -2122,6 +2218,296 @@ void MaceNonlinearKokkosT<Precision>::parse_polar_extension_tables()
+     } else polar_le_enabled=false;
+ }
+ 
++// =====================================================================================
++// N1: grouped FP64 path-GEMM UVU (docs/results/POLAR_UVU_GEMM_MICROBENCH.md).
++//
++// Forward:  Z_p[n,u] = sum_v X2_p[n,v] W_p[u,v]   (KokkosBlas DGEMM, "N","T")
++//           out[n,c] = mask[c] * sum_p pw_p*inv_sqrt(d1_p) * X1_p[n,..] . Z_p
++// Reverse:  dX1 uses the saved forward Z elementwise; dX2 is P @ W_p per path,
++//           with P = mixed_bar * X1 (mode0) or mixed_bar (mode1).  No atomics,
++//           path order ascending, one mask multiply, deterministic FP64.
++// All path tables of this checkpoint are dense 512x512; unsupported tables
++// fall back to the legacy kernels.
++// =====================================================================================
++template<typename Precision>
++bool MaceNonlinearKokkosT<Precision>::polar_uvu_gemm_supported(
++    const std::vector<int>& meta)
++{
++    const int paths=static_cast<int>(meta.size())/8;
++    if(paths<=0||paths>kPolarUvuGemmMaxPaths) return false;
++    int planes=0;
++    for(int p=0;p<paths;++p) {
++        const int mul1=meta[p*8+4],mul2=meta[p*8+5],
++            mode=meta[p*8+6],d1=meta[p*8+7];
++        if(mul1!=kPolarUvuGemmWidth||mul2!=kPolarUvuGemmWidth)
++            return false;
++        if(mode!=0&&mode!=1) return false;
++        if(d1!=1&&d1!=3) return false;
++        planes+=(mode==0)?d1:1;
++    }
++    return planes<=4;
++}
++
++template<typename Precision>
++int MaceNonlinearKokkosT<Precision>::polar_uvu_plane_count(
++    const std::vector<int>& meta)
++{
++    const int paths=static_cast<int>(meta.size())/8;
++    int planes=0;
++    for(int p=0;p<paths;++p)
++        planes+=(meta[p*8+6]==0)?meta[p*8+7]:1;
++    return planes;
++}
++
++template<typename Precision>
++void MaceNonlinearKokkosT<Precision>::polar_uvu_gemm_compute_z(
++    const int num_nodes,const std::vector<int>& meta,
++    Kokkos::View<Precision*> weight_view,
++    Kokkos::View<const Precision**,Kokkos::LayoutRight> x2,
++    const int plane_base)
++{
++    if constexpr(!std::is_same_v<Precision,double>) {
++        (void)num_nodes;(void)meta;(void)weight_view;(void)x2;(void)plane_base;
++        throw std::runtime_error("polar uvu gemm requires FP64.");
++    } else {
++        const int paths=static_cast<int>(meta.size())/8;
++        const int planes=polar_uvu_plane_count(meta);
++        if(static_cast<int>(polar_uvu_z_cache.extent(0))<plane_base+planes
++            ||static_cast<int>(polar_uvu_z_cache.extent(1))!=num_nodes
++            ||static_cast<int>(polar_uvu_z_cache.extent(2))<kPolarUvuGemmWidth)
++            throw std::runtime_error(
++                "polar uvu gemm: Z cache is not sized for this table.");
++        ensure_view(polar_uvu_x2_pack,polar_uvu_x2_pack_storage,4,
++            num_nodes,kPolarUvuGemmWidth);
++        auto pack=polar_uvu_x2_pack;
++        auto zcache=polar_uvu_z_cache;
++        // Pack the X2 operand planes.  d1=1 planes are contiguous slices of
++        // x2; d1=3 planes have stride 3 in the node-major [N,2048] tensor and
++        // must be materialised for BLAS.
++        int pack_offset=0;
++        for(int p=0;p<paths;++p) {
++            const int in2_off=meta[p*8+1],mode=meta[p*8+6],
++                d1=meta[p*8+7];
++            const int planes=(mode==0)?d1:1;
++            const int stride=(mode==0)?d1:1;
++            for(int c=0;c<planes;++c) {
++                const int dst=pack_offset+c;
++                const int src_offset=in2_off+((mode==0)?c:0);
++                Kokkos::parallel_for("polar uvu gemm pack",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                        {num_nodes,kPolarUvuGemmWidth}),
++                    KOKKOS_LAMBDA(int node,int v) {
++                        pack(dst,node,v)=x2(node,src_offset+v*stride);
++                    });
++            }
++            pack_offset+=planes;
++        }
++        // Z = X2_plane @ W^T (node-major [N,512] result).
++        int z_offset=plane_base;
++        pack_offset=0;
++        for(int p=0;p<paths;++p) {
++            const int w_off=meta[p*8+3],mul1=meta[p*8+4],
++                mul2=meta[p*8+5],mode=meta[p*8+6],d1=meta[p*8+7];
++            const int planes=(mode==0)?d1:1;
++            Kokkos::View<const Precision**,Kokkos::LayoutRight,
++                Kokkos::MemoryTraits<Kokkos::Unmanaged>> W(
++                    weight_view.data()+w_off,mul1,mul2);
++            for(int c=0;c<planes;++c) {
++                auto xp=Kokkos::subview(pack,pack_offset+c,
++                    Kokkos::ALL,Kokkos::ALL);
++                auto zp=Kokkos::subview(zcache,z_offset+c,
++                    Kokkos::ALL,Kokkos::ALL);
++                KokkosBlas::gemm("N","T",Precision(1),xp,W,
++                    Precision(0),zp);
++            }
++            pack_offset+=planes;
++            z_offset+=planes;
++        }
++    }
++}
++
++template<typename Precision>
++void MaceNonlinearKokkosT<Precision>::polar_uvu_gemm_forward(
++    const int num_nodes,const std::vector<int>& meta,
++    const std::vector<Precision>& path_weight,
++    Kokkos::View<Precision*> weight_view,
++    Kokkos::View<Precision*> mask_view,
++    Kokkos::View<const Precision**,Kokkos::LayoutRight> x1,
++    Kokkos::View<const Precision**,Kokkos::LayoutRight> x2,
++    Kokkos::View<Precision**,Kokkos::LayoutRight> output,
++    const int plane_base)
++{
++    if constexpr(!std::is_same_v<Precision,double>) {
++        (void)num_nodes;(void)meta;(void)path_weight;(void)weight_view;
++        (void)mask_view;(void)x1;(void)x2;(void)output;(void)plane_base;
++        throw std::runtime_error("polar uvu gemm requires FP64.");
++    } else {
++        const int paths=static_cast<int>(meta.size())/8;
++        polar_uvu_gemm_compute_z(num_nodes,meta,weight_view,x2,plane_base);
++        PolarUvuGemmPath plan[kPolarUvuGemmMaxPaths];
++        int z_offset=plane_base;
++        for(int p=0;p<paths;++p) {
++            const int mode=meta[p*8+6],d1=meta[p*8+7];
++            plan[p].in1_off=meta[p*8+0];
++            plan[p].in2_off=meta[p*8+1];
++            plan[p].out_off=meta[p*8+2];
++            plan[p].z_base=z_offset;
++            plan[p].mul1=meta[p*8+4];
++            plan[p].mul2=meta[p*8+5];
++            plan[p].mode=mode;
++            plan[p].d1=d1;
++            plan[p].pw=static_cast<double>(path_weight[p]);
++            plan[p].inv_sqrt=1.0/std::sqrt(static_cast<double>(d1));
++            z_offset+=(mode==0)?d1:1;
++        }
++        auto zcache=polar_uvu_z_cache;
++        auto mask=mask_view;
++        const int width=static_cast<int>(output.extent(1));
++        Kokkos::parallel_for("polar uvu gemm epilogue",
++            Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},{num_nodes,width}),
++            KOKKOS_LAMBDA(int node,int column) {
++                Precision acc=Precision(0);
++                for(int p=0;p<paths;++p) {
++                    const PolarUvuGemmPath path=plan[p];
++                    if(path.mode==0) {
++                        if(column<path.out_off
++                            ||column>=path.out_off+path.mul1)
++                            continue;
++                        const int u=column-path.out_off;
++                        Precision mixed=Precision(0);
++                        for(int c=0;c<path.d1;++c)
++                            mixed+=x1(node,path.in1_off+u*path.d1+c)
++                                *zcache(path.z_base+c,node,u);
++                        acc+=path.pw*path.inv_sqrt*mixed;
++                    } else {
++                        const int rel=column-path.out_off;
++                        if(rel<0||rel>=path.mul1*path.d1) continue;
++                        const int u=rel/path.d1,c=rel%path.d1;
++                        acc+=path.pw*path.inv_sqrt
++                            *zcache(path.z_base,node,u)
++                            *x1(node,path.in1_off+u*path.d1+c);
++                    }
++                }
++                output(node,column)=acc*mask(column);
++            });
++    }
++}
++
++template<typename Precision>
++void MaceNonlinearKokkosT<Precision>::polar_uvu_gemm_reverse(
++    const int num_nodes,const std::vector<int>& meta,
++    const std::vector<Precision>& path_weight,
++    Kokkos::View<Precision*> weight_view,
++    Kokkos::View<Precision*> mask_view,
++    Kokkos::View<const Precision**,Kokkos::LayoutRight> x1,
++    Kokkos::View<const Precision**,Kokkos::LayoutRight> x2,
++    Kokkos::View<const Precision**,Kokkos::LayoutRight> out_adj,
++    Kokkos::View<Precision**,Kokkos::LayoutRight> x1_adj,
++    Kokkos::View<Precision**,Kokkos::LayoutRight> x2_adj,
++    const int plane_base,const bool z_valid)
++{
++    if constexpr(!std::is_same_v<Precision,double>) {
++        (void)num_nodes;(void)meta;(void)path_weight;(void)weight_view;
++        (void)mask_view;(void)x1;(void)x2;(void)out_adj;(void)x1_adj;
++        (void)x2_adj;(void)plane_base;(void)z_valid;
++        throw std::runtime_error("polar uvu gemm requires FP64.");
++    } else {
++        const int paths=static_cast<int>(meta.size())/8;
++        if(!z_valid)
++            polar_uvu_gemm_compute_z(num_nodes,meta,weight_view,x2,plane_base);
++        ensure_view(polar_rev_uvu_mixed_bar,
++            polar_rev_uvu_mixed_bar_storage,num_nodes,kPolarUvuGemmWidth);
++        ensure_view(polar_uvu_p,polar_uvu_p_storage,
++            num_nodes,kPolarUvuGemmWidth);
++        ensure_view(polar_uvu_dx2,polar_uvu_dx2_storage,
++            num_nodes,kPolarUvuGemmWidth);
++        auto mixed_bar=polar_rev_uvu_mixed_bar;
++        auto pview=polar_uvu_p;
++        auto dx2=polar_uvu_dx2;
++        auto zcache=polar_uvu_z_cache;
++        auto mask=mask_view;
++        int z_offset=plane_base;
++        for(int p=0;p<paths;++p) {
++            const int in1_off=meta[p*8+0],in2_off=meta[p*8+1],
++                out_off=meta[p*8+2],w_off=meta[p*8+3],
++                mul1=meta[p*8+4],mul2=meta[p*8+5],
++                mode=meta[p*8+6],d1=meta[p*8+7];
++            const Precision pw=path_weight[p];
++            const Precision inv=Precision(1)
++                /Kokkos::sqrt(Precision(d1));
++            const int planes=(mode==0)?d1:1;
++            Kokkos::View<const Precision**,Kokkos::LayoutRight,
++                Kokkos::MemoryTraits<Kokkos::Unmanaged>> W(
++                    weight_view.data()+w_off,mul1,mul2);
++            if(mode==0) {
++                Kokkos::parallel_for("polar uvu gemm rev mixed",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                        {num_nodes,mul1}),
++                    KOKKOS_LAMBDA(int node,int u) {
++                        mixed_bar(node,u)=pw
++                            *out_adj(node,out_off+u)
++                            *mask(out_off+u);
++                    });
++                for(int c=0;c<planes;++c) {
++                    Kokkos::parallel_for("polar uvu gemm rev dx1",
++                        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                            {num_nodes,mul1}),
++                        KOKKOS_LAMBDA(int node,int u) {
++                            x1_adj(node,in1_off+u*d1+c)+=mixed_bar(node,u)
++                                *inv*zcache(z_offset+c,node,u);
++                        });
++                    Kokkos::parallel_for("polar uvu gemm rev p",
++                        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                            {num_nodes,mul1}),
++                        KOKKOS_LAMBDA(int node,int u) {
++                            pview(node,u)=mixed_bar(node,u)*inv
++                                *x1(node,in1_off+u*d1+c);
++                        });
++                    KokkosBlas::gemm("N","N",Precision(1),pview,W,
++                        Precision(0),dx2);
++                    Kokkos::parallel_for("polar uvu gemm rev dx2",
++                        Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                            {num_nodes,mul2}),
++                        KOKKOS_LAMBDA(int node,int v) {
++                            x2_adj(node,in2_off+v*d1+c)+=dx2(node,v);
++                        });
++                }
++            } else {
++                Kokkos::parallel_for("polar uvu gemm rev mode1",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                        {num_nodes,mul1}),
++                    KOKKOS_LAMBDA(int node,int u) {
++                        const Precision mixed=zcache(z_offset,node,u);
++                        Precision mb=Precision(0);
++                        for(int c=0;c<d1;++c) {
++                            const int i1=in1_off+u*d1+c;
++                            const Precision o=out_adj(node,out_off+u*d1+c)
++                                *mask(out_off+u*d1+c);
++                            x1_adj(node,i1)+=pw*inv*mixed*o;
++                            mb+=x1(node,i1)*o;
++                        }
++                        mixed_bar(node,u)=mb;
++                    });
++                Kokkos::parallel_for("polar uvu gemm rev p",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                        {num_nodes,mul1}),
++                    KOKKOS_LAMBDA(int node,int u) {
++                        pview(node,u)=pw*inv*mixed_bar(node,u);
++                    });
++                KokkosBlas::gemm("N","N",Precision(1),pview,W,
++                    Precision(0),dx2);
++                Kokkos::parallel_for("polar uvu gemm rev dx2",
++                    Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0,0},
++                        {num_nodes,mul2}),
++                    KOKKOS_LAMBDA(int node,int v) {
++                        x2_adj(node,in2_off+v)+=dx2(node,v);
++                    });
++            }
++            z_offset+=planes;
++        }
++    }
++}
++
+ // [v3 适配] 本块按适配规则 1 整体迁入 polar TU(mace_polar_impl.tpp; 显式实例化之前)。
+ // 相对 module8_patch_final.md §4.2 原文的偏离(全表见 docs/merge_adapt_8.md §2):
+ //   D-04 d_in 步链: polar_scf_step_densities_post → 既有 polar_scf_step_densities(校后口径同值);
+@@ -2140,6 +2526,10 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+     const int num_nodes)
+ {
+     if(!polar_enabled) return;
++    // N1 grouped GEMM switch.  The forward sets polar_uvu_z_cache_valid and
++    // the plane layout; a stale/mismatched cache falls back per table.
++    const bool uvu_gemm_on=polar_uvu_gemm_enabled()
++        &&std::is_same_v<Precision,double>;
+     const int owned_nodes=polar_owned_node_count(num_nodes);
+     constexpr double two_pi=6.283185307179586476925286766559;
+     constexpr double two_pi_cubed=two_pi*two_pi*two_pi;
+@@ -3685,12 +4075,33 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+             const auto le_nf_source=polar_node_feats_e3nn;
+             const auto le_q_up_view=polar_le_q_up;
+             const auto le_v_up_view=polar_le_v_up;
+-            uvu_reverse(le_q_meta,le_q_pw,polar_le_q_weight,
+-                polar_le_q_mask,le_nf_source,le_q_up_view,
+-                le_dot_q_bar,le_nf_bar,le_q_up_bar);
+-            uvu_reverse(le_v_meta,le_v_pw,polar_le_v_weight,
+-                polar_le_v_mask,le_nf_source,le_v_up_view,
+-                le_dot_v_bar,le_nf_bar,le_v_up_bar);
++            const int le_base=polar_recursion_steps
++                *polar_uvu_scf_planes;
++            const bool le_gemm_ok=uvu_gemm_on
++                &&polar_uvu_z_cache_valid
++                &&polar_uvu_gemm_supported(le_q_meta)
++                &&polar_uvu_gemm_supported(le_v_meta)
++                &&static_cast<int>(polar_uvu_z_cache.extent(0))
++                    >=le_base+polar_uvu_le_q_planes
++                        +polar_uvu_le_v_planes
++                &&static_cast<int>(polar_uvu_z_cache.extent(1))==num_nodes;
++            if(le_gemm_ok) {
++                polar_uvu_gemm_reverse(num_nodes,le_q_meta,le_q_pw,
++                    polar_le_q_weight,polar_le_q_mask,le_nf_source,
++                    le_q_up_view,le_dot_q_bar,le_nf_bar,le_q_up_bar,
++                    le_base,true);
++                polar_uvu_gemm_reverse(num_nodes,le_v_meta,le_v_pw,
++                    polar_le_v_weight,polar_le_v_mask,le_nf_source,
++                    le_v_up_view,le_dot_v_bar,le_nf_bar,le_v_up_bar,
++                    le_base+polar_uvu_le_q_planes,true);
++            } else {
++                uvu_reverse(le_q_meta,le_q_pw,polar_le_q_weight,
++                    polar_le_q_mask,le_nf_source,le_q_up_view,
++                    le_dot_q_bar,le_nf_bar,le_q_up_bar);
++                uvu_reverse(le_v_meta,le_v_pw,polar_le_v_weight,
++                    polar_le_v_mask,le_nf_source,le_v_up_view,
++                    le_dot_v_bar,le_nf_bar,le_v_up_bar);
++            }
+         }
+         symmetrix_polar_profile_mark("rev1.5b:uvu-reverse");
+         // (4) Lin_q/Lin_v 反向(仿射;权重内建)。
+@@ -4029,10 +4440,27 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+             const std::vector<Precision> tp_pw=
+                 to_host_vector(update.uvu_tp_path_weight);
+             ordered_kokkos_deep_copy(polar_rev_nlout_adjoint,Precision(0));
+-            uvu_reverse(tp_meta,tp_pw,update.uvu_tp_weight,
+-                update.uvu_tp_mask,polar_features_mixed,polar_rev_nl_out,
+-                polar_rev_tp_adjoint,polar_rev_fmix_adjoint,
+-                polar_rev_nlout_adjoint);
++            const int step_base=step*polar_uvu_scf_planes;
++            const bool tp_gemm=uvu_gemm_on
++                &&polar_uvu_gemm_supported(tp_meta)
++                &&polar_uvu_plane_count(tp_meta)==polar_uvu_tp_planes
++                &&static_cast<int>(polar_uvu_z_cache.extent(0))
++                    >=step_base+polar_uvu_dot_planes
++                        +polar_uvu_tp_planes
++                &&static_cast<int>(polar_uvu_z_cache.extent(1))==num_nodes;
++            if(tp_gemm)
++                polar_uvu_gemm_reverse(num_nodes,tp_meta,tp_pw,
++                    update.uvu_tp_weight,update.uvu_tp_mask,
++                    polar_features_mixed,polar_rev_nl_out,
++                    polar_rev_tp_adjoint,polar_rev_fmix_adjoint,
++                    polar_rev_nlout_adjoint,
++                    step_base+polar_uvu_dot_planes,
++                    polar_uvu_z_cache_valid);
++            else
++                uvu_reverse(tp_meta,tp_pw,update.uvu_tp_weight,
++                    update.uvu_tp_mask,polar_features_mixed,polar_rev_nl_out,
++                    polar_rev_tp_adjoint,polar_rev_fmix_adjoint,
++                    polar_rev_nlout_adjoint);
+         }
+         symmetrix_polar_profile_mark("rev5c:uvu-tp");
+         { // (ii) MLP 反向滚动: a 伴缓冲=nl_adjoint,h 伴缓冲=h_adjoint
+@@ -4131,10 +4559,24 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+             const std::vector<Precision> dot_pw=
+                 to_host_vector(update.uvu_dot_path_weight);
+             ordered_kokkos_deep_copy(polar_rev_pe_adjoint,Precision(0));
+-            uvu_reverse(dot_meta,dot_pw,update.uvu_dot_weight,
+-                update.uvu_dot_mask,polar_features_mixed,polar_rev_pe,
+-                polar_rev_dp_adjoint,polar_rev_fmix_adjoint,
+-                polar_rev_pe_adjoint);
++            const bool dot_gemm=uvu_gemm_on
++                &&polar_uvu_gemm_supported(dot_meta)
++                &&polar_uvu_plane_count(dot_meta)==polar_uvu_dot_planes
++                &&static_cast<int>(polar_uvu_z_cache.extent(0))
++                    >=step*polar_uvu_scf_planes+polar_uvu_dot_planes
++                &&static_cast<int>(polar_uvu_z_cache.extent(1))==num_nodes;
++            if(dot_gemm)
++                polar_uvu_gemm_reverse(num_nodes,dot_meta,dot_pw,
++                    update.uvu_dot_weight,update.uvu_dot_mask,
++                    polar_features_mixed,polar_rev_pe,
++                    polar_rev_dp_adjoint,polar_rev_fmix_adjoint,
++                    polar_rev_pe_adjoint,step*polar_uvu_scf_planes,
++                    polar_uvu_z_cache_valid);
++            else
++                uvu_reverse(dot_meta,dot_pw,update.uvu_dot_weight,
++                    update.uvu_dot_mask,polar_features_mixed,polar_rev_pe,
++                    polar_rev_dp_adjoint,polar_rev_fmix_adjoint,
++                    polar_rev_pe_adjoint);
+         }
+         { // (v) 势嵌入反: pe伴 → P̄ / fmix̄(累加) / d̄_ce(累加)
+             update.potential_linear.reverse(polar_rev_pe_adjoint,
+-- 
+2.34.1
+

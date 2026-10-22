@@ -1,0 +1,71 @@
+{
+  "date": "2026-10-22",
+  "queue": "queue004",
+  "queue_class": "q4",
+  "flavor": "ml.pni2.3xlarge",
+  "image": "cr-mlp-cn-beijing.cr.volces.com/public/matos-compute-runtime:20260606-vasp-ubuntu2404",
+  "tasks": {
+    "bare_gpu_probe": {
+      "taskId": "t-20261022130617-rpd2t",
+      "phase": "finished",
+      "status": "Success",
+      "storage": "none",
+      "gpu": "NVIDIA A100-SXM4-80GB",
+      "note": "echo + nvidia-smi only; proves queue004 CreateCustomTask and A100 allocation without cloud storage"
+    },
+    "bare_inline_microbench": {
+      "taskId": "t-20261022131227-gxsp4",
+      "phase": "finished",
+      "status": "Success",
+      "storage": "none",
+      "gpu": "NVIDIA A100-SXM4-80GB",
+      "python3": "not found",
+      "note": "bare VASP runtime image has no system python3; torch/GEMM could not run without the shared toolchain mount"
+    },
+    "toolchain_microbench": {
+      "taskId": "t-20261022131550-rrzgp",
+      "phase": "finished",
+      "status": "Success",
+      "elapsed_s": 58,
+      "storage": "vepfs-cnbj2c98dea54433, SubPath c20250207/lvdingyang, MountPath /vepfs-mlp2/c20250207/lvdingyang",
+      "gpu": "NVIDIA A100-SXM4-80GB",
+      "gpu_memory_gib": 79.3,
+      "sm_count": 108,
+      "compute_capability": "8.0",
+      "python": "3.11.15",
+      "torch": "2.5.1+cu121",
+      "cuda_available": true,
+      "environments_tested": ["matos-compute", "matos-mlip-py311"],
+      "gemm": {
+        "size": 2048,
+        "iters": 20,
+        "fp64_ms": 1.1653,
+        "fp64_tflops": 14.742,
+        "fp32_ms": 1.1835,
+        "fp32_tflops": 14.516,
+        "fp64_over_fp32_speed_ratio": 0.9846,
+        "peak_vram_gib": 0.13
+      },
+      "secondary_env_check": {
+        "env": "matos-mlip-py311",
+        "fp64_ms": 1.1645,
+        "fp64_tflops": 14.753,
+        "fp32_ms": 1.1820,
+        "fp32_tflops": 14.534
+      }
+    }
+  },
+  "a100_sxm_reference_peaks_tflops": {
+    "fp64_tensor_core": 19.5,
+    "fp64_cuda_core": 9.7,
+    "fp32_cuda_core": 19.5,
+    "tf32_tensor_core": 156,
+    "bf16_tensor_core": 312
+  },
+  "provenance": {
+    "task_ids": ["t-20261022130617-rpd2t", "t-20261022131227-gxsp4", "t-20261022131550-rrzgp"],
+    "yaml_path": "/workspace/group/shared/bza/symmetrix-polar/bench/q4_toolchain_probe_2026-10-22/attempt-01/q4_toolchain_microbench_config.yaml",
+    "log_source": "volc_vemlp_logs stdout&stderr",
+    "successful_prior_recipe": "t-20261019191724-4zbd7, queue004 1-GPU polar-mpi-scaling-probe, vePfs vepfs-cnbj2c98dea54433"
+  }
+}

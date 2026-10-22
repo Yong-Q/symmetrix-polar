@@ -6,8 +6,9 @@
 [Markdown](docs/tutorial/SYMMETRIX_POLAR_TUTORIAL_2026-10-21.md)。
 从模型概念、数学公式、GPU 执行到历史测试逐步讲解，性能统一为 µs/atom/step。
 数值以具体测试版本、统计规则及其来源为准。教程正文是 2026-10-21 08:57 的快照
-（128 原子 30.56 ms、1,296 原子 224.1 µs/atom）；其后 **Plan B-micro 30.33 ms**
-与 **A1 UVU tile 205.4 µs/atom** 的最新门控结果见下方。
+（128 原子 30.56 ms、1,296 原子 224.1 µs/atom）；其后 **Plan B-micro 30.33 ms**、
+**A1 UVU tile 205.4 µs/atom** 与 **N1 grouped GEMM 146.1 µs/atom** 的最新门控
+结果见下方。
 
 **GPU-accelerated PolarMACE with long-range electrostatics — PolarMACE (MACE-POLAR)
 support for the [Symmetrix-XL](https://github.com/) engine, with a full Ewald
@@ -30,13 +31,34 @@ The intermediate 30.56/31.33/38.66/40.95 ms figures remain historical; the
 round-3 report (48.74 ms) is the pre-Plan-B baseline:
 [docs/results/KERNEL_ROUND3_FINAL.md](docs/results/KERNEL_ROUND3_FINAL.md).
 
-**Reference target normalized to 1,296 atoms: 4.5 µs/atom → 5.832 ms/eval.**
-The latest measured 1,296-atom polar result is **205.4 µs/atom
-(266.21 ms/eval) with the A1 UVU tile on `main`, all gates PASS**; that is
-**45.7× above target**. The same-box linear FP32 path is 9.69 µs/atom
-(2.15× above). A1 measured 290.20 → 266.21 ms/eval (**−8.26%**) at 1,296
-atoms; the patch is `patches/uvu_tile_32x32.patch` (actual default tile
-32×16), and the source-matched gate report is
+**Latest 1,296-atom gated result (2026-10-22, N1 grouped FP64 UVU GEMM):
+189.30 ms/eval = 146.06 µs/atom (generic), parity PASS at 128 and 1,296
+(dPE = 0; max dF 5.8e-13 eV/Å at 1,296, gate 1e-10), repeated-eval behavior
+unchanged at the pre-existing 1 ULP. That is **0.7413× (−25.87 %)** vs the
+same-binary S1.1+A1 generic baseline (255.35 ms / 197.03 µs/atom);
+materialized N1 is 201.91 ms / 155.79 µs/atom (0.7557×). Binary `lmp_gemm`
+sha256 `093982d5…7fa8a03`; patch `patches/polar_uvu_gemm_n1.patch`; report
+[docs/results/PROGRESS_TO_80US_2026-10-21.md](docs/results/PROGRESS_TO_80US_2026-10-21.md).**
+
+**queue004 validation (2026-10-22):** the same `lmp_gemm` binary packaged into
+the shared vePFS workspace measures **145.75 µs/atom (188.89 ms/eval) at
+1,296 atoms** on one queue004 A100-80GB, matching the local N1 median within
+0.12%; materialized is 155.25 µs/atom. The task takes **69 s end-to-end**
+(LAMMPS 16 s, of which ~15 s is the 317 MB model load). At 5,184 atoms the
+same binary measures **140.91 µs/atom (730.49 ms/eval, 19.16 GiB)**, i.e.
+**12.2 min per 1 ns at a 1 fs timestep** (1,000 steps). Latest summary:
+[docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md](docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md).
+
+**Reference target normalized to 1,296 atoms: 4.5 µs/atom → 5.832 ms/eval;
+intermediate target 80 µs/atom → 103.68 ms/eval.**
+The latest measured 1,296-atom polar result is **146.06 µs/atom (189.30
+ms/eval) with N1**, i.e. **32.5× above the 4.5 µs/atom paper target and 1.83×
+above the 80 µs/atom target**. Before N1, the A1 UVU tile measured
+**205.4 µs/atom (266.21 ms/eval)**, all gates PASS (45.7× above the paper
+target). The same-box linear FP32 path is 9.69 µs/atom (2.15× above). A1
+measured 290.20 → 266.21 ms/eval (**−8.26%**) at 1,296 atoms; the patch is
+`patches/uvu_tile_32x32.patch` (actual default tile 32×16), and the
+source-matched gate report is
 [docs/results/UVU_TILE_MAIN_GATES.md](docs/results/UVU_TILE_MAIN_GATES.md).
 The Plan B-micro 30.33 ms is the 128-atom headline. 1024 atoms (256 NH3)
 remains **312.1 ms** (not re-measured under Plan B-lite/B-full/A1).

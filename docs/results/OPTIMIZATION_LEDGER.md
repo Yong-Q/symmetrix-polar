@@ -24,6 +24,7 @@ gitignored `bench/` tree; the extracted summary JSONs are committed under
 | + path-grouped MH-1 forward | 299.15 | 230.5 | `README.md`; `data/ab_path_grouped_forward_1296.json` (+ clean sandbox `data/ab_path_grouped_forward_sandbox.json`) |
 | + edge-up/scatter tile | 290.77 | 224.1 | `README.md`; `data/ab_edge_up_scatter_1296.json` |
 | **+ A1 UVU tile (main, gates PASS)** | **266.21** | **205.4** | `UVU_TILE_MAIN_1296.md`; `UVU_TILE_MAIN_GATES.md` |
+| **+ N1 grouped FP64 UVU GEMM (generic, gates PASS)** | **189.30** | **146.1** | `bench/polar_uvu_gemm_engine_2026-10-21/ab/ab_1296_gemm.json`; `parity/parity_{128,1296}_gemm.json` |
 
 The ladder is cumulative through the edge-up/scatter row. A1 is a new
 1,296-atom step on the current main tree, not a 128-atom Plan B slice: baseline
@@ -32,6 +33,22 @@ The ladder is cumulative through the edge-up/scatter row. A1 is a new
 disjoint ranges. A1 patch `patches/uvu_tile_32x32.patch` (actual default tile
 32×16); candidate sha256 `a9ce6481…`; source-matched gates module 5–8, 32/32,
 1/2-rank parity all PASS.
+
+The N1 row is measured on the S1.1+A1 tree; its same-run, same-binary generic
+baseline is 255.35 ms (197.0 µs/atom), so the interleaved A/B ratio is
+**0.7413 (−25.87 %)**. The materialized N1 arm is 201.91 ms (155.8 µs/atom,
+0.7557×). Parity: 128 atoms dPE = 0 / max dF 1.8e-15; 1,296 atoms dPE = 0 /
+max dF 5.8e-13 eV/Å (gate 1e-10); the 1,296 repeat-eval 1-ULP drift is the
+pre-existing S1.1 behavior. Binary `lmp_gemm` sha256 `093982d5…7fa8a03`.
+The A/B `peak_vram_mib` field is a whole-GPU `nvidia-smi` sample, not a
+per-process value; do not use it.
+
+5,184-atom N1 smoke (same binary, `run 0` + two `run 1`, 5 PE evaluations):
+pre-N1 best `base_vec1` **986.28 ms / 190.25 µs/atom / 19.21 GiB**; N1 default
+**731.46 ms / 141.10 µs/atom / 19.16 GiB**; N1 vec1 **730.49 ms / 140.91
+µs/atom / 19.16 GiB**; PE drift 0 in all arms. N1 vs pre-N1 best = **0.7406×
+(−25.94 %)**, and 2.12× faster than the old default (1,549 ms). Source:
+`bench/polar_uvu_gemm_engine_2026-10-21/smoke5184/smoke_5184_gemm.json`.
 
 **128-atom Plan B-micro headline (not a 1,296 row):** 30.33 ms/eval, binary
 `7061ecb0…`, all gates + repeated-eval PASS; source `PLAN_B_MICRO_FINAL.md`.
@@ -54,6 +71,8 @@ ladder value (320.5 and 297.9 ms).
 | forward tensor product | 39.52 → 17.77 ms/eval (2.22×) | `data/profile_path_grouped_forward.json`; `data/ab_path_grouped_forward_sandbox.json` |
 | polar-off backbone | 151.98 → 135.24 µs/atom | `data/ab_path_grouped_forward_sandbox.json` |
 | remaining hotspots (pre-opt3) | polar UVU 105.83 ms/eval; MH-1 reverse 76.73; node/edge 91.87; cuBLAS 35.83; Ewald 9.56; host gap 8.65 | `data/kernel_labels_1296.json` (all /1.296 for µs/atom) |
+| post-N1 GPU busy | 173.18 ms/eval; tensor 65.85, backbone 28.88, cuBLAS 25.11, polar 20.24, MLP 19.69, e3 13.16 | `bench/perf_decomp_1296_2026-10-21/analysis/n1_generic_1296_summary.json`; trace tag `n1_generic_1296` |
+| N1 polar-pipeline effect | 87.95 → 20.24 ms/eval (−77 %) | pre/post traces; microbench predicted 22.03 |
 
 The CUPTI trace covers LAMMPS setup plus one run, so per-launch values are
 the stable comparison; per-eval values are taken from the A/B or the
@@ -90,6 +109,9 @@ per-eval stage profile.
 | team size 32/64/128/256 | 267.9 / 267.8 / 270.3 / 279.8 µs/atom | `data/sweep_team_size_1296.json` |
 | msg_vec=1, scalar/chunked cutoff | 294.3 / 284.6 / 295.3 µs/atom | `data/sweep_msg_vec_cutoff_1296.json` |
 | polar-off team size | 153.0 / 152.0 / 155.3 / 163.6 µs/atom (32/64/128/256) | `data/sweep_team_size_polar_off_1296.json` |
+| S2 receiver-owned generic forward | parity PASS (128/1,296; max dF 7.5e-14), but **2.36× slower**: 188.35 → 444.21 ms/eval (145.3 → 342.8 µs/atom); not promoted, opt-in stays off | `bench/polar_uvu_gemm_engine_2026-10-21/ab_s2/ab_1296_s2.json`; `parity_s2/parity_{128,1296}_s2.json` |
+| Fused reverse MH-1 (one sparse pass) | parity PASS (128/1,296; max dF 5.7e-14), but **1.12× slower**: 188.54 → 211.10 ms/eval (145.5 → 162.9 µs/atom); per-thread partials + 16 team reductions outweigh the saved harmonics pass; not promoted, `MATOS_MH1_REV_FUSED` stays off | `bench/polar_uvu_gemm_engine_2026-10-21/ab_rev/ab_1296_rev_fused.json`; `parity_rev/parity_{128,1296}_rev_fused.json` |
+| FP32 PolarMACE (precision study) | PyTorch reference, TF32 off: 128 atoms max dF 3.9e-5 eV/Å, 0.27 meV/atom, **1.09×** speed; 512 atoms max dF 8.1e-5, 1.52 meV/atom, **1.14×**. Full engine float32 needed a `MATOS_ALLOW_FLOAT32_GENERIC` test hook past the MH-1 fast-path guard; with it, engine FP32 accuracy is excellent (1,296: dE 3.3e-4 eV, max dF 5.1e-5 eV/Å) but **speed is 0.944×** (189.67 → 200.91 ms; 146.35 → 155.03 µs/atom) because the float path uses the legacy UVU (N1 grouped GEMM is FP64-only). FP32 is not a speed lever as implemented | `bench/fp32_sensitivity_2026-10-22/fp32_sensitivity.json`; `fp32_engine_sensitivity.json` |
 
 ## 6. Code provenance
 
@@ -100,6 +122,7 @@ per-eval stage profile.
 | edge-feature tile | `46db0d1` |
 | path-grouped MH-1 forward | `7167c26` |
 | edge-up/scatter tile + cutoff copy fusion | `e0a961d` |
+| N1 grouped FP64 path-GEMM UVU forward/reverse | `482537c` (patch `patches/polar_uvu_gemm_n1.patch`) |
 
 The engine working tree is tracked in the `symmetrix-polar` patch
 `patches/symmetrix-xl-polar-support.patch`; the engine fork push is blocked by
@@ -124,3 +147,78 @@ MATOS_MH1_TEAM_CHANNEL_VEC=1
 Input: `bench/paper_scale_2026-10-20/in.polar_water_1296` (1,296 atoms, four
 measured `run 1`). The A/B runner is `bench/ab_opt2b_1296.py` (same protocol
 for all rows). Parity uses `bench/opt3_parity_main.py` / `msgtile_parity.py`.
+
+## 8. Remote queue004 probe and precision ceiling (2026-10-22)
+
+Three queue004 tasks, all finished `Success`:
+
+| Probe | Task | Result | Source |
+|---|---|---|---|
+| permission, no storage | `t-20261022130617-rpd2t` | A100-SXM4-80GB visible; echo + `nvidia-smi` only | logs |
+| inline microbench, no storage | `t-20261022131227-gxsp4` | A100 visible, but `python3: command not found`; bare VASP runtime image has no system Python | logs |
+| toolchain microbench | `t-20261022131550-rrzgp` | 58 s; Python 3.11.15 + torch 2.5.1+cu121, CUDA true | `data/q4_remote_microbench_2026-10-22.json`; `figures/Q4_REMOTE_MICROBENCH.png` |
+
+The working recipe is the same one used by the successful 2026-10-19 probe
+`t-20261019191724-4zbd7`: queue004, one `ml.pni2.3xlarge`, and the shared
+vePFS `vepfs-cnbj2c98dea54433` mounted at
+`/vepfs-mlp2/c20250207/lvdingyang` (`SubPath c20250207/lvdingyang`), which
+provides `/vepfs-mlp2/c20250207/lvdingyang/matos-tools`. Without that mount
+the image has no Python; with it, `matos-compute/bin/python` and
+`matos-mlip-py311/bin/python` are the same 3.11.15 + torch 2.5.1 build.
+
+Measured 2048³ GEMM on one A100-80GB (79.3 GiB, 108 SM, CC 8.0), 20 iters:
+
+| Arm | ms | TFLOPS | A100 peak | Fraction |
+|---|---:|---:|---:|---:|
+| FP64 | 1.1653 | 14.742 | 19.5 (FP64 tensor core) | 75.6% |
+| FP32 | 1.1835 | 14.516 | 19.5 (FP32 CUDA core) | 74.4% |
+
+FP32 is **1.6% slower** than FP64 in wall time, because A100's FP32 CUDA-core
+peak equals its FP64 tensor-core peak. This is the hardware explanation for
+the engine-level FP32 result (0.944×, §5): FP32 alone is not a speed lever.
+Only TF32/BF16 tensor cores (156/312 TFLOPS theoretical) change the ceiling,
+and they require far more accuracy relaxation than FP32.
+
+Access boundary confirmed: queue004 is one GPU and one replica per task;
+`devinstance-queue3` rejects `ml_platform:CreateCustomTask`; the newer vePFS
+`vepfs-cnbj4cc563ae78e0` rejects RDWR on both `250358` and `/`. Four
+independent queue004 1-GPU tasks can run under the 4-GPU per-user cap, but a
+single multi-GPU job is not currently submitable on this account. The
+single-GPU FP64 floor of ~120–130 µs/atom therefore still stands.
+
+**Historical note (2026-10-19).** The q4 MPI-scaling probe
+`t-20261019191724-4zbd7` did **not** use a remote system LAMMPS. It ran a
+locally built binary packaged into the workspace as `$WORKDIR/pkg/bin/lmp`
+(195,981,328 bytes, sha256 `bc95c713…`, LAMMPS 30 Sep 2026, Kokkos 5.2.1,
+`symmetrix/mace` pair style, RUNPATH to the local conda envs), together with
+`pkg/lib` + `pkg/lib/mpich` and the 317 MB PolarMACE model
+(`pkg/model/polar_symmetrix_probe.json`). The 128/432/1024-atom five-step
+baselines were 0.6116 / 1.4717 / 3.0520 s, i.e. **955.6 / 681.3 / 596.1
+µs/atom/step**. That is the pre-optimization materialized-edge build
+(`streamed_edges='materialized'`), not the N1 build; it does not contradict
+the current 146.1 µs/atom result. The packaging pattern is already proven; the
+current `lmp_gemm` (sha256 `093982d5…`) has the same dynamic-dependency
+structure (CUDA 12 runtime, MPI, OpenBLAS/OpenMP, glibc) and can replace
+`pkg/bin/lmp` directly.
+
+### q4 current-engine 1,296-atom speed (2026-10-22)
+
+| Path | q4 median | q4 µs/atom | local median | local µs/atom | q4/local |
+|---|---:|---:|---:|---:|---:|
+| `streamed_edges generic` | 188.891 ms | 145.75 | 189.121 ms | 145.93 | 0.999 |
+| `streamed_edges materialized` | 201.207 ms | 155.25 | 201.91 ms | 155.8 | 0.997 |
+
+Tasks `t-20261022132315-b97jc` (materialized, 64 s) and
+`t-20261022132500-94hhz` (generic, 69 s), both queue004 1×A100-80GB, binary
+`lmp_gemm` sha256 `093982d5…`, model sha256 `0e98f0ae…`. PE
+−895939.24763167975 eV in both, stable across all steps. LAMMPS wall time is
+16 s in both runs, of which ~15 s is the 317 MB model load; the five measured
+evals take ~0.95–1.0 s. Source:
+`bench/q4_polar_1296_2026-10-22/`, `data/q4_polar_1296_2026-10-22.json`,
+`figures/Q4_POLAR_1296_SPEED.png`.
+
+The first q4 attempt omitted `streamed_edges generic` and therefore measured
+the slower materialized path (155.25 µs/atom). The corrected generic run is
+145.75 µs/atom, matching the local N1 median within 0.12%. queue004 does not
+change single-GPU speed; it is an offload/parallelism route. Four independent
+1-GPU tasks can run concurrently under the 4-GPU user cap.

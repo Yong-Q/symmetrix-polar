@@ -1,0 +1,234 @@
+diff --git a/libsymmetrix/source/mace_nonlinear_kokkos.hpp b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
+index c08e964..3029f96 100644
+--- a/libsymmetrix/source/mace_nonlinear_kokkos.hpp
++++ b/libsymmetrix/source/mace_nonlinear_kokkos.hpp
+@@ -615,6 +615,17 @@ public:
+     int polar_uvu_dot_planes=0,polar_uvu_tp_planes=0,
+         polar_uvu_le_q_planes=0,polar_uvu_le_v_planes=0,
+         polar_uvu_scf_planes=0;
++    // V3 control plane: checkpoint-constant UVU path plans are prepared once
++    // on host instead of being re-fetched from device every SCF/reverse step
++    // (24 D2H synchronizations per evaluation).  This is also the prerequisite
++    // for a stable-pointer CUDA graph capture of the 2-step polar pipeline.
++    std::vector<std::vector<int>> polar_host_dot_meta,
++        polar_host_tp_meta;
++    std::vector<std::vector<Precision>> polar_host_dot_pw,
++        polar_host_tp_pw;
++    std::vector<int> polar_host_le_q_meta,polar_host_le_v_meta;
++    std::vector<Precision> polar_host_le_q_pw,polar_host_le_v_pw;
++    bool polar_host_tables_ready=false;
+     // 重放前向值(不触碰⑤导出视图):
+     Kokkos::View<Precision**,Kokkos::LayoutRight> polar_rev_step_potential,
+         polar_rev_step_potential_storage,                                // (N,16)
+@@ -717,6 +728,8 @@ public:
+         double total_charge,double total_spin);
+     // [v2 适配] 模块⑥⑦ 扩展表解析(定义于独立 TU mace_polar_impl.tpp; ctor 于 polar 解析块收尾调用)。
+     void parse_polar_extension_tables();
++    // V3: cache the checkpoint-constant polar UVU host plans once.
++    void prepare_polar_host_tables();
+     // N1: grouped FP64 path-GEMM for the polar UVU (defined in mace_polar_impl.tpp).
+     static bool polar_uvu_gemm_supported(const std::vector<int>& meta);
+     static int polar_uvu_plane_count(const std::vector<int>& meta);
+diff --git a/libsymmetrix/source/mace_polar_impl.tpp b/libsymmetrix/source/mace_polar_impl.tpp
+index 0c4ac8a..6e5d67d 100644
+--- a/libsymmetrix/source/mace_polar_impl.tpp
++++ b/libsymmetrix/source/mace_polar_impl.tpp
+@@ -267,6 +267,44 @@ void MaceNonlinearKokkosT<Precision>::PolarUpdate::set_e3_linear_workspace(
+     readout_linear_2.set_workspace(workspace);
+ }
+ 
++// V3 control plane: prepare the checkpoint-constant UVU path plans once.
++// Previously every SCF step and every reverse step copied four small views
++// device->host (24 stream synchronizations per evaluation).  The plans never
++// change after construction, so cache them on the host and pass const
++// references into the forward/reverse kernels.  This also makes the polar
++// pipeline pointer-stable for a future CUDA graph capture.
++template<typename Precision>
++void MaceNonlinearKokkosT<Precision>::prepare_polar_host_tables()
++{
++    if(polar_host_tables_ready) return;
++    auto copy_view=[&](const auto& view) {
++        auto mirror=Kokkos::create_mirror_view_and_copy(
++            Kokkos::HostSpace(),view);
++        using value_type=typename decltype(mirror)::value_type;
++        std::vector<value_type> values(mirror.size());
++        for(std::size_t index=0;index<values.size();++index)
++            values[index]=mirror.data()[index];
++        return values;
++    };
++    const int steps=polar_recursion_steps;
++    polar_host_dot_meta.resize(steps);
++    polar_host_tp_meta.resize(steps);
++    polar_host_dot_pw.resize(steps);
++    polar_host_tp_pw.resize(steps);
++    for(int step=0;step<steps;++step) {
++        auto& update=polar_updates[step];
++        polar_host_dot_meta[step]=copy_view(update.uvu_dot_meta);
++        polar_host_tp_meta[step]=copy_view(update.uvu_tp_meta);
++        polar_host_dot_pw[step]=copy_view(update.uvu_dot_path_weight);
++        polar_host_tp_pw[step]=copy_view(update.uvu_tp_path_weight);
++    }
++    polar_host_le_q_meta=copy_view(polar_le_q_meta);
++    polar_host_le_v_meta=copy_view(polar_le_v_meta);
++    polar_host_le_q_pw=copy_view(polar_le_q_path_weight);
++    polar_host_le_v_pw=copy_view(polar_le_v_path_weight);
++    polar_host_tables_ready=true;
++}
++
+ template<typename Precision>
+ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+     Kokkos::View<Precision**,Kokkos::LayoutRight> node_attrs,
+@@ -275,6 +313,7 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+     double total_charge,double total_spin)
+ {
+     symmetrix_polar_profile_mark("pipeline:enter");
++    prepare_polar_host_tables();
+     polar_rev_cache_valid=false;   // Plan B1: invalidate any previous-eval cache
+     // N1 grouped GEMM switch: the Z cache is valid only if every UVU table of
+     // this evaluation took the GEMM path.
+@@ -921,25 +960,15 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+             auto attrs_view=attrs;
+             for(int step=0;step<polar_recursion_steps;++step) {
+                 auto& update=polar_updates[step];
+-                // 路径表主机副本(每步取一次;极小;std::vector 传参规避
+-                // nvcc "泛型 lambda 内不允许 device lambda" 限制)
+-                const auto to_host_vector=[&](const auto& view) {
+-                    const auto mirror=Kokkos::create_mirror_view_and_copy(
+-                        Kokkos::HostSpace(),view);
+-                    std::vector<typename decltype(mirror)::value_type>
+-                        values(mirror.size());
+-                    for(std::size_t i2=0;i2<values.size();++i2)
+-                        values[i2]=mirror.data()[i2];
+-                    return values;
+-                };
+-                const std::vector<int> dot_meta=
+-                    to_host_vector(update.uvu_dot_meta);
+-                const std::vector<Precision> dot_path_weight=
+-                    to_host_vector(update.uvu_dot_path_weight);
+-                const std::vector<int> tp_meta=
+-                    to_host_vector(update.uvu_tp_meta);
+-                const std::vector<Precision> tp_path_weight=
+-                    to_host_vector(update.uvu_tp_path_weight);
++                // V3: checkpoint-constant plans, prepared once on host.
++                const std::vector<int>& dot_meta=
++                    polar_host_dot_meta[step];
++                const std::vector<Precision>& dot_path_weight=
++                    polar_host_dot_pw[step];
++                const std::vector<int>& tp_meta=
++                    polar_host_tp_meta[step];
++                const std::vector<Precision>& tp_path_weight=
++                    polar_host_tp_pw[step];
+                 auto dot_weight=update.uvu_dot_weight;
+                 auto dot_mask=update.uvu_dot_mask;
+                 auto tp_weight=update.uvu_tp_weight;
+@@ -1945,23 +1974,13 @@ void MaceNonlinearKokkosT<Precision>::run_polar_pipeline(int num_nodes,
+                             output(node,column)*=mask_view(column);
+                         });
+                 };
+-                const auto le_to_host_vector=[&](const auto& view) {
+-                    const auto mirror=Kokkos::create_mirror_view_and_copy(
+-                        Kokkos::HostSpace(),view);
+-                    std::vector<typename decltype(mirror)::value_type>
+-                        values(mirror.size());
+-                    for(std::size_t i2=0;i2<values.size();++i2)
+-                        values[i2]=mirror.data()[i2];
+-                    return values;
+-                };
+-                const std::vector<int> le_q_meta=
+-                    le_to_host_vector(polar_le_q_meta);
+-                const std::vector<Precision> le_q_path_weight=
+-                    le_to_host_vector(polar_le_q_path_weight);
+-                const std::vector<int> le_v_meta=
+-                    le_to_host_vector(polar_le_v_meta);
+-                const std::vector<Precision> le_v_path_weight=
+-                    le_to_host_vector(polar_le_v_path_weight);
++                // V3: checkpoint-constant LE plans, prepared once on host.
++                const std::vector<int>& le_q_meta=polar_host_le_q_meta;
++                const std::vector<Precision>& le_q_path_weight=
++                    polar_host_le_q_pw;
++                const std::vector<int>& le_v_meta=polar_host_le_v_meta;
++                const std::vector<Precision>& le_v_path_weight=
++                    polar_host_le_v_pw;
+                 auto node_feats=polar_node_feats_e3nn;
+                 polar_uvu_le_q_planes=polar_uvu_plane_count(le_q_meta);
+                 polar_uvu_le_v_planes=polar_uvu_plane_count(le_v_meta);
+@@ -2526,6 +2545,7 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+     const int num_nodes)
+ {
+     if(!polar_enabled) return;
++    prepare_polar_host_tables();
+     // N1 grouped GEMM switch.  The forward sets polar_uvu_z_cache_valid and
+     // the plane layout; a stale/mismatched cache falls back per table.
+     const bool uvu_gemm_on=polar_uvu_gemm_enabled()
+@@ -3636,21 +3656,11 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+                     pe(node,column)+=ra(node,column)+rb(node,column);
+                 });
+         }
+-        const auto to_host_vector=[&](const auto& view) {
+-            const auto mirror=Kokkos::create_mirror_view_and_copy(
+-                Kokkos::HostSpace(),view);
+-            std::vector<typename decltype(mirror)::value_type>
+-                values(mirror.size());
+-            for(std::size_t i2=0;i2<values.size();++i2)
+-                values[i2]=mirror.data()[i2];
+-            return values;
+-        };
+-        const std::vector<int> dot_meta=to_host_vector(update.uvu_dot_meta);
+-        const std::vector<Precision> dot_pw=
+-            to_host_vector(update.uvu_dot_path_weight);
+-        const std::vector<int> tp_meta=to_host_vector(update.uvu_tp_meta);
+-        const std::vector<Precision> tp_pw=
+-            to_host_vector(update.uvu_tp_path_weight);
++        // V3: prepared host plans (no per-step D2H).
++        const std::vector<int>& dot_meta=polar_host_dot_meta[step];
++        const std::vector<Precision>& dot_pw=polar_host_dot_pw[step];
++        const std::vector<int>& tp_meta=polar_host_tp_meta[step];
++        const std::vector<Precision>& tp_pw=polar_host_tp_pw[step];
+         const auto launch_uvu_forward=[&](const std::vector<int>& meta,
+                 const std::vector<Precision>& path_weight,
+                 Kokkos::View<Precision*> weight_view,
+@@ -4427,18 +4437,9 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+             polar_rev_tp_adjoint);
+         symmetrix_polar_profile_mark("rev5b:readout-linears");
+         { // (i) uvu_tp 反向: x1=fmix(→fmix̄), x2=nl_out(→nl̄_out)
+-            const auto to_host_vector=[&](const auto& view) {
+-                const auto mirror=Kokkos::create_mirror_view_and_copy(
+-                    Kokkos::HostSpace(),view);
+-                std::vector<typename decltype(mirror)::value_type>
+-                    values(mirror.size());
+-                for(std::size_t i2=0;i2<values.size();++i2)
+-                    values[i2]=mirror.data()[i2];
+-                return values;
+-            };
+-            const std::vector<int> tp_meta=to_host_vector(update.uvu_tp_meta);
+-            const std::vector<Precision> tp_pw=
+-                to_host_vector(update.uvu_tp_path_weight);
++            // V3: prepared host plan (no per-step D2H).
++            const std::vector<int>& tp_meta=polar_host_tp_meta[step];
++            const std::vector<Precision>& tp_pw=polar_host_tp_pw[step];
+             ordered_kokkos_deep_copy(polar_rev_nlout_adjoint,Precision(0));
+             const int step_base=step*polar_uvu_scf_planes;
+             const bool tp_gemm=uvu_gemm_on
+@@ -4545,19 +4546,9 @@ void MaceNonlinearKokkosT<Precision>::compute_polar_reverse_forces(
+                 });
+         }
+         { // (iv) uvu_dot 反向: x1=fmix(→fmix̄), x2=pe(→pe伴)
+-            const auto to_host_vector=[&](const auto& view) {
+-                const auto mirror=Kokkos::create_mirror_view_and_copy(
+-                    Kokkos::HostSpace(),view);
+-                std::vector<typename decltype(mirror)::value_type>
+-                    values(mirror.size());
+-                for(std::size_t i2=0;i2<values.size();++i2)
+-                    values[i2]=mirror.data()[i2];
+-                return values;
+-            };
+-            const std::vector<int> dot_meta=
+-                to_host_vector(update.uvu_dot_meta);
+-            const std::vector<Precision> dot_pw=
+-                to_host_vector(update.uvu_dot_path_weight);
++            // V3: prepared host plan (no per-step D2H).
++            const std::vector<int>& dot_meta=polar_host_dot_meta[step];
++            const std::vector<Precision>& dot_pw=polar_host_dot_pw[step];
+             ordered_kokkos_deep_copy(polar_rev_pe_adjoint,Precision(0));
+             const bool dot_gemm=uvu_gemm_on
+                 &&polar_uvu_gemm_supported(dot_meta)

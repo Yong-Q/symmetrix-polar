@@ -1,0 +1,62 @@
+{
+  "date": "2026-10-22",
+  "system": "water, 1296 atoms",
+  "queue": "queue004",
+  "flavor": "ml.pni2.3xlarge",
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "binary": {
+    "path": "bench/polar_uvu_gemm_engine_2026-10-21/bin/lmp_gemm",
+    "sha256": "093982d520292a54325c3fe548162a04ca98934ffcc0376f7f20056347fa8a03"
+  },
+  "model": {
+    "path": "task3_sampling_database/mlip/models/mace-polar/polar_symmetrix_probe.json",
+    "sha256": "0e98f0aec2c2eee8b7ef5a68294f067395873411ff1ac73870243611fadc1de6"
+  },
+  "local_reference": {
+    "source": "bench/polar_uvu_gemm_engine_2026-10-21/ab/ab_1296_gemm.json",
+    "generic": {
+      "tag": "gemm_gen_r0",
+      "samples_ms": [189.494, 188.808, 188.937, 189.305],
+      "median_ms": 189.121,
+      "us_per_atom": 145.927
+    },
+    "materialized": {
+      "tag": "gemm_mat_r0/r1",
+      "median_ms": 201.91,
+      "us_per_atom": 155.8
+    }
+  },
+  "q4": {
+    "materialized": {
+      "taskId": "t-20261022132315-b97jc",
+      "status": "Success",
+      "elapsed_s": 64,
+      "lammps_wall_s": 16,
+      "samples_ms": [201.207, 201.394, 201.978, 200.948, 201.088],
+      "median_ms": 201.207,
+      "us_per_atom": 155.252,
+      "pe_eV": -895939.24763167975
+    },
+    "generic": {
+      "taskId": "t-20261022132500-94hhz",
+      "status": "Success",
+      "elapsed_s": 69,
+      "lammps_wall_s": 16,
+      "samples_ms": [188.891, 188.495, 189.962, 188.947, 188.563],
+      "median_ms": 188.891,
+      "us_per_atom": 145.749,
+      "pe_eV": -895939.24763167975
+    }
+  },
+  "ratios": {
+    "q4_generic_over_local_generic": 0.99878,
+    "q4_materialized_over_local_materialized": 0.99652,
+    "q4_generic_over_q4_materialized": 0.93879,
+    "q4_materialized_speedup_over_generic": 1.0652
+  },
+  "notes": [
+    "Both q4 paths reproduce the local medians within 0.4%; queue004 does not change single-GPU speed.",
+    "The first q4 run omitted streamed_edges generic and therefore measured the slower materialized path (155.25 us/atom). The corrected generic run is 145.75 us/atom.",
+    "Task wall time is dominated by loading the 317 MB model (~15 s); the LAMMPS process itself takes 16 s and the five measured evals take ~0.95 s."
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-22",
+  "paper": "arXiv:2610.01036 (Symmetrix-XL)",
+  "units": "us/atom/step",
+  "rows": [
+    {"group": "paper", "label": "Paper: Symmetrix-XL streaming\nlinear MACE, FP32, 5,184", "value": 4.50, "note": "paper's standard streaming"},
+    {"group": "this-linear-fp32", "label": "This engine: same linear MACE\nFP32 direct/JIT, 5,184", "value": 4.50, "note": "measured 4.47-4.53 clean floor"},
+    {"group": "paper-baseline", "label": "Paper: ML-IAP + cuEq\nlinear MACE, FP32, 5,184", "value": 13.99, "note": "paper baseline"},
+    {"group": "this-linear-fp64", "label": "This engine: linear MACE\nFP64 materialized, 6,144", "value": 12.26, "note": "different system (NH3, lower density)"},
+    {"group": "current-polar", "label": "This engine: full PolarMACE\nFP64, 1,296", "value": 145.75, "note": "current N1, q4/local"},
+    {"group": "current-polar", "label": "This engine: full PolarMACE\nFP64, 5,184", "value": 140.91, "note": "current N1"},
+    {"group": "earlier-polar", "label": "Earlier PolarMACE B4+team\nFP64, 1,296", "value": 247.7, "note": "before N1"},
+    {"group": "earlier-polar", "label": "Earlier PolarMACE materialized+cache\nFP64, 1,296", "value": 462.4, "note": "before N1/B4"},
+    {"group": "pytorch", "label": "PyTorch PolarMACE reference\n128 atoms", "value": 734.4, "note": "94.0 ms / 128"}
+  ],
+  "ratios": {
+    "polar_1296_over_paper_4_5": 32.39,
+    "polar_5184_over_paper_4_5": 31.31,
+    "polar_1296_over_mliap_13_99": 10.42,
+    "polar_5184_over_mliap_13_99": 10.07,
+    "polar_1296_over_linear_fp64_12_26": 11.89,
+    "current_over_earlier_b4team": 1.70,
+    "current_over_earlier_materialized_cache": 3.17,
+    "linear_fp32_over_paper_streaming": 1.00
+  },
+  "notes": [
+    "The paper's 3.1-5.0x is the Symmetrix-XL standard-streaming gain over ML-IAP + cuEquivariance, on linear MACE, FP32, 5,000+ atoms.",
+    "The full PolarMACE is a different model: nonlinear polar, 2-step SCF/Fukui, exact Ewald, FP64, materialized-only. It is not a like-for-like comparison with the paper's 4.50.",
+    "On the paper's own linear MACE FP32 workload, this engine measures 4.47-4.53 us/atom, i.e. parity with the paper's 4.50."
+  ]
+}
