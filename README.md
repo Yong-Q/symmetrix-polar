@@ -3,23 +3,25 @@
 **GPU-accelerated PolarMACE** — nonlinear polar MACE with long-range
 electrostatics — in the Symmetrix-XL C++/Kokkos/LAMMPS engine.
 
-| Current best | 5,184 atoms | Paper parity | Single-GPU floor |
+| Best 1,296 | Best 5,184 | Paper parity | Single-GPU floor |
 |---:|---:|---:|---:|
-| **145.75 µs/atom** @ 1,296 | **140.91 µs/atom** | **4.47–4.53 vs 4.50** | **~120–130 µs/atom** |
-| FP64 · exact Ewald · 2-step SCF | 19.16 GiB peak · 5,184 atoms | linear MACE FP32, 5,184 atoms | after tensor-product rewrite |
+| **145.75 µs/atom/step** | **140.91 µs/atom/step** | **4.47–4.53 vs 4.50 µs/atom/step** | **~120–130 µs/atom/step** |
+| FP64 · exact Ewald · 2-step SCF | FP64 · 19.16 GiB peak | linear MACE FP32, 5,184 atoms | projection |
+
+**Definition:** `µs/atom/step = 10^6 × seconds per evaluation / atoms`.
+All speed values in this README use **µs/atom/step**. Task wall times are
+reported separately in seconds and are not used for speed comparisons.
 
 *Paper parity is measured on the paper's linear MACE FP32 workload; full
 PolarMACE is a different model.*
 
 **Latest updates (2026-10-22):**
 
-- **10,368 atoms:** **149.14 µs/atom/step**, 33.71 GiB peak — 2× the 5,184
-  capacity on one A100-80GB; this is a capacity point, not the speed headline.
-- **R1 reverse MH-1:** exact, **−3.05%** same-binary; parity dPE 0 / max dF
-  4.9e-16 eV/Å; projected **141.3 µs/atom/step** at 1,296 on the normal
-  baseline.
-- **Path B six-molecule teacher smoke:** H2O/NH3/C2H4/CH4/C2H6/CO2 labels
-  written (8 configurations × 12 molecules per species); no model change.
+| Update | Result | Evidence |
+|---|---|---|
+| **10,368-atom capacity** | **149.14 µs/atom/step**, 33.71 GiB peak; 2× the 5,184 capacity on one A100-80GB | q4 task `t-20261022144341-pzc9x`; `docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md` |
+| **R1 reverse MH-1** | exact, **−3.05%** same-binary; dPE 0, max dF 4.9e-16 eV/Å; projected 141.3 µs/atom/step at 1,296 | `docs/results/data/rev_r1_2026-10-22.json` |
+| **Path B six-molecule teacher smoke** | H2O/NH3/C2H4/CH4/C2H6/CO2 labels; 8 configurations × 12 molecules each; no model change | `docs/results/PATH_B_SIX_MOLECULE_SMOKE_2026-10-22.md` |
 
 [Latest speed & plan](docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md) ·
 [Optimization ledger](docs/results/OPTIMIZATION_LEDGER.md) ·
@@ -31,21 +33,23 @@ PolarMACE is a different model.*
 
 ## Results
 
-| Workload | Precision | Atoms | Path | µs/atom/step |
-|---|---|---:|---|---:|
-| **Full PolarMACE** | **FP64** | **1,296** | **generic streaming** | **145.75** |
-| Full PolarMACE | FP64 | 5,184 | generic streaming | **140.91** |
-| Full PolarMACE (capacity) | FP64 | 10,368 | generic streaming | 149.14 |
-| Linear MACE-OFF23 | FP32 | 5,184 | direct/JIT | 4.47–4.53 |
-| Paper Symmetrix-XL | FP32 | 5,184 | standard streaming | 4.50 |
+| System | Model | Precision | Atoms | Execution path | µs/atom/step | Peak GPU | Evidence |
+|---|---|---|---:|---|---:|---:|---|
+| Water | Full PolarMACE | FP64 | 1,296 | generic streaming | **145.75** | — | q4 `t-20261022132500-94hhz` |
+| Water | Full PolarMACE | FP64 | 5,184 | generic streaming | **140.91** | 19.16 GiB | N1 smoke |
+| Water | Full PolarMACE | FP64 | 10,368 | generic streaming | 149.14 | 33.71 GiB | q4 `t-20261022144341-pzc9x` (capacity) |
+| OFF23 water | Linear MACE-OFF23 | FP32 | 5,184 | direct/JIT | 4.47–4.53 | — | paper-parity run |
+| OFF23 water | Paper Symmetrix-XL | FP32 | 5,184 | standard streaming | 4.50 | — | paper |
 
-*10,368 is a capacity point; the speed headline is 140.91 at 5,184 and 145.75
-at 1,296.*
+All rows use **µs/atom/step**. The 10,368 row is a **capacity point**; the
+speed headline is **140.91 at 5,184** and **145.75 at 1,296**.
 
-- **q4 validation:** same binary, 145.75 µs/atom vs local 146.06 (within
-  0.2%); 69 s end-to-end, of which 16 s is LAMMPS (model load ~15 s).
-- **1 ns at 5,184 atoms:** **8.45 days** at 1 fs, **16.9 days** at 0.5 fs,
-  **4.23 days** at 2 fs.
+- **q4 deployment:** same binary, 145.75 vs local 146.06 µs/atom/step (within
+  0.2%). Task wall time is 69 s (dominated by model load) and is not a speed
+  metric.
+- **Production runtime at 5,184 atoms** (derived from 140.91 µs/atom/step):
+  **8.45 days per 1 ns** at 1 fs, **16.9 days** at 0.5 fs, **4.23 days** at
+  2 fs.
 - **Paper comparison is not like-for-like.** The paper's 4.50 is linear
   MACE-OFF23, FP32, no global SCF/Ewald. Full PolarMACE is **32.4×** that
   number. On the paper's own linear FP32 workload this engine matches
@@ -71,7 +75,7 @@ interface are unchanged. All gains are execution changes:
   epilogue. This is the main win: **−25.87%** (197.03 → 146.06 µs/atom/step
   at 1,296).
 - **B4 + team MH-1** — reverse gather, write-through fix, team size 64;
-  together with the message/edge/path tiles: 462.6 → 224.1 µs/atom.
+  together with the message/edge/path tiles: 462.6 → 224.1 µs/atom/step.
 - **V3** — prepared path-plan cache; removes ~24 D2H syncs/eval and is the
   CUDA Graph prerequisite.
 - **queue004** — packaged binary/model offload; same speed as local.
@@ -108,10 +112,11 @@ Details: [theory & methods](docs/THEORY_AND_METHODS.md) ·
 
 ## Limits
 
-- **Single-GPU FP64 floor:** ~**120–130 µs/atom** after the tensor-product
-  dataflow rewrite + CUDA Graph.
-- **80 µs/atom:** needs multi-GPU or a precision/model-policy change.
-- **40 µs/atom:** not reachable on one GPU with the current exact-FP64 model.
+- **Single-GPU FP64 floor:** ~**120–130 µs/atom/step** after the
+  tensor-product dataflow rewrite + CUDA Graph.
+- **80 µs/atom/step:** needs multi-GPU or a precision/model-policy change.
+- **40 µs/atom/step:** not reachable on one GPU with the current exact-FP64
+  model.
 - **5,184 atoms:** the old materialized path OOMs; the generic/streaming path
   uses 19.16 GiB.
 - **q4:** one GPU per task; four independent 1-GPU tasks fit the 4-GPU cap.
@@ -124,7 +129,7 @@ source are in the [optimization ledger](docs/results/OPTIMIZATION_LEDGER.md).
 
 - **Start here:** [latest speed & plan](docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md) ·
   [optimization ledger](docs/results/OPTIMIZATION_LEDGER.md) ·
-  [progress to 80 µs/atom](docs/results/PROGRESS_TO_80US_2026-10-21.md) ·
+  [progress to 80 µs/atom/step](docs/results/PROGRESS_TO_80US_2026-10-21.md) ·
   [theory-first execution plan](docs/design/THEORY_OPTIMAL_EXECUTION_PLAN.md) ·
   [two-path new architecture](docs/design/NEW_ARCHITECTURE_TWO_PATHS.md)
 - **Model & verification:** [tutorial](docs/tutorial/SYMMETRIX_POLAR_TUTORIAL_2026-10-21.pdf) ·
