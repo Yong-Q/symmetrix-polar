@@ -102,15 +102,17 @@ the #1 item at **50.8 µs/atom**, 77% of the remaining gap to 80.
 At 140.91 µs/atom/step and 5,184 atoms:
 
 - one step = 140.91 × 5,184 = **730.49 ms**
-- 1 fs timestep → 1,000 steps/ns → **730.5 s = 12.2 min/ns**
-- 2 fs timestep → 500 steps/ns → **6.1 min/ns**
-- at the 80 µs/atom target → **414.7 s = 6.9 min/ns** (1 fs)
-- at the 40 µs/atom target → **207.4 s = 3.5 min/ns** (1 fs)
-- at the paper's linear 4.5 µs/atom (not PolarMACE) → **23.3 s/ns**
+- 1 fs timestep → 1,000,000 steps/ns → **730,490 s = 202.9 h = 8.45 days/ns**
+- 0.5 fs production timestep → 2,000,000 steps/ns → **16.9 days/ns**
+- 2 fs timestep → 500,000 steps/ns → **101.5 h = 4.23 days/ns**
+- at the 80 µs/atom target → **115.2 h = 4.80 days/ns** (1 fs)
+- at the 40 µs/atom target → **57.6 h = 2.40 days/ns** (1 fs)
+- at the paper's linear 4.5 µs/atom (not PolarMACE) → **6.48 h/ns** (1 fs)
 
 The 730.49 ms is the `run 1` kernel loop; dumps/thermo/I/O add overhead. A q4
-task also has ~30–45 s of instance startup plus ~15 s model load, so a 12.2 min
-run is ~8% overhead; run multiple ns per task to amortize it.
+task also has ~30–45 s of instance startup plus ~15 s model load; that is
+negligible for a multi-day run, but ~8% for a short 1 ps run (12.2 min at
+1 fs).
 
 ## Artifacts
 

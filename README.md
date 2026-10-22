@@ -46,7 +46,8 @@ the shared vePFS workspace measures **145.75 µs/atom (188.89 ms/eval) at
 0.12%; materialized is 155.25 µs/atom. The task takes **69 s end-to-end**
 (LAMMPS 16 s, of which ~15 s is the 317 MB model load). At 5,184 atoms the
 same binary measures **140.91 µs/atom (730.49 ms/eval, 19.16 GiB)**, i.e.
-**12.2 min per 1 ns at a 1 fs timestep** (1,000 steps). Latest summary:
+**8.45 days per 1 ns at a 1 fs timestep** (1,000,000 steps); 16.9 days at the
+0.5 fs production timestep. Latest summary:
 [docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md](docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md).
 
 **Reference target normalized to 1,296 atoms: 4.5 µs/atom → 5.832 ms/eval;
