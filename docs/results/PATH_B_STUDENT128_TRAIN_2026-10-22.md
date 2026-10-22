@@ -6,16 +6,20 @@ six-molecule teacher dataset (34 epochs, 999 updates, FP32).
 
 ## Result
 
-| Metric | Student | GO gate | Status |
-|---|---:|---:|---|
-| Validation MAE E | **9.5 meV/atom** | ≤5 meV/atom | not met |
-| Validation MAE F | **32.4 meV/Å** | ≤0.03 eV/Å (30 meV/Å) | not met |
-| Relative F MAE | 6.62 % | — | — |
-| Train MAE E / F | 9.4 meV/atom / 30.8 meV/Å | — | — |
+Two runs, same student/data; only the loss weighting changed.
 
-The student is close to the gate but does not pass it. This is a prototype,
-not a replacement for PolarMACE. The model is 25.7 MB (2.04M parameters,
-7.5× smaller than the teacher).
+| Run | Loss | Val MAE E | Val MAE F | Gate |
+|---|---|---:|---:|---|
+| First (`t-20261022182434-bk8kk`) | fallback 1:1 | **9.5 meV/atom** | 32.4 meV/Å | both fail |
+| Corrected (`t-20261022184841-nq89x`) | weighted, F=50 | 24.5 meV/atom | **29.7 meV/Å** | F passes, E fails |
+
+The corrected run passes the force gate but overweights forces and loses
+energy accuracy. Per-epoch, epoch 98 reached **8.48 meV/atom / 27.04
+meV/Å** — force passes, energy is still above 5. The selected checkpoint
+(epoch 89) is 24.5 / 29.7. The energy accuracy is the binding constraint.
+
+This is a prototype, not a replacement for PolarMACE. The model is 25.7 MB
+(2.04M parameters, 7.5× smaller than the teacher).
 
 ## What was validated
 
