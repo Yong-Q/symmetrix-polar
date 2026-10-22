@@ -28,7 +28,8 @@ PolarMACE is a different model.*
 | **Fused reverse alone** | 136.08 µs/atom/step, **−2.83 (2.0 %)**; `MATOS_MH1_REV_FUSED2=0` opts out | `docs/results/FUSED_REVERSE_2026-10-22.md` |
 | **Mathematics-first architecture** | exact-checkpoint route projects **97–115 µs/atom/step**; 90 not supported on one exact-FP64 GPU | `docs/design/MATH_ARCH_2026-10-22.md` |
 | **Path B pruning audit** | zero-shot no-go beyond ~1.1×; rebuild + fine-tune targets 1.5–4× (C=384→320 first) | `docs/results/PATH_B_PRUNING_AUDIT_2026-10-22.md` |
-| **Path B student128** | first run 9.5 meV/atom / 32.4 meV/Å; corrected weighted loss 24.5 / **29.7** (F passes, E fails); force-weight sweep 5/10 running on q4 `t-20261022191537-h7bf9` | `docs/results/PATH_B_STUDENT128_TRAIN_2026-10-22.md` |
+| **Path B student128** | first run 9.5 meV/atom / 32.4 meV/Å; corrected weighted loss 24.5 / **29.7** (F passes, E fails); force-weight sweep 5/10 and 192 capacity control running | `docs/results/PATH_B_STUDENT128_TRAIN_2026-10-22.md` |
+| **Path B active learning** | committee of 3, student MD/rattle candidates, force-variance selection, ~240 FP64 teacher labels, 192 retrain; q4 `t-20261022193021-r82s4` | `docs/design/PATH_B_ACTIVE_LEARNING_2026-10-22.md` |
 
 [Latest speed & plan](docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md) ·
 [Optimization ledger](docs/results/OPTIMIZATION_LEDGER.md) ·
