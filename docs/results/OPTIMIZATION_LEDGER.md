@@ -241,3 +241,20 @@ The 10,368-atom run is **2× the 5,184 capacity** at 1.76× the memory and
 omitted masses (`Not all per-type masses are set`); attempt-02 added
 `mass 1 15.999` / `mass 2 1.008`. Source:
 `bench/q4_polar_10368_2026-10-22/attempt-02/`.
+
+### R1 reverse MH-1 register accumulation (2026-10-22)
+
+Same-binary A/B of `MATOS_MH1_REV_REGACC=0` vs `1` on `lmp_rev_r1`
+(sha256 `98ee3af9…1560cfd`): per-channel register accumulation plus
+identity-mask elision in the reverse MH-1 channel/harmonic kernels.
+
+- 128-atom parity: dPE = 0; max dF = **4.86e-16 eV/Å**; rms dF = 1.30e-16.
+- 1,296-atom interleaved A/B, 3 rounds × 4 `run 1` samples:
+  - off: 198.6685 / 198.978 / 199.3865 ms → median **198.978 ms**
+    (153.53 µs/atom);
+  - on: 193.1375 / 192.914 / 192.848 ms → median **192.914 ms**
+    (148.85 µs/atom);
+  - ratio **0.96952 → −3.05%, −6.06 ms/eval**.
+- The absolute baseline is higher than the 189.3 ms N1 A/B (GPU state/clock);
+  use the same-binary ratio. Source: `bench/rev_r1_2026-10-22/rev_r1_ab.json`
+  → `docs/results/data/rev_r1_2026-10-22.json`.

@@ -120,6 +120,16 @@ task also has ~30–45 s of instance startup plus ~15 s model load; that is
 negligible for a multi-day run, but ~8% for a short 1 ps run (12.2 min at
 1 fs).
 
+## Path progress (2026-10-22)
+
+- **Path A capacity:** 10,368 atoms PASS, 33.71 GiB, 149.14 µs/atom; 2× the
+  5,184 capacity on one A100-80GB.
+- **Path A R1 reverse MH-1:** same-binary **−3.05%** (198.978 → 192.914 ms),
+  parity dPE 0 / max dF 4.86e-16 eV/Å; `MATOS_MH1_REV_REGACC=1`.
+- **Path B six-molecule teacher smoke:** H2O/NH3/C2H4/CH4/C2H6/CO2, 8
+  configurations × 12 molecules each, extxyz + summary written; CO2 needs
+  gentler sampling before training.
+
 ## Artifacts
 
 - `docs/results/OPTIMIZATION_LEDGER.md` — every number and source.
