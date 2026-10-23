@@ -52,6 +52,23 @@ target. Teacher labeling at 0.1–0.5 s/frame is 1.4–7 h of GPU time per 50k
 frames, so the scale-up is dominated by MD generation and teacher wall time,
 not by the student.
 
+## Scale-up launched (2026-10-23)
+
+The ~2k pilot is not enough. Three parallel q4 tasks now generate up to
+**43,200 bulk frames**:
+
+| Task | Species | Grid | Max frames |
+|---|---|---|---:|
+| `t-20261023100114-9pdj8` (A) | H2O, CO2 | 9 densities × 8 temperatures × 100 | 14,400 |
+| `t-20261023100130-kvvrg` (B) | NH3, CH4 | same | 14,400 |
+| `t-20261023100147-8bq5c` (C) | C2H4, C2H6 | same | 14,400 |
+| pilot `t-20261023095902-fwmjq` | all six | 10 × 11 × 3 | ~2,000 |
+
+Density 1e-4–0.1 molecules/Å³, temperature 150–2000 K, 32-molecule boxes,
+1200 steps/state, FP64 teacher labels. This is the first 40k-frame tier; if
+the learning curve is still descending, extend to 50k–100k with longer
+trajectories and active selection.
+
 ## Next
 
 1. Train a real 4G-HDNNP-style student (local MLP + QEq/FFT, FP64) on the
