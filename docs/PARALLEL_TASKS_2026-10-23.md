@@ -10,7 +10,7 @@ local A100, and CPU for code work.
 
 | Resource | Count | Owner | Status |
 |---|---:|---|---|
-| q4 A100 (remote) | 3 running + 1 free / 4 cap | Plan B bulk sampling (shards A/B/C) | running |
+| q4 A100 (remote) | 4 / 4 cap | shards A/B/C + Plan B bulk fine-tune | running |
 | Local A100 | 1 | **reserved for the user** | **idle (0 %, 4 MiB)** |
 | CPU agents | 4 | Plans A, B, C, D owners | Plan A/C/D done; B/H4 paused for the card |
 
@@ -24,7 +24,7 @@ testing rather than filling every card permanently.
 and must stay idle (0 %, 4 MiB) until released. The Plan B bulk fine-tune and
 the H4 RuNNer-aligned training were stopped for this; both are restartable
 from `bench/path_b_bulk_ft_2026-10-23/attempt-01/` and
-`bench/h4_2026-10-23/`. The q4 free slot also stays unsubmitted.
+`bench/h4_2026-10-23/`. The local card remains idle; q4 is now 4/4 with the Plan B fine-tune.
 
 ## Board
 
@@ -35,7 +35,7 @@ from `bench/path_b_bulk_ft_2026-10-23/attempt-01/` and
 | A3 | P1 | Fresh CUPTI trace of current default | Plan A | A1/A2 | deferred | — |
 | B1 | P0 | 43k-frame bulk campaign (pilot + A/B/C shards) | q4 tasks | — | running | `bench/path_b_bulk*/.../data/*.xyz` |
 | B2 | P0 | Bulk dataset merge + state-level split + ACF | Plan B agent | pilot data | done | 15,641 frames; 1,098/176 states; N_eff 4,165 (26.6%) |
-| B3 | P0 | 128L1 bulk fine-tune | Plan B | B1, B2 | staged | run dir `bench/path_b_bulk_ft_2026-10-23/attempt-01`; launch after shards |
+| B3 | P0 | 128L1 bulk fine-tune | Plan B | B1, B2 | running q4 `t-20261023115230-52z6m` | tranche 1 on 15,641 frames; `q4_run/student_run/logs` |
 | B4 | P1 | Stratified eval (species x density x T) | Plan B agent | B2 | done | `scripts/eval_student_bulk.py` (FP64 default) |
 | C1 | P1 | 4G-HDNNP speed prototype + training | Plan C agent | — | done | 19.26 converged / 13.45 @60 CG; accuracy failing; report `docs/design/PLAN_C_4G_2026-10-23.md` |
 | C2 | P2 | 4G bulk fine-tune smoke | Plan C agent | pilot data | partial | bulk 73.2/95.0 (pilot), C2H4 94.9/116.1; scaler bug fixed |
