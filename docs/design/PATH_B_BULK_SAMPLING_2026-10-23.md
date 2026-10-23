@@ -32,6 +32,26 @@ This excludes the real descriptor/force-trick work, but it shows that FP64
 is not the blocker for a 4G-style model: **30 µs/atom/step is comfortable,
 4 µs is plausible with an optimized kernel**.
 
+## Data budget: 2,166 is a prototype, not a bulk dataset
+
+The 2,166 gas-phase configs and the ~2k-frame bulk pilot are enough only to
+validate the pipeline and the gas-phase gate. For condensed-phase density and
+temperature coverage, the budget should be:
+
+| Model | Target teacher frames | Why |
+|---|---:|---|
+| PolarMACE 128L1 fine-tune | 10k–20k | narrow six-molecule domain, active selection |
+| 4G / linear student | 50k–100k | lower-capacity local model needs broader coverage |
+| DFT validation subset | 100–500 | detect teacher bias, not training |
+
+The 10 densities × 11 temperatures × 6 species grid gives 660 states; at
+100–500 frames/state that is 66k–330k candidates before selection. Use
+longer NVT/NPT trajectories (2–10 ps, sample every 10–20 steps), 4 q4 GPUs
+in parallel, and an active/random hybrid to keep the labeled set near the
+target. Teacher labeling at 0.1–0.5 s/frame is 1.4–7 h of GPU time per 50k
+frames, so the scale-up is dominated by MD generation and teacher wall time,
+not by the student.
+
 ## Next
 
 1. Train a real 4G-HDNNP-style student (local MLP + QEq/FFT, FP64) on the
