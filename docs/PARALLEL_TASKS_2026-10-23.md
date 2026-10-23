@@ -10,15 +10,21 @@ local A100, and CPU for code work.
 
 | Resource | Count | Owner | Status |
 |---|---:|---|---|
-| q4 A100 (remote) | 4 / 4 admission cap | Plan B bulk sampling (pilot + shards A/B/C) | running |
-| Local A100 | 1 | Plan C prototype + shared test slot | running / intermittent |
-| CPU agents | 4 | Plans A, B, C, D owners | running |
+| q4 A100 (remote) | 3 running + 1 free / 4 cap | Plan B bulk sampling (shards A/B/C) | running |
+| Local A100 | 1 | **reserved for the user** | **idle (0 %, 4 MiB)** |
+| CPU agents | 4 | Plans A, B, C, D owners | Plan A/C/D done; B/H4 paused for the card |
 
 The Volc queue itself reports 15 free GPUs, but MatOS per-user admission caps
 active veMLP tasks at **4 GPUs**. `devinstance-queue3` has 2 free but is not
 enabled for submission. So the usable ceiling is 4 remote + 1 local = 5 cards.
 Keep one slot (the local card, then the freed pilot slot) available for
 testing rather than filling every card permanently.
+
+**Reservation (2026-10-23 03:55Z):** the local A100 is reserved for the user
+and must stay idle (0 %, 4 MiB) until released. The Plan B bulk fine-tune and
+the H4 RuNNer-aligned training were stopped for this; both are restartable
+from `bench/path_b_bulk_ft_2026-10-23/attempt-01/` and
+`bench/h4_2026-10-23/`. The q4 free slot also stays unsubmitted.
 
 ## Board
 
