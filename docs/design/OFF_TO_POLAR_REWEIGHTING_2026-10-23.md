@@ -4,9 +4,16 @@
 **Question:** can a long MACE-OFF trajectory be re-evaluated with MACE-POLAR on
 a finite frame set and reweighted to recover MACE-POLAR ensemble statistics?
 How many frames are needed for 1 ns, and what is the role of a constant
-offset / linear `c1, c2` correction?
+offset / linear `slope, intercept` correction?
 **Scope:** theory, a practical protocol, and a short end-to-end feasibility run.
 No production 1 ns trajectory was launched for this note.
+
+**Terminology note (2026-10-23):** the PRL c1/c2 are the one- and two-body
+direct correlation functions (Dijkman et al., PRL 134, 056103 (2025)), not the
+linear-fit coefficients. The linear fit here is called slope/intercept; the
+PRL objects and their extraction are documented in the standalone repository
+`github.com/Yong-Q/test` (`docs/DIRECT_CORRELATION.md`). The code copy in this
+repository is kept for provenance; the standalone repo is canonical.
 
 ---
 
