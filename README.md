@@ -81,11 +81,14 @@ PE is identical to the baseline on the combined arm; max force difference is
 
 | Model | Held-out samples | MAE E | MAE F | 1,296 | 5,184 |
 |---|---:|---:|---:|---:|---:|
+| **128 max_L=1, fw=5, 2,166 data** | 432 | **3.8 meV/atom** | **6.1 meV/Å** | **92.84** (local) | pending |
 | 192 max_L=1, fw=5, 2,166 data | 432 | **2.1 meV/atom** | **6.7 meV/Å** | **116.84** | **121.16** |
 | Exact 512 teacher | — | 0 (reference) | 0 (reference) | 133.04 | 128.99 |
 
-All speeds are **µs/atom/step**, clean q4 task `t-20261022214602-5vk8x`
-(1×A100, 2 rounds × 5 steps). The student is trained on six molecules in
+All speeds are **µs/atom/step**. The 192 row is clean q4 task
+`t-20261022214602-5vk8x`; the 128 row is a local single-run 92.84, clean q4
+`t-20261023085456-lt8kl` is running. The 128 engine parity on an in-domain
+H2O frame is 1.1e-8 eV / 1.08e-8 eV/Å. The student is trained on six molecules in
 16 Å boxes; the water speed run is out-of-domain and measures execution only.
 The engine needed generic-width fixes (local-electron 4C/C/2C and gate
 activation serialization); in-domain H2O parity is 5.8e-9 eV / ~1e-8 eV/Å.
