@@ -70,10 +70,10 @@ The runtime-width N1 path gives **no measurable gain at C=192** (0.15237 vs
 0.15305 s/step, ~0.4%); fixed engine overhead, not UVU width, dominates.
 
 The engine-compatible **128 max_L=1** student on the same 2,166 configs is the
-best speed result: **3.8 meV/atom / 6.1 meV/Å** on 432 held-out and **92.84
-µs/atom/step** at 1,296 in a local single run (below 100). Clean q4
-`t-20261023085456-lt8kl` is running. In-domain H2O engine parity is **1.1e-8
-eV / 1.08e-8 eV/Å**.
+best speed result: **3.8 meV/atom / 6.1 meV/Å** on 432 held-out and **91.64 /
+95.11 µs/atom/step** at 1,296 / 5,184 (clean q4 `t-20261023085456-lt8kl`),
+below 100 at both sizes. In-domain H2O engine parity is **1.1e-8 eV / 1.08e-8
+eV/Å**.
 
 ## What was validated
 

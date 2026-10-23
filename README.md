@@ -26,6 +26,7 @@ PolarMACE is a different model.*
 | **5,184 production scale** | **128.99 µs/atom/step**, **−6.26 (4.6 %)** vs 135.25; PE identical; 7.74 days/ns at 1 fs | q4 `t-20261022182725-fgpwv`; `docs/results/data/q4_arch_ab_5184_2026-10-22.json` |
 | **Node-owned forward alone** | 135.98 µs/atom/step, **−2.92 (2.1 %)**; `MATOS_MH1_FWD_NODE=0` opts out | same q4 run |
 | **Fused reverse alone** | 136.08 µs/atom/step, **−2.83 (2.0 %)**; `MATOS_MH1_REV_FUSED2=0` opts out | `docs/results/FUSED_REVERSE_2026-10-22.md` |
+| **Distilled 128L1 below 100** | **91.64 / 95.11 µs/atom/step** at 1,296 / 5,184 (clean q4); 3.8 meV/atom / 6.1 meV/Å on 432 held-out; exact teacher remains 133.04 / 128.99 | `docs/results/data/q4_student128L1_speed_2026-10-23.json` |
 | **Mathematics-first architecture** | exact-checkpoint route projects **97–115 µs/atom/step**; 90 not supported on one exact-FP64 GPU | `docs/design/MATH_ARCH_2026-10-22.md` |
 | **Path B pruning audit** | zero-shot no-go beyond ~1.1×; rebuild + fine-tune targets 1.5–4× (C=384→320 first) | `docs/results/PATH_B_PRUNING_AUDIT_2026-10-22.md` |
 | **Path B student in engine** | 192 max_L=1: **2.1 meV/atom / 6.7 meV/Å** (432 held-out); **116.84 / 121.16 µs/atom/step** at 1,296 / 5,184 (clean q4) | `docs/results/PATH_B_STUDENT128_TRAIN_2026-10-22.md` |
@@ -81,14 +82,14 @@ PE is identical to the baseline on the combined arm; max force difference is
 
 | Model | Held-out samples | MAE E | MAE F | 1,296 | 5,184 |
 |---|---:|---:|---:|---:|---:|
-| **128 max_L=1, fw=5, 2,166 data** | 432 | **3.8 meV/atom** | **6.1 meV/Å** | **92.84** (local) | pending |
+| **128 max_L=1, fw=5, 2,166 data** | 432 | **3.8 meV/atom** | **6.1 meV/Å** | **91.64** | **95.11** |
 | 192 max_L=1, fw=5, 2,166 data | 432 | **2.1 meV/atom** | **6.7 meV/Å** | **116.84** | **121.16** |
 | Exact 512 teacher | — | 0 (reference) | 0 (reference) | 133.04 | 128.99 |
 
-All speeds are **µs/atom/step**. The 192 row is clean q4 task
-`t-20261022214602-5vk8x`; the 128 row is a local single-run 92.84, clean q4
-`t-20261023085456-lt8kl` is running. The 128 engine parity on an in-domain
-H2O frame is 1.1e-8 eV / 1.08e-8 eV/Å. The student is trained on six molecules in
+All speeds are **µs/atom/step**, clean q4: 128 row `t-20261023085456-lt8kl`,
+192 row `t-20261022214602-5vk8x`. The 128 engine parity on an in-domain H2O
+frame is 1.1e-8 eV / 1.08e-8 eV/Å. **The 128 distilled student is below
+100 µs/atom/step at both sizes.** The student is trained on six molecules in
 16 Å boxes; the water speed run is out-of-domain and measures execution only.
 The engine needed generic-width fixes (local-electron 4C/C/2C and gate
 activation serialization); in-domain H2O parity is 5.8e-9 eV / ~1e-8 eV/Å.
