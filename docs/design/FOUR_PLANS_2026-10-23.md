@@ -8,7 +8,7 @@ with FP64, 2-step SCF and exact Ewald; the students are new models.
 |---|---|---|---|---|
 | **A** | Exact PolarMACE engine optimization | 133.04 / 128.99 (1,296 / 5,184) | 100 exact | E/F parity, then speed |
 | **B** | PolarMACE student distillation | 128L1: 91.64 / 95.11; 3.8 / 6.1 on 432 gas-phase | keep <100 on bulk | 5 meV/atom, 30 meV/Å on bulk |
-| **C** | Custom 4G-HDNNP-like student (local MLP + QEq/FFT) | FP64 speed prototype 0.72 (fake) | **~20** | 5 / 30 on six-molecule bulk |
+| **C** | Custom 4G-HDNNP-like student (local MLP + QEq/FFT) | real FP64 prototype: **19.0 full E+F** at 5,184, 42k params; gas accuracy 23.2 / 32.6 (not gated) | **~20** | 5 / 30 on six-molecule bulk |
 | **D** | Linear student distilled from PolarMACE, FP64 only | gas gate PASS in FP32 student (**0.924 / 3.984**); FP64 inference re-eval pending; FP32 reference 4.473, FP64 generic probe 284.8; bulk **BLOCKED** | **~9–10 FP64** | 5 / 30 on gas and bulk |
 
 ## Plan A next levers
@@ -26,12 +26,22 @@ The exact 100 target requires all three; realistic exact landing is 113–125.
 - Fine-tune 128L1 on the bulk set; evaluate on density/temperature-stratified
   held-out trajectories; keep the engine speed <100.
 
-## Plan C next steps
+## Plan C status and next steps
 
-- Build a real speed prototype: radial/angular local descriptors, small MLP,
-  QEq with FFT/PME and the force trick, FP64 or mixed.
-- Train/distill on the 2,166 gas data first, then the 43k bulk set.
-- Target ~20 µs; report a measured number, not a projection.
+- **Architecture:** RuNNer2-style 4G-HDNNP: element-resolved G2-like radial
+  and G4-like angular descriptors, element-specific local MLPs, global QEq
+  with FFT/PME Coulomb, charges fed back into the atomic energy, and a force
+  trick (one adjoint solve + envelope theorem). This is our PyTorch
+  reimplementation, not RuNNer2 code.
+- **Speed (measured):** FP64, 5,184 atoms, full E+F **19.0 µs/atom/step**
+  (energy-only 5.93; neighbor rebuild 2.45; descriptors 0.48); 42,023
+  parameters. The earlier 0.72 was a kernel-only fake prototype and is
+  superseded.
+- **Accuracy (measured):** 23.2 meV/atom, 32.6 meV/Å on 432 gas frames after
+  6,600 steps — speed target met, accuracy gate **not** met (4.6x / 1.1x
+  above 5/30).
+- **Next:** train/distill on the bulk set, enlarge the network if needed,
+  re-gate at 5/30, then port the forward to the LAMMPS pair style.
 
 ## Plan D status and next steps
 
