@@ -25,6 +25,9 @@ and must stay idle (0 %, 4 MiB) until released. The Plan B bulk fine-tune and
 the H4 RuNNer-aligned training were stopped for this; both are restartable
 from `bench/path_b_bulk_ft_2026-10-23/attempt-01/` and
 `bench/h4_2026-10-23/`. The local card remains idle; q4 is now 4/4 with the Plan B fine-tune.
+The local card was used briefly for the 96-atom MACE-OFF→MACE-POLAR feasibility
+run (5 ps) and is idle again; the interface lives at
+https://github.com/Yong-Q/test.
 
 ## Board
 
@@ -44,6 +47,8 @@ from `bench/path_b_bulk_ft_2026-10-23/attempt-01/` and
 | D1 | P1 | Linear MACE distillation, gas gate | Plan D agent | — | done | 0.924/3.984 meV; FP32 4.473 µs; `docs/design/PLAN_D_LINEAR_2026-10-23.md` |
 | D2 | P0 | FP64 linear path (no FP32 headline) | Plan D | D1 | pending | FP64 probe 284.8 µs generic; dedicated path target ~9–10 |
 | D3 | P0 | Bulk retrain + re-gate | Plan D | B1, B3 | blocked | bulk labels absent |
+| R1 | P0 | Off→Polar reweighting interface, theory, analytic validation | main | — | done | `github.com/Yong-Q/test`; 8 tests; σ∝√N validation |
+| R2 | P0 | 96-atom feasibility probe | main | R1 | done | σ_β=3.89, ESS=10.1%, marginal; extrapolates to collapse at 1,296/5,184 |
 | S1 | P0 | Sampling audit (flaws vs requirements) | main | — | done | `docs/design/SAMPLING_AUDIT_2026-10-23.md` |
 | W1 | P2 | Sampling v2: batch 8-16 boxes per forward | unassigned | — | pending | throughput benchmark |
 | G1 | P2 | Git workflow: pre-push + CI + interfaces | main | — | done | `docs/GIT_WORKFLOW.md`, `.github/` |
