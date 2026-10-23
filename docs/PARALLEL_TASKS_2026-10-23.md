@@ -28,9 +28,9 @@ testing rather than filling every card permanently.
 | A2 | P0 | AffineMLP tape-copy aliasing | Plan A agent | A1 | queued (same agent) | parity + speed |
 | A3 | P1 | Fresh CUPTI trace of current default | Plan A | A1/A2 | pending | trace summary |
 | B1 | P0 | 43k-frame bulk campaign (pilot + A/B/C shards) | q4 tasks | — | running | `bench/path_b_bulk*/.../data/*.xyz` |
-| B2 | P0 | Bulk dataset merge + state-level split + ACF | Plan B agent | pilot data | running | `data/split_manifest.json` |
-| B3 | P0 | 128L1 bulk fine-tune | Plan B | B1, B2 | queued | run dir + eval report |
-| B4 | P1 | Stratified eval (species x density x T) | Plan B agent | B2 | running | `scripts/eval_student_bulk.py` |
+| B2 | P0 | Bulk dataset merge + state-level split + ACF | Plan B agent | pilot data | done | 15,641 frames; 1,098/176 states; N_eff 4,165 (26.6%) |
+| B3 | P0 | 128L1 bulk fine-tune | Plan B | B1, B2 | staged | run dir `bench/path_b_bulk_ft_2026-10-23/attempt-01`; launch after shards |
+| B4 | P1 | Stratified eval (species x density x T) | Plan B agent | B2 | done | `scripts/eval_student_bulk.py` (FP64 default) |
 | C1 | P1 | 4G-HDNNP speed prototype + training | Plan C agent | — | done | 19.26 converged / 13.45 @60 CG; accuracy failing; report `docs/design/PLAN_C_4G_2026-10-23.md` |
 | C2 | P2 | 4G bulk fine-tune smoke | Plan C agent | pilot data | partial | bulk 73.2/95.0 (pilot), C2H4 94.9/116.1; scaler bug fixed |
 | C3 | P1 | Full 43k bulk retrain, cell-grouped | Plan C | B1 | pending | 5/30 gate |

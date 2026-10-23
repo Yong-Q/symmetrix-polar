@@ -18,13 +18,23 @@ with FP64, 2-step SCF and exact Ewald; the students are new models.
 3. Grouped small FP64 GEMM/MLP/e3 kernels (67 → 57.8).
 The exact 100 target requires all three; realistic exact landing is 113–125.
 
-## Plan B next steps
+## Plan B status and next steps
 
-- The 43k-frame bulk density/temperature campaign is running
-  (`t-20261023100114-9pdj8`, `t-20261023100130-kvvrg`,
-  `t-20261023100147-8bq5c`, pilot `t-20261023095902-fwmjq`).
-- Fine-tune 128L1 on the bulk set; evaluate on density/temperature-stratified
-  held-out trajectories; keep the engine speed <100.
+- **Bulk campaign (snapshot 03:32Z):** pilot complete (975 frames); shard
+  C2H4 3,300, NH3 4,400; 15,641 frames merged with gas, 0 duplicates, all
+  labels finite and stable.
+- **Split:** whole-state holdout, 1,098 train / 176 valid states; zero state
+  or frame overlap. ACF says N_eff **4,165 / 15,641 (26.6%)**; 43k raw frames
+  are not 43k independent samples.
+- **Pipeline:** `scripts/prepare_bulk_dataset.py`,
+  `finetune_student_bulk.py`, `eval_student_bulk.py` validated end-to-end.
+  Fine-tune staged but **not launched** (shards still running).
+- **Smoke:** gas-only 128L1 is fine on gas (4.60 / 4.93 meV) but diverges on
+  dense bulk (one CH4 frame ΔE 1.3e7 eV/atom); labels are clean, so this is
+  the expected OOD failure. Bulk fine-tuning is required.
+- **Next:** rerun prepare after all shards land; launch the staged 128L1
+  fine-tune on the q4 slot freed by the pilot; evaluate per species / density
+  / temperature; gate 5 meV/atom, 30 meV/Å; keep <100 µs/atom/step.
 
 ## Plan C status and next steps
 

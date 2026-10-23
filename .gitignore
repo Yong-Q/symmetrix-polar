@@ -15,3 +15,6 @@ docs/report/figures/references/
 
 # downloaded skill staging
 .tmp_skill/
+
+# generated bulk datasets (large; reference workspace paths instead)
+/data/
