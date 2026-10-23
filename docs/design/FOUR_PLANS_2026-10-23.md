@@ -8,7 +8,7 @@ with FP64, 2-step SCF and exact Ewald; the students are new models.
 |---|---|---|---|---|
 | **A** | Exact PolarMACE engine optimization | 133.04 / 128.99 (1,296 / 5,184) | 100 exact | E/F parity, then speed |
 | **B** | PolarMACE student distillation | 128L1: 91.64 / 95.11; 3.8 / 6.1 on 432 gas-phase | keep <100 on bulk | 5 meV/atom, 30 meV/Å on bulk |
-| **C** | Custom 4G-HDNNP-like student (local MLP + QEq/FFT) | real FP64 prototype: **19.0 full E+F** at 5,184, 42k params; gas accuracy 23.2 / 32.6 (not gated) | **~20** | 5 / 30 on six-molecule bulk |
+| **C** | Custom 4G-HDNNP-like student (local MLP + QEq/FFT) | real FP64 prototype: **19.26 converged / 13.45 at 60 CG** at 5,184, 72k params; accuracy **not gated** (gas 38.2/40.3; bulk 73.2/95.0) | **~20** | 5 / 30 on six-molecule bulk |
 | **D** | Linear student distilled from PolarMACE, FP64 only | gas gate PASS in FP32 student (**0.924 / 3.984**); FP64 inference re-eval pending; FP32 reference 4.473, FP64 generic probe 284.8; bulk **BLOCKED** | **~9–10 FP64** | 5 / 30 on gas and bulk |
 
 ## Plan A next levers
@@ -28,20 +28,26 @@ The exact 100 target requires all three; realistic exact landing is 113–125.
 
 ## Plan C status and next steps
 
-- **Architecture:** RuNNer2-style 4G-HDNNP: element-resolved G2-like radial
-  and G4-like angular descriptors, element-specific local MLPs, global QEq
-  with FFT/PME Coulomb, charges fed back into the atomic energy, and a force
+- **Architecture:** 4G-HDNNP: element-resolved radial G2 and angular G4
+  descriptors (48 + 80 features), a 72k-parameter local MLP, global QEq with
+  FFT/PME Coulomb, charges fed back into the atomic energy, and a force
   trick (one adjoint solve + envelope theorem). This is our PyTorch
-  reimplementation, not RuNNer2 code.
-- **Speed (measured):** FP64, 5,184 atoms, full E+F **19.0 µs/atom/step**
-  (energy-only 5.93; neighbor rebuild 2.45; descriptors 0.48); 42,023
-  parameters. The earlier 0.72 was a kernel-only fake prototype and is
-  superseded.
-- **Accuracy (measured):** 23.2 meV/atom, 32.6 meV/Å on 432 gas frames after
-  6,600 steps — speed target met, accuracy gate **not** met (4.6x / 1.1x
-  above 5/30).
-- **Next:** train/distill on the bulk set, enlarge the network if needed,
-  re-gate at 5/30, then port the forward to the LAMMPS pair style.
+  reimplementation; the separate H4 owner is aligning it to RuNNer2 defaults.
+- **Speed (measured):** FP64, 5,184 atoms, full E+F **19.26 µs/atom/step**
+  converged (88 CG, residual 6.6e-10) and **13.45** at 60 CG
+  (residual 8.8e-7); energy-only 8.48; neighbor 2.36; descriptors 0.44.
+  FP32 is 15.10, not faster. The earlier 0.72 was a kernel-only fake
+  prototype and is superseded.
+- **Accuracy (measured, failing):** gas 38.15 meV/atom / 40.26 meV/Å (combined
+  gas+bulk model); bulk pilot 73.21 / 94.99; bulk2 C2H4 94.92 / 116.15.
+  Best gas-only model is 23.18 / 32.61 (force 1.09x gate, energy 4.6x).
+  C2H4/C2H6 energy bias and CO2 forces dominate.
+- **Failure fixed:** the gas-only feature scaler amplified absent O-O channels
+  by up to 1e5, giving 22 eV/atom on bulk; an RMS floor plus a combined
+  gas+bulk scaler/training cut the bulk error to 73 meV/atom.
+- **Next:** train on the full 43k bulk corpus with cell-grouped batches and a
+  gas+bulk schedule; then re-gate. Port the forward to LAMMPS only after the
+  accuracy gate.
 
 ## Plan D status and next steps
 

@@ -31,8 +31,10 @@ testing rather than filling every card permanently.
 | B2 | P0 | Bulk dataset merge + state-level split + ACF | Plan B agent | pilot data | running | `data/split_manifest.json` |
 | B3 | P0 | 128L1 bulk fine-tune | Plan B | B1, B2 | queued | run dir + eval report |
 | B4 | P1 | Stratified eval (species x density x T) | Plan B agent | B2 | running | `scripts/eval_student_bulk.py` |
-| C1 | P1 | 4G-HDNNP speed prototype + training design | Plan C agent | — | running | `bench/plan_c_4g_2026-10-23/` |
-| C2 | P2 | 4G bulk fine-tune smoke | Plan C agent | pilot data | running | train log |
+| C1 | P1 | 4G-HDNNP speed prototype + training | Plan C agent | — | done | 19.26 converged / 13.45 @60 CG; accuracy failing; report `docs/design/PLAN_C_4G_2026-10-23.md` |
+| C2 | P2 | 4G bulk fine-tune smoke | Plan C agent | pilot data | partial | bulk 73.2/95.0 (pilot), C2H4 94.9/116.1; scaler bug fixed |
+| C3 | P1 | Full 43k bulk retrain, cell-grouped | Plan C | B1 | pending | 5/30 gate |
+| H1 | P1 | RuNNer2-aligned H4 (2×15 tanh, G2 η grid, elemental J) | H4 agent | — | running | new `bench/h4_2026-10-23/` |
 | D1 | P1 | Linear MACE distillation, gas gate | Plan D agent | — | done | 0.924/3.984 meV; FP32 4.473 µs; `docs/design/PLAN_D_LINEAR_2026-10-23.md` |
 | D2 | P0 | FP64 linear path (no FP32 headline) | Plan D | D1 | pending | FP64 probe 284.8 µs generic; dedicated path target ~9–10 |
 | D3 | P0 | Bulk retrain + re-gate | Plan D | B1, B3 | blocked | bulk labels absent |
