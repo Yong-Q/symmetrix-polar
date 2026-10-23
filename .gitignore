@@ -9,3 +9,6 @@ docs/technical/fonts/
 docs/report/sources/
 docs/tutorial/.build/
 docs/report/figures/references/
+
+# ephemeral reference downloads
+.tmp_refs/
