@@ -24,9 +24,9 @@ testing rather than filling every card permanently.
 
 | ID | P | Task | Owner | Depends on | Status | Evidence |
 |---|---|---|---|---|---|---|
-| A1 | P0 | AffineMLP bias-epilogue fusion | Plan A agent | — | running | engine commit + parity/speed report |
-| A2 | P0 | AffineMLP tape-copy aliasing | Plan A agent | A1 | queued (same agent) | parity + speed |
-| A3 | P1 | Fresh CUPTI trace of current default | Plan A | A1/A2 | pending | trace summary |
+| A1 | P0 | AffineMLP bias-epilogue fusion | Plan A agent | — | **frozen** | WIP patch `patches/plan_a_tape_epilogue_wip_2026-10-23.patch`; default stays 133.04 |
+| A2 | P0 | AffineMLP tape-copy aliasing | Plan A agent | A1 | **frozen** | stashed in engine worktree |
+| A3 | P1 | Fresh CUPTI trace of current default | Plan A | A1/A2 | deferred | — |
 | B1 | P0 | 43k-frame bulk campaign (pilot + A/B/C shards) | q4 tasks | — | running | `bench/path_b_bulk*/.../data/*.xyz` |
 | B2 | P0 | Bulk dataset merge + state-level split + ACF | Plan B agent | pilot data | done | 15,641 frames; 1,098/176 states; N_eff 4,165 (26.6%) |
 | B3 | P0 | 128L1 bulk fine-tune | Plan B | B1, B2 | staged | run dir `bench/path_b_bulk_ft_2026-10-23/attempt-01`; launch after shards |

@@ -1,9 +1,14 @@
 # Plan A — persistent execution, reverse dataflow, and grouped kernels
 
 **Date:** 2026-10-23
-**Status:** measured-budget implementation plan. No engine source was modified;
-no README was modified; no GPU job was launched. Plan B/C/D files were not
-touched.
+**Status (2026-10-23): FROZEN by decision.** The exact default stays at
+**133.04 / 128.99 µs/atom/step** (1,296 / 5,184). The 100 µs campaign is
+deferred; the tape/epilogue WIP was stashed in the engine worktree and saved as
+`patches/plan_a_tape_epilogue_wip_2026-10-23.patch`. Nothing unvalidated is on
+the default path.
+**Original status:** measured-budget implementation plan. No engine source was
+modified; no README was modified; no GPU job was launched. Plan B/C/D files
+were not touched.
 **Scope:** the exact 512-channel PolarMACE checkpoint (`MACE-POLAR-1-M`,
 `polar_symmetrix_probe.json`, sha256 `0e98f0ae…`), FP64, 2-step unrolled
 SCF/Fukui, exact GTO-Ewald, one A100-SXM4-80GB, 1,296 and 5,184 atoms.

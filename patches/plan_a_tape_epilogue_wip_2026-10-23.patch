@@ -1,0 +1,418 @@
+diff --git a/libsymmetrix/source/affine_mlp_kokkos.cpp b/libsymmetrix/source/affine_mlp_kokkos.cpp
+index 0da5fdc..c7dac91 100644
+--- a/libsymmetrix/source/affine_mlp_kokkos.cpp
++++ b/libsymmetrix/source/affine_mlp_kokkos.cpp
+@@ -16,6 +16,45 @@ std::vector<Precision> tensor_values(const nlohmann::json& value)
+ {
+     return value.at("values").get<std::vector<Precision>>();
+ }
++
++// Epilogue of a Linear layer: target = gemm + (bias(row) + contribution).
++// The fused consumers (LayerNorm/SiLU) evaluate the same expression while the
++// producer value is already in a register, so no extra read-modify-write pass
++// over the GEMM result is required.  The association is identical to the
++// standalone epilogue kernel (`target += bias + contribution`).
++template<typename Precision>
++KOKKOS_INLINE_FUNCTION
++Precision affine_linear_epilogue_value(
++    const Precision raw,
++    const int sample,
++    const int column,
++    const bool conditioned_layer,
++    const bool row_conditioned,
++    const bool indexed_conditioned,
++    const int first_edge,
++    const Kokkos::View<Precision*> bias,
++    const Kokkos::View<const Precision**,Kokkos::LayoutRight>
++        row_contributions,
++    const Kokkos::View<const int*> source_edge_types,
++    const Kokkos::View<const int*> target_node_indices,
++    const Kokkos::View<const int*> node_types,
++    const Kokkos::View<const Precision**,Kokkos::LayoutRight>
++        source_contribution_table,
++    const Kokkos::View<const Precision**,Kokkos::LayoutRight>
++        target_contribution_table)
++{
++    Precision contribution=Precision(0);
++    if(conditioned_layer&&row_conditioned)
++        contribution=row_contributions(sample,column);
++    else if(conditioned_layer&&indexed_conditioned) {
++        const int edge=first_edge+sample;
++        const int target_node=target_node_indices(edge);
++        contribution=source_contribution_table(
++            source_edge_types(edge),column)
++            +target_contribution_table(node_types(target_node),column);
++    }
++    return raw+(bias(column)+contribution);
++}
+ }
+ 
+ template<typename Precision>
+@@ -388,11 +427,13 @@ void AffineMLPKokkosT<Precision>::forward_indexed_impl(
+         source_contribution_table,
+     Kokkos::View<const Precision**,Kokkos::LayoutRight>
+         target_contribution_table,
+-    int layer_count)
++    int layer_count,
++    Kokkos::View<Precision**,Kokkos::LayoutRight> staged_output)
+ {
+     forward_impl(
+         input,{},source_edge_types,target_node_indices,node_types,first_edge,
+-        source_contribution_table,target_contribution_table,layer_count);
++        source_contribution_table,target_contribution_table,layer_count,
++        staged_output);
+ }
+ 
+ template<typename Precision>
+@@ -407,7 +448,8 @@ void AffineMLPKokkosT<Precision>::forward_impl(
+         source_contribution_table,
+     Kokkos::View<const Precision**,Kokkos::LayoutRight>
+         target_contribution_table,
+-    int layer_count)
++    int layer_count,
++    Kokkos::View<Precision**,Kokkos::LayoutRight> staged_output)
+ {
+     const bool row_conditioned=row_contributions.data()!=nullptr;
+     const bool indexed_conditioned=
+@@ -440,7 +482,41 @@ void AffineMLPKokkosT<Precision>::forward_impl(
+             "inconsistent.");
+     prepare(input.extent(0),input.extent(1),layer_count);
+     if(conditioned) prepare_conditioned_weight(input.extent(1));
+-    ordered_kokkos_deep_copy(values(0),input);
++    const char* alias_env=std::getenv("MATOS_AFFINE_TAPE_ALIAS");
++    const bool tape_alias=!(alias_env!=nullptr&&std::atoi(alias_env)==0);
++    bool input_aliased=false;
++    if(tape_alias
++        &&types(0)==Linear
++        &&input.data()!=nullptr
++        &&input.stride(1)==1
++        &&input.stride(0)==input.extent(1)) {
++        // The tape never reads slot 0 when the first layer is a Linear (the
++        // Linear reverse consumes only the weight and the target adjoint), so
++        // the caller's input buffer can back the tape directly.  This removes
++        // one full [batch x input] device-to-device copy per invocation.
++        values(0)=TapeView(
++            const_cast<Precision*>(input.data()),
++            input.extent(0),input.extent(1));
++        input_aliased=true;
++    }
++    if(!input_aliased) ordered_kokkos_deep_copy(values(0),input);
++    if(tape_alias
++        &&staged_output.data()!=nullptr
++        &&staged_output.data()!=input.data()
++        &&staged_output.extent(0)==values(layer_count).extent(0)
++        &&staged_output.extent(1)==values(layer_count).extent(1)
++        &&staged_output.stride(1)==1
++        &&staged_output.stride(0)
++            ==staged_output.extent(1)) {
++        // The last executed layer is the only writer of values(layer_count);
++        // letting it write the caller's output removes the staging copy.
++        values(layer_count)=TapeView(
++            staged_output.data(),
++            staged_output.extent(0),staged_output.extent(1));
++    }
++    const char* epilogue_env=std::getenv("MATOS_AFFINE_EPILOGUE_FUSED");
++    const bool fuse_epilogue=!(epilogue_env!=nullptr
++        &&std::atoi(epilogue_env)==0);
+     for (int layer=0; layer<layer_count;) {
+         if(types(layer)==LayerNorm&&layer+1<layer_count&&types(layer+1)==SiLU) {
+             auto source=values(layer);
+@@ -448,6 +524,17 @@ void AffineMLPKokkosT<Precision>::forward_impl(
+             auto gamma=weights(layer);
+             auto beta=biases(layer);
+             const Precision epsilon=eps(layer);
++            // When the producer Linear skipped its standalone epilogue, apply
++            // the same bias + type contribution here while the raw GEMM value
++            // is loaded.  The value is written back into the tape slot so the
++            // reverse pass observes exactly the same numbers as before.
++            const bool fuse_producer_bias=fuse_epilogue&&layer>0
++                &&types(layer-1)==Linear
++                &&source.extent(0)>4;
++            auto producer_bias=fuse_producer_bias
++                ?biases(layer-1):Kokkos::View<Precision*>();
++            const bool conditioned_producer=fuse_producer_bias
++                &&(layer-1)==0;
+             const char* ln_env=std::getenv("MATOS_AFFINE_LN_PARALLEL");
+             const bool team_ln=!(ln_env!=nullptr&&std::atoi(ln_env)==0);
+             if(team_ln) {
+@@ -455,27 +542,52 @@ void AffineMLPKokkosT<Precision>::forward_impl(
+                 // deterministic team tree reduction; the elementwise pass is
+                 // one column per thread.  The default elementwise fallback
+                 // (MATOS_AFFINE_LN_PARALLEL=0) preserves the round-2 kernel.
++                // The epilogue fusion stages the conditioned value once in
++                // team scratch, replacing its former standalone RMW pass.
+                 const int width=static_cast<int>(source.extent(1));
+                 const int team_size=width<128?width:128;
++                using scratch_view=Kokkos::View<Precision*,
++                    Kokkos::DefaultExecutionSpace::scratch_memory_space,
++                    Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
++                const std::size_t smem=scratch_view::shmem_size(width);
+                 Kokkos::parallel_for(
+                     "affine fused layer norm silu",
+-                    Kokkos::TeamPolicy<>(target.extent(0),team_size),
++                    Kokkos::TeamPolicy<>(target.extent(0),team_size)
++                        .set_scratch_size(0,Kokkos::PerTeam(smem)),
+                     KOKKOS_LAMBDA(
+                         const Kokkos::TeamPolicy<>::member_type& team) {
+                         const int sample=team.league_rank();
++                        scratch_view scratch(team.team_scratch(0),width);
++                        Kokkos::parallel_for(
++                            Kokkos::TeamThreadRange(team,width),
++                            [&](const int column) {
++                                Precision value=source(sample,column);
++                                if(fuse_producer_bias) {
++                                    value=affine_linear_epilogue_value(
++                                        value,sample,column,
++                                        conditioned_producer,
++                                        row_conditioned,indexed_conditioned,
++                                        first_edge,producer_bias,
++                                        row_contributions,source_edge_types,
++                                        target_node_indices,node_types,
++                                        source_contribution_table,
++                                        target_contribution_table);
++                                    source(sample,column)=value;
++                                }
++                                scratch(column)=value;
++                            });
+                         Precision mean=Precision(0);
+                         Kokkos::parallel_reduce(
+                             Kokkos::TeamThreadRange(team,width),
+                             [&](const int column,Precision& sum) {
+-                                sum+=source(sample,column);
++                                sum+=scratch(column);
+                             },mean);
+                         mean/=width;
+                         Precision variance=Precision(0);
+                         Kokkos::parallel_reduce(
+                             Kokkos::TeamThreadRange(team,width),
+                             [&](const int column,Precision& sum) {
+-                                const Precision delta=
+-                                    source(sample,column)-mean;
++                                const Precision delta=scratch(column)-mean;
+                                 sum+=delta*delta;
+                             },variance);
+                         variance/=width;
+@@ -484,7 +596,7 @@ void AffineMLPKokkosT<Precision>::forward_impl(
+                         Kokkos::parallel_for(
+                             Kokkos::TeamThreadRange(team,width),
+                             [&](const int column) {
+-                                const Precision value=(source(sample,column)
++                                const Precision value=(scratch(column)
+                                     -mean)*inverse*gamma(0,column)
+                                     +beta(column);
+                                 target(sample,column)=value
+@@ -496,8 +608,20 @@ void AffineMLPKokkosT<Precision>::forward_impl(
+                 "affine fused layer norm silu",target.extent(0),
+                 KOKKOS_LAMBDA(int sample) {
+                     Precision mean=Precision(0);
+-                    for(int column=0;column<source.extent(1);++column)
+-                        mean+=source(sample,column);
++                    for(int column=0;column<source.extent(1);++column) {
++                        Precision value=source(sample,column);
++                        if(fuse_producer_bias) {
++                            value=affine_linear_epilogue_value(
++                                value,sample,column,conditioned_producer,
++                                row_conditioned,indexed_conditioned,first_edge,
++                                producer_bias,row_contributions,
++                                source_edge_types,target_node_indices,
++                                node_types,source_contribution_table,
++                                target_contribution_table);
++                            source(sample,column)=value;
++                        }
++                        mean+=value;
++                    }
+                     mean/=source.extent(1);
+                     Precision variance=Precision(0);
+                     for(int column=0;column<source.extent(1);++column) {
+@@ -520,12 +644,20 @@ void AffineMLPKokkosT<Precision>::forward_impl(
+         if (types(layer)==Linear) {
+             auto weight=weights(layer); auto bias=biases(layer);
+             const bool use_gemm=source.extent(0)>4;
++            // The LayerNorm (with or without the trailing SiLU) is the next
++            // reader of target; it folds bias + type contributions into its
++            // first load instead of a standalone full RMW pass.
++            const bool fuse_epilogue_into_next=
++                fuse_epilogue&&use_gemm
++                &&layer+1<layer_count
++                &&types(layer+1)==LayerNorm;
+             if(use_gemm) {
+                 if(conditioned&&layer==0)
+                     KokkosBlas::gemm(
+                         "N","T",Precision(1),source,conditioned_weight,Precision(0),target);
+                 else
+                     KokkosBlas::gemm("N","T",Precision(1),source,weight,Precision(0),target);
++                if(!fuse_epilogue_into_next)
+                 Kokkos::parallel_for(
+                     "affine linear epilogue",target.size(),KOKKOS_LAMBDA(int flat) {
+                         const int sample=flat/target.extent(1);
+@@ -563,8 +695,27 @@ void AffineMLPKokkosT<Precision>::forward_impl(
+             }
+         } else if (types(layer)==LayerNorm) {
+             auto gamma=weights(layer); auto beta=biases(layer); const Precision epsilon=eps(layer);
++            const bool fuse_producer_bias=fuse_epilogue&&layer>0
++                &&types(layer-1)==Linear
++                &&source.extent(0)>4;
++            auto producer_bias=fuse_producer_bias
++                ?biases(layer-1):Kokkos::View<Precision*>();
++            const bool conditioned_producer=fuse_producer_bias
++                &&(layer-1)==0;
+             Kokkos::parallel_for("affine layer norm",target.extent(0),KOKKOS_LAMBDA(int sample) {
+-                Precision mean=Precision(0); for (int column=0; column<source.extent(1); ++column) mean+=source(sample,column); mean/=source.extent(1);
++                Precision mean=Precision(0); for (int column=0; column<source.extent(1); ++column) {
++                    Precision value=source(sample,column);
++                    if(fuse_producer_bias) {
++                        value=affine_linear_epilogue_value(
++                            value,sample,column,conditioned_producer,
++                            row_conditioned,indexed_conditioned,first_edge,
++                            producer_bias,row_contributions,source_edge_types,
++                            target_node_indices,node_types,
++                            source_contribution_table,target_contribution_table);
++                        source(sample,column)=value;
++                    }
++                    mean+=value;
++                } mean/=source.extent(1);
+                 Precision variance=Precision(0); for (int column=0; column<source.extent(1); ++column) { const Precision delta=source(sample,column)-mean; variance+=delta*delta; } variance/=source.extent(1);
+                 const Precision inverse=Precision(1)/Kokkos::sqrt(variance+epsilon);
+                 for (int column=0; column<source.extent(1); ++column) target(sample,column)=(source(sample,column)-mean)*inverse*gamma(0,column)+beta(column);
+@@ -583,7 +734,14 @@ void AffineMLPKokkosT<Precision>::forward_impl(
+ template<typename Precision>
+ void AffineMLPKokkosT<Precision>::evaluate(Kokkos::View<const Precision**,Kokkos::LayoutRight> input,Kokkos::View<Precision**,Kokkos::LayoutRight> output)
+ {
+-    forward(input); ordered_kokkos_deep_copy(output,values(types.size()));
++    if(input.extent(1)!=static_cast<std::size_t>(input_size()))
++        throw std::invalid_argument(
++            "Kokkos affine MLP input dimensions are inconsistent.");
++    const int layer_count=types.extent_int(0);
++    forward_impl(
++        input,{},{},{},{},0,{},{},layer_count,output);
++    if(values(layer_count).data()!=output.data())
++        ordered_kokkos_deep_copy(output,values(layer_count));
+ }
+ 
+ template<typename Precision>
+@@ -592,8 +750,11 @@ void AffineMLPKokkosT<Precision>::evaluate_conditioned(
+     Kokkos::View<const Precision**,Kokkos::LayoutRight> row_contributions,
+     Kokkos::View<Precision**,Kokkos::LayoutRight> output)
+ {
+-    forward_impl(input,row_contributions);
+-    ordered_kokkos_deep_copy(output,values(types.size()));
++    const int layer_count=types.extent_int(0);
++    forward_impl(
++        input,row_contributions,{},{},{},0,{},{},layer_count,output);
++    if(values(layer_count).data()!=output.data())
++        ordered_kokkos_deep_copy(output,values(layer_count));
+ }
+ 
+ template<typename Precision>
+@@ -609,11 +770,13 @@ void AffineMLPKokkosT<Precision>::evaluate_conditioned_indexed(
+         target_contribution_table,
+     Kokkos::View<Precision**,Kokkos::LayoutRight> output)
+ {
++    const int layer_count=types.extent_int(0);
+     forward_indexed_impl(
+         input,source_edge_types,target_node_indices,node_types,first_edge,
+         source_contribution_table,target_contribution_table,
+-        types.extent_int(0));
+-    ordered_kokkos_deep_copy(output,values(types.size()));
++        layer_count,output);
++    if(values(layer_count).data()!=output.data())
++        ordered_kokkos_deep_copy(output,values(layer_count));
+ }
+ 
+ template<typename Precision>
+@@ -645,8 +808,10 @@ void AffineMLPKokkosT<Precision>::evaluate_conditioned_prefix(
+         tape_workspace_generation=0;
+         return;
+     }
+-    forward_impl(input,row_contributions,layer_count);
+-    ordered_kokkos_deep_copy(output,values(layer_count));
++    forward_impl(
++        input,row_contributions,{},{},{},0,{},{},layer_count,output);
++    if(values(layer_count).data()!=output.data())
++        ordered_kokkos_deep_copy(output,values(layer_count));
+ }
+ 
+ template<typename Precision>
+@@ -696,8 +861,10 @@ void AffineMLPKokkosT<Precision>::evaluate_conditioned_prefix_indexed(
+     }
+     forward_indexed_impl(
+         input,source_edge_types,target_node_indices,node_types,first_edge,
+-        source_contribution_table,target_contribution_table,layer_count);
+-    ordered_kokkos_deep_copy(output,values(layer_count));
++        source_contribution_table,target_contribution_table,layer_count,
++        output);
++    if(values(layer_count).data()!=output.data())
++        ordered_kokkos_deep_copy(output,values(layer_count));
+ }
+ 
+ template<typename Precision>
+@@ -764,7 +931,34 @@ void AffineMLPKokkosT<Precision>::reverse_from_tape_impl(
+         ||input_adjoint.extent(0)!=static_cast<std::size_t>(tape_batch_size)
+         ||input_adjoint.extent(1)!=static_cast<std::size_t>(tape_input_size))
+         throw std::invalid_argument("Kokkos affine MLP reverse tape dimensions are inconsistent.");
+-    ordered_kokkos_deep_copy(adjoints(layer_count),output_adjoint);
++    const char* alias_env=std::getenv("MATOS_AFFINE_TAPE_ALIAS");
++    const bool tape_alias=!(alias_env!=nullptr&&std::atoi(alias_env)==0);
++    if(tape_alias
++        &&output_adjoint.data()!=nullptr
++        &&output_adjoint.stride(1)==1
++        &&output_adjoint.stride(0)
++            ==output_adjoint.extent(1)) {
++        // The reverse reads the output adjoint but never writes it, so the
++        // caller's buffer can back the last adjoint slot directly.
++        adjoints(layer_count)=TapeView(
++            const_cast<Precision*>(output_adjoint.data()),
++            output_adjoint.extent(0),output_adjoint.extent(1));
++    } else
++        ordered_kokkos_deep_copy(adjoints(layer_count),output_adjoint);
++    bool input_adjoint_aliased=false;
++    if(tape_alias
++        &&input_adjoint.data()!=nullptr
++        &&input_adjoint.data()!=output_adjoint.data()
++        &&input_adjoint.stride(1)==1
++        &&input_adjoint.stride(0)
++            ==input_adjoint.extent(1)) {
++        // Every reverse branch overwrites all of adjoints(0); adopting the
++        // caller's output buffer removes the final staging copy.
++        adjoints(0)=TapeView(
++            input_adjoint.data(),
++            input_adjoint.extent(0),input_adjoint.extent(1));
++        input_adjoint_aliased=true;
++    }
+     for (int layer=layer_count-1; layer>=0;) {
+         if(types(layer)==SiLU&&layer>0&&types(layer-1)==LayerNorm) {
+             auto source=values(layer-1);
+@@ -931,7 +1125,8 @@ void AffineMLPKokkosT<Precision>::reverse_from_tape_impl(
+         }
+         --layer;
+     }
+-    ordered_kokkos_deep_copy(input_adjoint,adjoints(0));
++    if(!input_adjoint_aliased)
++        ordered_kokkos_deep_copy(input_adjoint,adjoints(0));
+ }
+ 
+ template class AffineMLPKokkosT<float>;
+diff --git a/libsymmetrix/source/affine_mlp_kokkos.hpp b/libsymmetrix/source/affine_mlp_kokkos.hpp
+index ee3b86e..7acd879 100644
+--- a/libsymmetrix/source/affine_mlp_kokkos.hpp
++++ b/libsymmetrix/source/affine_mlp_kokkos.hpp
+@@ -139,7 +139,8 @@ public:
+             source_contribution_table,
+         Kokkos::View<const Precision**,Kokkos::LayoutRight>
+             target_contribution_table,
+-        int layer_count);
++        int layer_count,
++        Kokkos::View<Precision**,Kokkos::LayoutRight> staged_output={});
+     void forward_impl(
+         Kokkos::View<const Precision**,Kokkos::LayoutRight> input,
+         Kokkos::View<const Precision**,Kokkos::LayoutRight> row_contributions,
+@@ -151,7 +152,8 @@ public:
+             source_contribution_table,
+         Kokkos::View<const Precision**,Kokkos::LayoutRight>
+             target_contribution_table,
+-        int layer_count);
++        int layer_count,
++        Kokkos::View<Precision**,Kokkos::LayoutRight> staged_output={});
+     void reverse_from_tape_impl(
+         Kokkos::View<const Precision**,Kokkos::LayoutRight> output_adjoint,
+         Kokkos::View<Precision**,Kokkos::LayoutRight> input_adjoint,
