@@ -9,7 +9,7 @@ with FP64, 2-step SCF and exact Ewald; the students are new models.
 | **A** | Exact PolarMACE engine optimization | 133.04 / 128.99 (1,296 / 5,184) | 100 exact | E/F parity, then speed |
 | **B** | PolarMACE student distillation | 128L1: 91.64 / 95.11; 3.8 / 6.1 on 432 gas-phase | keep <100 on bulk | 5 meV/atom, 30 meV/Å on bulk |
 | **C** | Custom 4G-HDNNP-like student (local MLP + QEq/FFT) | FP64 speed prototype 0.72 (fake) | **~20** | 5 / 30 on six-molecule bulk |
-| **D** | Linear student distilled from PolarMACE, long-range correction if needed | linear MACE FP32 engine: 4.47–4.53 | **~4** | accuracy vs PolarMACE on bulk |
+| **D** | Linear student distilled from PolarMACE, FP64 only | gas gate PASS in FP32 student (**0.924 / 3.984**); FP64 inference re-eval pending; FP32 reference 4.473, FP64 generic probe 284.8; bulk **BLOCKED** | **~9–10 FP64** | 5 / 30 on gas and bulk |
 
 ## Plan A next levers
 
@@ -33,12 +33,20 @@ The exact 100 target requires all three; realistic exact landing is 113–125.
 - Train/distill on the 2,166 gas data first, then the 43k bulk set.
 - Target ~20 µs; report a measured number, not a projection.
 
-## Plan D next steps
+## Plan D status and next steps
 
-- Inspect the existing linear MACE FP32 engine path and model export.
-- Distill PolarMACE into a linear MACE student on the gas data, then bulk.
-- If accuracy fails, add a cheap long-range correction (QEq/mean-field) and
-  re-gate; target 4–6 µs.
+- **Done:** 128-channel linear student, 848,528 parameters, initialized from
+  MACE-OFF23 medium (H/C/N/O), 123 epochs on 1,734 gas frames. Held-out gas:
+  **0.924 meV/atom / 3.984 meV/Å**; speed **4.473–4.499 µs/atom/step** at
+  5,184 atoms (FP32). Report: `docs/design/PLAN_D_LINEAR_2026-10-23.md`.
+- **Blocked:** dense-water stress probes fail (2.27 eV/atom, 18.2 eV/Å)
+  because the student has seen gas only. A fixed-charge Gaussian-Ewald
+  correction is designed and fitted, but it does not fix the short-range
+  distribution shift (<0.1 % change).
+- **Next:** retrain on bulk frames once the 43k campaign lands, re-gate on
+  density/temperature-stratified held-out trajectories, then decide whether
+  the mean-field correction is still needed. Do not promote the gas-only
+  model as a bulk potential.
 
 ## Shared constraints
 

@@ -33,7 +33,10 @@ testing rather than filling every card permanently.
 | B4 | P1 | Stratified eval (species x density x T) | Plan B agent | B2 | running | `scripts/eval_student_bulk.py` |
 | C1 | P1 | 4G-HDNNP speed prototype + training design | Plan C agent | — | running | `bench/plan_c_4g_2026-10-23/` |
 | C2 | P2 | 4G bulk fine-tune smoke | Plan C agent | pilot data | running | train log |
-| D1 | P1 | Linear MACE distillation + long-range correction | Plan D agent | — | running | `bench/plan_d_linear_2026-10-23/` |
+| D1 | P1 | Linear MACE distillation, gas gate | Plan D agent | — | done | 0.924/3.984 meV; FP32 4.473 µs; `docs/design/PLAN_D_LINEAR_2026-10-23.md` |
+| D2 | P0 | FP64 linear path (no FP32 headline) | Plan D | D1 | pending | FP64 probe 284.8 µs generic; dedicated path target ~9–10 |
+| D3 | P0 | Bulk retrain + re-gate | Plan D | B1, B3 | blocked | bulk labels absent |
+| S1 | P0 | Sampling audit (flaws vs requirements) | main | — | done | `docs/design/SAMPLING_AUDIT_2026-10-23.md` |
 | W1 | P2 | Sampling v2: batch 8-16 boxes per forward | unassigned | — | pending | throughput benchmark |
 | G1 | P2 | Git workflow: pre-push + CI + interfaces | main | — | done | `docs/GIT_WORKFLOW.md`, `.github/` |
 | G2 | P3 | README / FOUR_PLANS reconciliation | main | A1/B3 | pending | docs diff |
@@ -42,7 +45,11 @@ testing rather than filling every card permanently.
 
 - Shards A/B/C print only at species completion; their first H2O/CO2/NH3/C2H4
   files have not appeared yet, so ETA is unknown until the first file lands.
-  The pilot has 4/6 species done (H2O, NH3, C2H4, CH4) and is on C2H6.
+  The pilot has 5/6 species done (795 frames); CO2 is the last.
+- Tranche 1 is coverage/stress data. It does **not** meet the independent-
+  sample requirement: 6 fs frame spacing, fixed seeds, 600 fs per state, and
+  32-molecule boxes below the L>=2*r_cut criterion at most densities. See
+  `docs/design/SAMPLING_AUDIT_2026-10-23.md` for the tranche 2 design.
 - The local A100 is shared with an intermittent external process; Plan A
   benchmarks must check `nvidia-smi` and report variance.
 - Plan D's latest linear fit is not usable (energy MAE ~2.3 eV/atom); the

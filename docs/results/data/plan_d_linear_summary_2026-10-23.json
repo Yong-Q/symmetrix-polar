@@ -1,0 +1,464 @@
+{
+ "generated": "2026-10-23",
+ "teacher": {
+  "path": "/workspace/group/shared/bza/task3_sampling_database/mlip/models/mace-polar/MACE-POLAR-1-M.model",
+  "dtype": "float64",
+  "params": 15238498,
+  "r_max_A": 6.0,
+  "channels": 512,
+  "scf_steps": 2,
+  "note": "REF_energy/REF_forces in the 2,166 gas frames verified against a fresh teacher call to <1e-6 meV/atom and <1e-6 eV/A"
+ },
+ "data": {
+  "train": "bench/path_b_data2_q4_2026-10-22/attempt-01/data/train.xyz",
+  "valid": "bench/path_b_data2_q4_2026-10-22/attempt-01/data/valid.xyz",
+  "n_train": 1734,
+  "n_valid": 432,
+  "species": [
+   "H2O",
+   "NH3",
+   "C2H4",
+   "CH4",
+   "C2H6",
+   "CO2"
+  ]
+ },
+ "student": {
+  "path": "bench/plan_d_linear_2026-10-23/models/off23ft/plan_d_linear_student_gas128.model",
+  "params": 848528,
+  "channels": 128,
+  "L_max": 1,
+  "l_max": 3,
+  "num_interactions": 2,
+  "r_cut_A": 5.0,
+  "elements": [
+   1,
+   6,
+   7,
+   8
+  ],
+  "init": "MACE-OFF23_medium.model filtered to H/C/N/O",
+  "epochs": 123,
+  "lr": 0.001,
+  "forces_weight": 20.0,
+  "energy_weight": 1.0,
+  "train_wall_min": 22,
+  "json": "bench/plan_d_linear_2026-10-23/models/plan_d_linear_student_gas128_symmetrix.json"
+ },
+ "gates": {
+  "energy_meV_atom": 5.0,
+  "force_meV_A": 30.0
+ },
+ "gas": {
+  "final": {
+   "n_configs": 432,
+   "n_atoms": 2088,
+   "n_force_components": 6264,
+   "energy_MAE_meV_atom": 0.9240115431164637,
+   "energy_RMSE_meV_atom": 0.9791580458977917,
+   "energy_max_abs_meV_atom": 1.6538373163825781,
+   "energy_bias_meV_atom": 0.2083768361394087,
+   "force_MAE_meV_A": 3.9844577940811865,
+   "force_RMSE_meV_A": 7.402611674103302,
+   "force_max_abs_meV_A": 99.43173717529285,
+   "force_MAE_eV_A": 0.0039844577940811865,
+   "force_RMSE_eV_A": 0.007402611674103303,
+   "force_MAE_rel_pct": 0.7355619244032734,
+   "force_norm_MAE_eV_A": 0.005242144100912042
+  },
+  "final_per_species_E": {
+   "C2H4": 0.9681093801753428,
+   "C2H6": 1.1012648736420754,
+   "CH4": 0.38673384702418745,
+   "CO2": 1.1787947407558221,
+   "H2O": 0.6554745280427428,
+   "NH3": 1.253691889058612
+  },
+  "final_per_species_F": {
+   "C2H4": 5.044175977329023,
+   "C2H6": 5.320006767902119,
+   "CH4": 2.6495580009650945,
+   "CO2": 2.368628528493364,
+   "H2O": 2.6348773330935287,
+   "NH3": 3.6164646078942875
+  },
+  "off23_zeroshot": {
+   "n_configs": 432,
+   "n_atoms": 2088,
+   "n_force_components": 6264,
+   "energy_MAE_meV_atom": 397.2407115548232,
+   "energy_RMSE_meV_atom": 440.4704147131596,
+   "energy_max_abs_meV_atom": 810.2437237300061,
+   "energy_bias_meV_atom": -397.2407115548232,
+   "force_MAE_meV_A": 34.55740055964753,
+   "force_RMSE_meV_A": 47.841407755336995,
+   "force_max_abs_meV_A": 274.93256072876005,
+   "force_MAE_eV_A": 0.03455740055964753,
+   "force_RMSE_eV_A": 0.047841407755337,
+   "force_MAE_rel_pct": 6.379565143289647,
+   "force_norm_MAE_eV_A": 0.05218416882200049
+  },
+  "off23_zeroshot_offset_corrected_E": 0.5876381402495935
+ },
+ "dense_random": {
+  "student": {
+   "n_configs": 60,
+   "n_atoms": 11520,
+   "n_force_components": 34560,
+   "energy_MAE_meV_atom": 2265.8958800154955,
+   "energy_RMSE_meV_atom": 3266.364037427941,
+   "energy_max_abs_meV_atom": 6625.476678559456,
+   "energy_bias_meV_atom": 2265.8958800154955,
+   "force_MAE_meV_A": 18190.990426430126,
+   "force_RMSE_meV_A": 34852.81828571864,
+   "force_max_abs_meV_A": 224974.90183515626,
+   "force_MAE_eV_A": 18.190990426430126,
+   "force_RMSE_eV_A": 34.85281828571864,
+   "force_MAE_rel_pct": 3015.057492781196,
+   "force_norm_MAE_eV_A": 35.08081522256719
+  },
+  "off23": {
+   "n_configs": 60,
+   "n_atoms": 11520,
+   "n_force_components": 34560,
+   "energy_MAE_meV_atom": 418.67850149492114,
+   "energy_RMSE_meV_atom": 418.68040413130245,
+   "energy_max_abs_meV_atom": 421.8837716011876,
+   "energy_bias_meV_atom": -418.67850149492114,
+   "force_MAE_meV_A": 138.62513615896884,
+   "force_RMSE_meV_A": 170.11376364360044,
+   "force_max_abs_meV_A": 1241.235071939087,
+   "force_MAE_eV_A": 0.13862513615896885,
+   "force_RMSE_eV_A": 0.17011376364360042,
+   "force_MAE_rel_pct": 22.976360586537634,
+   "force_norm_MAE_eV_A": 0.19170807188794856
+  },
+  "regrade": {
+   "probe": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_d_linear_2026-10-23/data/dense_water_probe.xyz",
+   "indices": [
+    0,
+    1,
+    20,
+    21,
+    40,
+    41
+   ],
+   "model": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_d_linear_2026-10-23/models/off23ft/plan_d_linear_student_gas128.model",
+   "scale": 0.1580895471906819,
+   "baseline": {
+    "energy_MAE_meV_atom": 2316.154949404184,
+    "energy_RMSE_meV_atom": 3336.4130944366298,
+    "force_MAE_meV_A": 18396.81325234704,
+    "force_RMSE_meV_A": 35454.20674421624
+   },
+   "with_correction": {
+    "energy_MAE_meV_atom": 2315.9451368815603,
+    "energy_RMSE_meV_atom": 3336.4366223494562,
+    "force_MAE_meV_A": 18399.585399931828,
+    "force_RMSE_meV_A": 35456.37595261985
+   },
+   "frames": [
+    {
+     "frame": 0,
+     "n_atoms": 192,
+     "de0_meV_atom": 330.91372271231495,
+     "de1_meV_atom": 330.2044186364886,
+     "df0_MAE_meV_A": 1851.278782393595,
+     "df1_MAE_meV_A": 1851.8065464259164
+    },
+    {
+     "frame": 1,
+     "n_atoms": 192,
+     "de0_meV_atom": 373.05748243989,
+     "de1_meV_atom": 372.6291937629564,
+     "df0_MAE_meV_A": 1848.232135796934,
+     "df1_MAE_meV_A": 1850.8931716062355
+    },
+    {
+     "frame": 20,
+     "n_atoms": 192,
+     "de0_meV_atom": 868.2311517829172,
+     "de1_meV_atom": 867.3951032211941,
+     "df0_MAE_meV_A": 5027.567039914159,
+     "df1_MAE_meV_A": 5028.310421798744
+    },
+    {
+     "frame": 21,
+     "n_atoms": 192,
+     "de0_meV_atom": 933.7704025582146,
+     "de1_meV_atom": 934.3174691945629,
+     "df0_MAE_meV_A": 5360.693140077053,
+     "df1_MAE_meV_A": 5364.195605049889
+    },
+    {
+     "frame": 40,
+     "n_atoms": 192,
+     "de0_meV_atom": 5556.669650034716,
+     "de1_meV_atom": 5556.305549249221,
+     "df0_MAE_meV_A": 48218.7088947245,
+     "df1_MAE_meV_A": 48220.57785528672
+    },
+    {
+     "frame": 41,
+     "n_atoms": 192,
+     "de0_meV_atom": 5834.287286897052,
+     "de1_meV_atom": 5834.819087224939,
+     "df0_MAE_meV_A": 48074.399521176005,
+     "df1_MAE_meV_A": 48081.72879942345
+    }
+   ]
+  },
+  "student_label": "gas_student_final (epoch 123)"
+ },
+ "dense_ordered648": {
+  "student": {
+   "n_configs": 1,
+   "n_atoms": 648,
+   "n_force_components": 1944,
+   "energy_MAE_meV_atom": 764.7745079644934,
+   "energy_RMSE_meV_atom": 764.7745079644934,
+   "energy_max_abs_meV_atom": 764.7745079644934,
+   "energy_bias_meV_atom": 764.7745079644934,
+   "force_MAE_meV_A": 3418.990637916661,
+   "force_RMSE_meV_A": 4219.6545202216685,
+   "force_max_abs_meV_A": 14564.311582612305,
+   "force_MAE_eV_A": 3.418990637916661,
+   "force_RMSE_eV_A": 4.219654520221669,
+   "force_MAE_rel_pct": 1354.3916312637737,
+   "force_norm_MAE_eV_A": 6.417930173787689
+  },
+  "off23": {
+   "n_configs": 1,
+   "n_atoms": 648,
+   "n_force_components": 1944,
+   "energy_MAE_meV_atom": 422.58081610958067,
+   "energy_RMSE_meV_atom": 422.58081610958067,
+   "energy_max_abs_meV_atom": 422.58081610958067,
+   "energy_bias_meV_atom": -422.58081610958067,
+   "force_MAE_meV_A": 129.59384653306262,
+   "force_RMSE_meV_A": 154.55192500552894,
+   "force_max_abs_meV_A": 483.19573311065665,
+   "force_MAE_eV_A": 0.1295938465330626,
+   "force_RMSE_eV_A": 0.15455192500552895,
+   "force_MAE_rel_pct": 51.33702890588032,
+   "force_norm_MAE_eV_A": 0.17525831740887432
+  },
+  "regrade": {
+   "probe": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_d_linear_2026-10-23/data/water_648_ordered_labeled.xyz",
+   "indices": [
+    0
+   ],
+   "model": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_d_linear_2026-10-23/models/off23ft/plan_d_linear_student_gas128.model",
+   "scale": 0.21262646352382908,
+   "baseline": {
+    "energy_MAE_meV_atom": 764.7745079644934,
+    "energy_RMSE_meV_atom": 764.7745079644934,
+    "force_MAE_meV_A": 3418.9904345242426,
+    "force_RMSE_meV_A": 4219.654072922674
+   },
+   "with_correction": {
+    "energy_MAE_meV_atom": 763.3386904906077,
+    "energy_RMSE_meV_atom": 763.3386904906077,
+    "force_MAE_meV_A": 3422.659424117909,
+    "force_RMSE_meV_A": 4226.03209730723
+   },
+   "frames": [
+    {
+     "frame": 0,
+     "n_atoms": 648,
+     "de0_meV_atom": 764.7745079644934,
+     "de1_meV_atom": 763.3386904906077,
+     "df0_MAE_meV_A": 3418.990434524242,
+     "df1_MAE_meV_A": 3422.659424117909
+    }
+   ]
+  }
+ },
+ "longrange": {
+  "random": [
+   {
+    "frame": 0,
+    "density_g_cm3": 0.8,
+    "n_atoms": 192,
+    "n_molecules": 64,
+    "dE_lr_dense_meV_atom": 6.777572885766858,
+    "dE_lr_iso_sum_meV_atom": 12.564804051727663,
+    "dE_lr_inter_meV_atom": -5.7872311659608044,
+    "dF_lr_dense_rms_meV_A": 42.512444179632446,
+    "dF_lr_iso_rms_meV_A": 17.685384345315594,
+    "dF_lr_inter_rms_meV_A": 42.332863143286836,
+    "dF_lr_inter_max_meV_A": 154.8117072367643
+   },
+   {
+    "frame": 1,
+    "density_g_cm3": 0.8,
+    "n_atoms": 192,
+    "n_molecules": 64,
+    "dE_lr_dense_meV_atom": 6.783097239349445,
+    "dE_lr_iso_sum_meV_atom": 12.60392031257851,
+    "dE_lr_inter_meV_atom": -5.8208230732290644,
+    "dF_lr_dense_rms_meV_A": 36.515516027436455,
+    "dF_lr_iso_rms_meV_A": 17.55875418908227,
+    "dF_lr_inter_rms_meV_A": 36.40016732084273,
+    "dF_lr_inter_max_meV_A": 132.8211287617924
+   },
+   {
+    "frame": 2,
+    "density_g_cm3": 1.0,
+    "n_atoms": 192,
+    "n_molecules": 64,
+    "dE_lr_dense_meV_atom": 6.930466408751575,
+    "dE_lr_iso_sum_meV_atom": 12.610577119112065,
+    "dE_lr_inter_meV_atom": -5.68011071036049,
+    "dF_lr_dense_rms_meV_A": 48.402108713283724,
+    "dF_lr_iso_rms_meV_A": 17.544926916409366,
+    "dF_lr_inter_rms_meV_A": 48.76536990273028,
+    "dF_lr_inter_max_meV_A": 193.26474464381465
+   },
+   {
+    "frame": 3,
+    "density_g_cm3": 1.0,
+    "n_atoms": 192,
+    "n_molecules": 64,
+    "dE_lr_dense_meV_atom": 8.265840694548388,
+    "dE_lr_iso_sum_meV_atom": 12.601252344540606,
+    "dE_lr_inter_meV_atom": -4.33541164999222,
+    "dF_lr_dense_rms_meV_A": 48.799429071032755,
+    "dF_lr_iso_rms_meV_A": 17.55691419597889,
+    "dF_lr_inter_rms_meV_A": 48.67301460423988,
+    "dF_lr_inter_max_meV_A": 198.10938895837404
+   },
+   {
+    "frame": 4,
+    "density_g_cm3": 1.2,
+    "n_atoms": 192,
+    "n_molecules": 64,
+    "dE_lr_dense_meV_atom": 7.622544530325588,
+    "dE_lr_iso_sum_meV_atom": 12.522882189612025,
+    "dE_lr_inter_meV_atom": -4.900337659286436,
+    "dF_lr_dense_rms_meV_A": 56.151222856954085,
+    "dF_lr_iso_rms_meV_A": 17.735591049845272,
+    "dF_lr_inter_rms_meV_A": 56.49953700861917,
+    "dF_lr_inter_max_meV_A": 162.34332621756198
+   },
+   {
+    "frame": 5,
+    "density_g_cm3": 1.2,
+    "n_atoms": 192,
+    "n_molecules": 64,
+    "dE_lr_dense_meV_atom": 7.872841402180105,
+    "dE_lr_iso_sum_meV_atom": 12.549075832924453,
+    "dE_lr_inter_meV_atom": -4.676234430744349,
+    "dF_lr_dense_rms_meV_A": 50.19443228714219,
+    "dF_lr_iso_rms_meV_A": 17.70660063414087,
+    "dF_lr_inter_rms_meV_A": 50.34252528548701,
+    "dF_lr_inter_max_meV_A": 152.60742380688595
+   }
+  ],
+  "ordered648": [
+   {
+    "frame": 0,
+    "n_atoms": 648,
+    "n_molecules": 216,
+    "dE_lr_dense_meV_atom": 8.165094653380903,
+    "dE_lr_iso_sum_meV_atom": 12.736440684876964,
+    "dE_lr_inter_meV_atom": -4.571346031496061,
+    "dF_lr_dense_rms_meV_A": 65.2096345126784,
+    "dF_lr_iso_rms_meV_A": 17.27562606750942,
+    "dF_lr_inter_rms_meV_A": 64.08760439628287,
+    "dF_lr_inter_max_meV_A": 295.5594905805357
+   }
+  ]
+ },
+ "correction": {
+  "random": {
+   "fixed_charges": {
+    "O": -0.8476,
+    "H": 0.4238
+   },
+   "smearing_A": 1.5,
+   "n_frames": 6,
+   "teacher_inter_force_rms_meV_A": 47.59330252184734,
+   "gaussian_pointcharge_inter_force_rms_meV_A": 220.02430764763315,
+   "force_correlation": 0.7308495381464751,
+   "fitted_scale": 0.1580895471906819,
+   "residual_rms_after_scale_meV_A": 32.48426649454282
+  },
+  "ordered648": {
+   "fixed_charges": {
+    "O": -0.8476,
+    "H": 0.4238
+   },
+   "smearing_A": 1.5,
+   "n_frames": 1,
+   "teacher_inter_force_rms_meV_A": 64.08760439628287,
+   "gaussian_pointcharge_inter_force_rms_meV_A": 230.4978782082246,
+   "force_correlation": 0.7647336665934675,
+   "fitted_scale": 0.21262646352382908,
+   "residual_rms_after_scale_meV_A": 41.29462394002612
+  }
+ },
+ "export_parity": {
+  "n": 6,
+  "max_abs_de_meV_atom": 0.029698859028333875,
+  "max_df_meV_A": 0.4032403230667114,
+  "rms_df_meV_A": 0.15618289736248217
+ },
+ "lammps_parity": {
+  "energy_diff_meV": 0.0869,
+  "force_max_meV_A": 0.408,
+  "force_rms_meV_A": 0.225,
+  "note": "water1.data single point; LAMMPS FP32 direct JIT vs MACE torch FP32"
+ },
+ "speed": {
+  "clean3": {
+   "median_us_per_atom_step_per_trial": [
+    5.954610339506174,
+    5.419357638888889,
+    5.3500096450617285
+   ],
+   "median_of_trial_medians_us_per_atom_step": 5.419357638888889,
+   "min_us_per_atom_step_per_trial": [
+    4.478626543209876,
+    4.473456790123457,
+    4.498900462962964
+   ],
+   "best_min_us_per_atom_step": 4.473456790123457
+  },
+  "reference_3trial": {
+   "median_us_per_atom_step_per_trial": [
+    8.51795910493827,
+    6.675221836419753,
+    7.352652391975309
+   ],
+   "median_of_trial_medians_us_per_atom_step": 7.352652391975309,
+   "min_us_per_atom_step_per_trial": [
+    6.057426697530864,
+    6.28076774691358,
+    5.96304012345679
+   ],
+   "best_min_us_per_atom_step": 5.96304012345679
+  },
+  "student_under_load_control": {
+   "median_us_per_atom_step_per_trial": [
+    6.853443287037037
+   ],
+   "median_of_trial_medians_us_per_atom_step": 6.853443287037037,
+   "min_us_per_atom_step_per_trial": [
+    5.74945987654321
+   ],
+   "best_min_us_per_atom_step": 5.74945987654321
+  },
+  "atoms": 5184,
+  "structure": "bench/paper_scale_2026-10-20/water_5184.data",
+  "paper_reference_us_per_atom_step": [
+   4.47,
+   4.53
+  ]
+ },
+ "blockers": [
+  "bulk2 data directories empty at 2026-10-23 02:53 UTC",
+  "gas-only student fails catastrophically on dense/ordered water (out of distribution)",
+  "shared A100: external jobs caused nvidia-smi timeouts and transient speed stalls"
+ ]
+}

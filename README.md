@@ -15,10 +15,11 @@ reported separately in seconds and are not used for speed comparisons.
 *Paper parity is measured on the paper's linear MACE FP32 workload; full
 PolarMACE is a different model.*
 
-**Latest updates (2026-10-22):**
+**Latest updates (2026-10-23):**
 
 | Update | Result | Evidence |
 |---|---|---|
+| **Plan D linear student (gas)** | **0.924 meV/atom / 3.984 meV/Å** on 432 held-out frames. Speed **4.473–4.499 µs/atom/step** is **FP32 reference-only**; FP64 generic probe is 284.8, a dedicated FP64 linear path targets ~9–10. **Bulk gate blocked** until bulk labels exist; dense-water stress test fails (2.27 eV/atom, 18.2 eV/Å) | `docs/design/PLAN_D_LINEAR_2026-10-23.md`; FP64 probe `bench/plan_d_linear_2026-10-23/speed/plan_d_f64_probe/` |
 | **10,368-atom capacity** | **149.14 µs/atom/step**, 33.71 GiB peak; 2× the 5,184 capacity on one A100-80GB | q4 task `t-20261022144341-pzc9x`; `docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md` |
 | **R1 reverse MH-1** | exact, **−3.05%** same-binary; dPE 0, max dF 4.9e-16 eV/Å; projected 141.3 µs/atom/step at 1,296 | `docs/results/data/rev_r1_2026-10-22.json` |
 | **Path B six-molecule teacher smoke** | H2O/NH3/C2H4/CH4/C2H6/CO2 labels; 8 configurations × 12 molecules each; no model change | `docs/results/PATH_B_SIX_MOLECULE_SMOKE_2026-10-22.md` |
@@ -54,6 +55,8 @@ PolarMACE is a different model.*
 | Water | Full PolarMACE | FP64 | 10,368 | generic streaming | 149.14 | 33.71 GiB | q4 `t-20261022144341-pzc9x` (capacity) |
 | OFF23 water | Linear MACE-OFF23 | FP32 | 5,184 | direct/JIT | 4.47–4.53 | — | paper-parity run |
 | OFF23 water | Paper Symmetrix-XL | FP32 | 5,184 | standard streaming | 4.50 | — | paper |
+| Six-molecule gas | **Linear distilled student** | FP32 (reference) | 5,184 | direct/JIT | **4.473–4.499** (min 4.473) | — | local 3-process; gas-only accuracy 0.924/3.984 |
+| Six-molecule gas | Linear distilled student | **FP64** | 5,184 | generic (no JIT) | 284.8 | — | probe, 10 steps; optimized path pending |
 
 All rows use **µs/atom/step**. The 10,368 row is a **capacity point**; the
 speed headline is **133.04 at 1,296** and **128.99 at 5,184**. The 1,296
@@ -105,6 +108,39 @@ activation serialization); in-domain H2O parity is 5.8e-9 eV / ~1e-8 eV/Å.
   MACE-OFF23, FP32, no global SCF/Ewald. Full PolarMACE is **32.4×** that
   number. On the paper's own linear FP32 workload this engine matches
   **4.47–4.53 vs 4.50**.
+
+### Plan D linear student (gas-only, FP32)
+
+| Metric | Measured | Gate |
+|---|---:|---:|
+| Energy MAE (432 held-out, FP32 student) | **0.924 meV/atom** | 5 |
+| Force MAE (432 held-out, FP32 student) | **3.984 meV/Å** | 30 |
+| Speed at 5,184, FP32 reference | **4.473–4.499 µs/atom/step** steady state | — |
+| Speed at 5,184, FP64 generic probe | **284.8 µs/atom/step** | — |
+
+The 128-channel linear student (848,528 parameters, initialized from
+MACE-OFF23 medium filtered to H/C/N/O, 123 epochs) passes the gas gate
+without any long-range correction. Steady-state FP32 speed matches the
+paper's linear range; medians are inflated by host/GPU stalls and are
+reported in the plan report, not used as the headline. The accuracy numbers
+are FP32 student inference; FP64 inference re-evaluation is pending.
+
+**FP64 policy correction:** project policy is all-plans FP64, so the 4.473
+number above is **not** a Plan D deliverable — it uses the FP32 pair style.
+The same JSON through the unoptimized generic FP64 path measures
+**284.8 µs/atom/step** at 5,184 atoms (14.762 s / 10 steps). A dedicated
+FP64 factorized/JIT linear path is required; because the kernel is
+memory-bound, the realistic FP64 target is **~9–10 µs/atom/step**, not 4.
+No FP64 speed claim is promoted until that path is built and measured.
+
+**Bulk gate is BLOCKED, not passed.** Dense-water stress probes fail badly
+(2.27 eV/atom, 18.2 eV/Å) because the student is trained only on gas-phase
+frames; this is distribution shift, not a long-range-tail failure.
+A fixed-charge Gaussian-Ewald mean-field correction is designed and its
+scale fitted, but it changes the dense error by <0.1 % without bulk training
+data. Bulk labels are the prerequisite.
+
+![Plan D gas parity](docs/results/figures/PLAN_D_GAS_PARITY.png)
 
 ## What it is
 
