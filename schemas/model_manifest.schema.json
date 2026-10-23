@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://symmetrix-polar.local/schemas/model_manifest.schema.json",
+  "title": "Symmetrix-Polar model manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "model_id",
+    "model_type",
+    "precision",
+    "species",
+    "cutoff_A",
+    "checkpoint",
+    "exported_json",
+    "engine",
+    "accuracy",
+    "speed"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1},
+    "model_id": {"type": "string", "minLength": 1},
+    "model_type": {
+      "type": "string",
+      "enum": ["PolarMACE", "MACE", "4G-HDNNP", "LinearMACE", "other"]
+    },
+    "precision": {"type": "string", "enum": ["FP64", "FP32", "mixed"]},
+    "species": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "cutoff_A": {"type": "number", "exclusiveMinimum": 0},
+    "node_irreps": {"type": "string"},
+    "scf_steps": {"type": "integer", "minimum": 0},
+    "checkpoint": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}
+      }
+    },
+    "exported_json": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}
+      }
+    },
+    "engine": {
+      "type": "object",
+      "required": ["binary", "pair_style"],
+      "properties": {
+        "binary": {"type": "string"},
+        "pair_style": {"type": "string"},
+        "backend": {"type": "string"}
+      }
+    },
+    "accuracy": {
+      "type": "object",
+      "required": ["dataset", "n_samples", "MAE_E_meV_per_atom", "MAE_F_meV_per_A"],
+      "properties": {
+        "dataset": {"type": "string"},
+        "n_samples": {"type": "integer", "minimum": 1},
+        "MAE_E_meV_per_atom": {"type": "number", "minimum": 0},
+        "MAE_F_meV_per_A": {"type": "number", "minimum": 0},
+        "note": {"type": "string"}
+      }
+    },
+    "speed": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["atoms", "us_per_atom_step", "task_id"],
+        "properties": {
+          "atoms": {"type": "integer", "minimum": 1},
+          "us_per_atom_step": {"type": "number", "exclusiveMinimum": 0},
+          "task_id": {"type": "string"},
+          "queue": {"type": "string"}
+        }
+      }
+    },
+    "notes": {"type": "string"}
+  },
+  "additionalProperties": true
+}

@@ -12,3 +12,6 @@ docs/report/figures/references/
 
 # ephemeral reference downloads
 .tmp_refs/
+
+# downloaded skill staging
+.tmp_skill/

@@ -1,0 +1,37 @@
+{
+ "schema_version": 1,
+ "model_id": "path_b_student128L1_data2",
+ "model_type": "PolarMACE",
+ "precision": "FP64",
+ "species": ["H", "C", "N", "O"],
+ "cutoff_A": 6.0,
+ "node_irreps": "128x0e+128x1o",
+ "scf_steps": 2,
+ "checkpoint": {
+  "path": "bench/path_b_128L1_data2_q4_2026-10-22/attempt-01/student_run/models/path_b_student128L1_data2.model",
+  "sha256": "c01e9a3b327f94ac54fc11654df457060b83de1686f1224991db9fd59a5c1d5f"
+ },
+ "exported_json": {
+  "path": "bench/path_b_128L1_data2_export/student128L1_symmetrix.json",
+  "sha256": "578d60af55ffcc7793d5466270b7fd2ef93927d4b14a355b15175f566131ae44"
+ },
+ "engine": {
+  "binary": "bench/polar_uvu_gemm_engine_2026-10-21/bin/lmp_gemm",
+  "pair_style": "symmetrix/mace/kk",
+  "backend": "cuda12-sm80"
+ },
+ "accuracy": {
+  "dataset": "six-molecule bulk/gas held-out, 432 frames",
+  "n_samples": 432,
+  "MAE_E_meV_per_atom": 3.8,
+  "MAE_F_meV_per_A": 6.1,
+  "note": "gas-phase single-molecule distribution; bulk-density retraining pending"
+ },
+ "speed": [
+  {"atoms": 1296, "us_per_atom_step": 91.639,
+   "task_id": "t-20261023085456-lt8kl", "queue": "queue004"},
+  {"atoms": 5184, "us_per_atom_step": 95.109,
+   "task_id": "t-20261023085456-lt8kl", "queue": "queue004"}
+ ],
+ "notes": "Narrow-domain six-molecule student; water speed is out-of-domain. Exact teacher remains 133.04/128.99."
+}
