@@ -212,7 +212,7 @@ thermo PE；每进程持 GPU flock）。JSON 在 `repeat/`，控制台日志
 | 门禁日志 | `logs/gate_gemm_full_*.log`、`logs/gate_suite_gemm_console.log` |
 | 回退 parity | `parity/parity_{128,1296}_gemm_fallback.json`、`logs/fallback_parity_console.log` |
 | 重复求值 | `repeat/repeat_{128,1296}_{n1,a1}.json`、`logs/repeat_eval_console.log` |
-| 图 | `/workspace/group/shared/bza/symmetrix-polar/docs/results/figures/POLAR_UVU_GEMM_GATES.{png,pdf}` |
+| 图 | `figures/POLAR_UVU_GEMM_GATES.{png,pdf}` |
 
 复现命令（GPU 作业串行持锁）：
 
@@ -233,7 +233,7 @@ flock -w 14400 /workspace/group/shared/bza/.tmp/gpu.lock \
 
 ## 5. 图
 
-![N1 source-matched gate margins and repeat-eval drift](/workspace/group/shared/bza/symmetrix-polar/docs/results/figures/POLAR_UVU_GEMM_GATES.png)
+![N1 source-matched gate margins and repeat-eval drift](figures/POLAR_UVU_GEMM_GATES.png)
 
 - (a) 各定量门的“实测/门槛”归一化裕度（对数轴，红色虚线 = 阈值 1）。
   所有点均在 1 以下；最紧的是 M8 FD（0.578）与 M7 outlet（0.455）。

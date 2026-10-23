@@ -58,7 +58,7 @@
 | 反向校验脚本 | `/workspace/group/shared/bza/symmetrix-polar/bench/polar_uvu_gemm_2026-10-21/validate_reverse.py` |
 | 反向校验日志 | `/workspace/group/shared/bza/symmetrix-polar/bench/polar_uvu_gemm_2026-10-21/validate_reverse.log` |
 | 绘图脚本 | `/workspace/group/shared/bza/symmetrix-polar/bench/polar_uvu_gemm_2026-10-21/make_figure.py` |
-| 图（PNG/PDF） | `/workspace/group/shared/bza/symmetrix-polar/docs/results/figures/POLAR_UVU_GEMM_MICROBENCH.{png,pdf}` |
+| 图（PNG/PDF） | `figures/POLAR_UVU_GEMM_MICROBENCH.{png,pdf}` |
 
 运行命令（完整 GPU 作业，单进程、单锁）：
 
@@ -384,7 +384,7 @@ UVU 仍为 6.12 ms（-91.3%），结论不变。性能风险已消除；剩余�
 
 ## 7. 图
 
-![Polar UVU grouped FP64 GEMM microbenchmark](/workspace/group/shared/bza/symmetrix-polar/docs/results/figures/POLAR_UVU_GEMM_MICROBENCH.png)
+![Polar UVU grouped FP64 GEMM microbenchmark](figures/POLAR_UVU_GEMM_MICROBENCH.png)
 
 - (a) N=1,296 当前 UVU/前向/反向与各分组变体的时间（log 轴）。
 - (b) 各 GEMM 变体的有效 TFLOPS，对比 A100 FP64 DMMA 峰值 19.5 与实测
@@ -405,11 +405,11 @@ UVU 仍为 6.12 ms（-91.3%），结论不变。性能风险已消除；剩余�
 | 反向校验脚本 | `/workspace/group/shared/bza/symmetrix-polar/bench/polar_uvu_gemm_2026-10-21/validate_reverse.py` |
 | 反向校验日志 | `/workspace/group/shared/bza/symmetrix-polar/bench/polar_uvu_gemm_2026-10-21/validate_reverse.log` |
 | 绘图脚本 | `/workspace/group/shared/bza/symmetrix-polar/bench/polar_uvu_gemm_2026-10-21/make_figure.py` |
-| 图 PNG | `/workspace/group/shared/bza/symmetrix-polar/docs/results/figures/POLAR_UVU_GEMM_MICROBENCH.png` |
-| 图 PDF | `/workspace/group/shared/bza/symmetrix-polar/docs/results/figures/POLAR_UVU_GEMM_MICROBENCH.pdf` |
+| 图 PNG | `figures/POLAR_UVU_GEMM_MICROBENCH.png` |
+| 图 PDF | `figures/POLAR_UVU_GEMM_MICROBENCH.pdf` |
 | CUPTI 标签来源 | `/workspace/group/shared/bza/symmetrix-polar/bench/perf_decomp_1296_2026-10-21/analysis/1296_materialized_labels.csv` |
 | CUPTI 汇总来源 | `/workspace/group/shared/bza/symmetrix-polar/bench/perf_decomp_1296_2026-10-21/analysis/1296_materialized_summary.json` |
-| 本报告 | `/workspace/group/shared/bza/symmetrix-polar/docs/results/POLAR_UVU_GEMM_MICROBENCH.md` |
+| 本报告 | `POLAR_UVU_GEMM_MICROBENCH.md` |
 
 ### 复现
 

@@ -148,7 +148,7 @@ Caveats:
   only materialized MACE_Nonlinear models (PolarMACE) are supported`), so the
   paper's streaming result cannot be applied to the polar model at all.
 
-![direct/JIT per-step samples](../../bench/paper_scale_2026-10-20/direct_steps.png)
+![direct/JIT per-step samples](figures/direct_steps.png)
 
 ### Exact paper system: 5,184-atom liquid water
 
@@ -168,7 +168,7 @@ outliers from the other tenant on the shared local A100; a dedicated A100 is
 still required for a qualification-grade distribution, but the steady-state
 kernel cost is aligned.
 
-![water direct/JIT per-step samples](../../bench/paper_scale_2026-10-20/direct_water.png)
+![water direct/JIT per-step samples](figures/direct_water.png)
 
 ## Same-size 1,296-atom H₂O comparison
 

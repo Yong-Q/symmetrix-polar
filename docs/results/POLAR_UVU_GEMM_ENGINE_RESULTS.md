@@ -292,7 +292,7 @@ gate 和 1,296/5,184 A/B 作为验收证据。
 
 ## 7. 图
 
-![Polar UVU grouped FP64 GEMM engine results](/workspace/group/shared/bza/symmetrix-polar/docs/results/figures/POLAR_UVU_GEMM_ENGINE.png)
+![Polar UVU grouped FP64 GEMM engine results](figures/POLAR_UVU_GEMM_ENGINE.png)
 
 - (a) 1,296 canonical A/B（2 轮 × 4 样本）：generic 255.35 → 189.30 ms，
   materialized 267.19 → 201.91 ms；虚线为 190 ms 门槛。
@@ -313,8 +313,8 @@ gate 和 1,296/5,184 A/B 作为验收证据。
 | 1,296 clean VRAM | `…/ab/ab_1296_peak.json`、`…/logs/ab_1296_peak_console.log` |
 | 5,184 smoke | `…/smoke5184/smoke_5184_gemm.json`、`…/logs/smoke_5184_console.log` |
 | 1/2-rank gate | `…/gates/gemm/lammps_parity_{1,2}rank/`、`…/logs/gate_gemm_lammps_parity_{1,2}rank.log` |
-| 图 | `/workspace/group/shared/bza/symmetrix-polar/docs/results/figures/POLAR_UVU_GEMM_ENGINE.{png,pdf}` |
-| 本报告 | `/workspace/group/shared/bza/symmetrix-polar/docs/results/POLAR_UVU_GEMM_ENGINE_RESULTS.md` |
+| 图 | `figures/POLAR_UVU_GEMM_ENGINE.{png,pdf}` |
+| 本报告 | `POLAR_UVU_GEMM_ENGINE_RESULTS.md` |
 
 复现（GPU 作业串行持锁）：
 
