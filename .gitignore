@@ -18,3 +18,13 @@ docs/report/figures/references/
 
 # generated bulk datasets (large; reference workspace paths instead)
 /data/
+
+# generated bulk/active-learning datasets and remote staging (large)
+data_20261025/
+data_20261025_al_full/
+data_20261025_al_r1/
+data_20261025_subset/
+attempt-*/
+logs/
+.tmp/
+.tmp_fonts/

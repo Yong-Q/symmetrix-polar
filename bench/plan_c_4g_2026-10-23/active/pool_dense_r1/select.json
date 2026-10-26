@@ -1,0 +1,79 @@
+{
+ "pool": "bench/plan_c_4g_2026-10-23/active/pool_dense.xyz",
+ "pool_stride": 1,
+ "pool_frames": 140,
+ "students": [
+  "bench/plan_c_4g_2026-10-23/results_fixed/plan_c_4g_fixed_nostage.pt",
+  "bench/plan_c_4g_2026-10-23/results_al/plan_c_4g_4g_c1.pt",
+  "bench/plan_c_4g_2026-10-23/results_al/plan_c_4g_4g_c2.pt"
+ ],
+ "n_kept": 140,
+ "n_selected": 40,
+ "score_quantiles": {
+  "p50": 0.0013098068592124433,
+  "p90": 0.005317228913115003,
+  "p99": 0.018372182143729068,
+  "max": 0.02593635121175053
+ },
+ "energy_std_quantiles": {
+  "p50": 0.7708159829531444,
+  "p90": 2.028556501291787,
+  "max": 2.507221793863867
+ },
+ "selected_species": {
+  "C2H4": 3,
+  "C2H6": 2,
+  "CH4": 3,
+  "CO2": 10,
+  "H2O": 11,
+  "NH3": 11
+ },
+ "selected_density": {
+  "0.005": 16,
+  "0.01": 14,
+  "0.02": 9,
+  "0.035": 1
+ },
+ "selected_indices": [
+  30,
+  66,
+  115,
+  1,
+  65,
+  139,
+  54,
+  96,
+  8,
+  41,
+  26,
+  128,
+  64,
+  4,
+  99,
+  47,
+  29,
+  42,
+  110,
+  15,
+  107,
+  22,
+  120,
+  19,
+  126,
+  62,
+  28,
+  100,
+  91,
+  33,
+  39,
+  2,
+  56,
+  97,
+  80,
+  106,
+  135,
+  109,
+  10,
+  87
+ ]
+}

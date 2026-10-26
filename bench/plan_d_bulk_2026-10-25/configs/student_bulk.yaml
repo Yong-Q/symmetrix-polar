@@ -1,0 +1,73 @@
+# Plan D-bulk: linear (standard, local) MACE student distilled from PolarMACE
+# on the FULL bulk + gas corpus (26,841 frames, state-level split).
+#
+# Why this config exists: the 4G-HDNNP route was shown to be descriptor-limited
+# (see overfit probe: it cannot drive the force error below ~60 meV/A even on
+# the 8 frames it is trained on). Plan D's linear MACE already passed the gas
+# gate at 0.924 meV/atom / 3.98 meV/A and runs at 4.47 us/atom/step FP32.
+# Its bulk gate was blocked only because the bulk data did not exist yet.
+# It does now.
+#
+# Speed budget per the 2026-10-25 requirement: 20-40 us/atom/step.  The linear
+# FP32 path is 4.5 us; the FP64 materialized path is 12.3 us.  Both are inside.
+name: plan_d_bulk_20261025
+seed: 42
+model: MACE
+foundation_model: /workspace/group/shared/bza/task3_sampling_database/mlip/models/MACE-OFF23_medium.model
+
+# --- architecture: keep the engine-compatible linear contract ---
+r_max: 5.0
+num_radial_basis: 8
+num_cutoff_basis: 5
+max_ell: 3
+num_channels: 128
+max_L: 1
+num_interactions: 2
+correlation: 3
+interaction: RealAgnosticResidualInteractionBlock
+interaction_first: RealAgnosticInteractionBlock
+gate: silu
+MLP_irreps: "16x0e"
+radial_MLP: "[64, 64, 64]"
+radial_type: bessel
+scaling: rms_forces_scaling
+
+# --- data (teacher labels = PolarMACE-1-M FP64) ---
+# 23,376 train / 3,465 valid frames, whole-state holdout, 0 duplicates.
+train_file: /workspace/group/shared/bza/symmetrix-polar/data_20261025/train.xyz
+valid_file: /workspace/group/shared/bza/symmetrix-polar/data_20261025/valid.xyz
+energy_key: REF_energy
+forces_key: REF_forces
+E0s: "{1: -15.99000358581543, 6: -1037.1678466796875, 7: -1490.378173828125, 8: -2047.592529296875}"
+
+# --- loss: forces dominate the gate, but energy must not be sacrificed ---
+loss: weighted
+error_table: PerAtomMAE
+energy_weight: 1.0
+forces_weight: 20.0
+optimizer: adam
+lr: 0.001
+weight_decay: 5.0e-7
+clip_grad: 10.0
+scheduler: ReduceLROnPlateau
+lr_factor: 0.8
+scheduler_patience: 20
+batch_size: 8
+valid_batch_size: 8
+max_num_epochs: 60
+patience: 40
+eval_interval: 1
+swa: false
+ema: false
+compute_stress: false
+
+# --- runtime ---
+device: cuda
+default_dtype: float32
+num_workers: 0
+plot: false
+work_dir: /workspace/group/shared/bza/symmetrix-polar/bench/plan_d_bulk_2026-10-25/models
+model_dir: /workspace/group/shared/bza/symmetrix-polar/bench/plan_d_bulk_2026-10-25/models/bulk
+checkpoints_dir: /workspace/group/shared/bza/symmetrix-polar/bench/plan_d_bulk_2026-10-25/models/bulk/checkpoints
+results_dir: /workspace/group/shared/bza/symmetrix-polar/bench/plan_d_bulk_2026-10-25/models/bulk/results
+log_dir: /workspace/group/shared/bza/symmetrix-polar/bench/plan_d_bulk_2026-10-25/logs
