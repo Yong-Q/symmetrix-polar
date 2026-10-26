@@ -26,6 +26,7 @@ data_20261025_al_r1/
 data_20261025_subset/
 attempt-*/
 runner-4gal-*/
+runner-4gv2-*/
 logs/
 .tmp/
 .tmp_fonts/
