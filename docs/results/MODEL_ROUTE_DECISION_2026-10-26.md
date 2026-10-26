@@ -80,6 +80,15 @@ the only fast model with explicit QEq charges, but its accuracy fails and its
 monopole-only electrostatics is the main error term, so "continue 4G" does not
 solve the polarization requirement either.
 
+**0.1 meV/atom update (same day).** A fixed-state fine-tune of the same
+128-channel contract plateaus at 0.5–0.6 meV/atom on 96-atom boxes and
+0.20–0.27 meV/atom frame-to-frame fluctuation on the 1,152-atom box; see
+`FIXEDSTATE_DISTILLATION_PROBE_2026-10-26.md`. A 0.1 meV/atom target is
+therefore below the local-model floor and is not reachable by more active
+sampling of the same architecture. It requires the charge/long-range route
+below (or a substantially larger local model, which still would not add
+charges).
+
 If charges are required, the cheaper path is:
 
 1. add a per-atom charge head to the already-accurate linear backbone;
