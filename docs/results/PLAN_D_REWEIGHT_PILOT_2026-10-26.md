@@ -3,10 +3,20 @@
 **Question:** if Plan D is used as the MD proposal, is the importance-sampling
 ESS better than the OFF→POLAR 500 ps result (σ_β=13.76, ESS=0.47%)?
 
-**Answer: yes, much better in the pilot.** On 1,152 atoms / 10 frames,
-Plan D→POLAR gives σ_β=5.90 and ESS=15.9% (1.59/10), versus 0.47% for
-OFF→POLAR. The pilot is small and correlated, so the absolute ESS needs a
-longer trajectory; the σ_β reduction from 13.76 to 5.90 is the robust signal.
+**Answer: better than OFF, but the 10-frame pilot was too optimistic.** On
+1,152 atoms / 10 frames, Plan D→POLAR gave σ_β=5.90 and ESS=15.9% (1.59/10),
+versus 0.47% for OFF→POLAR. Extending to **15 ps / 30 frames** raises the
+per-atom ΔE std from 0.132 to **0.275 meV/atom** and σ_β from 5.90 to
+**12.24**, so the interim ESS drops to **1.095/30 = 3.65%** (marginal). The
+50 ps run is still in progress; the final ESS is expected in the 2–5% range.
+Plan D is still ~8× better than OFF, but the pilot's 15.9% should not be used
+as the production number.
+
+| run | frames | ΔE/atom std | σ_β | ESS |
+|---|---:|---:|---:|---:|
+| OFF→POLAR | 501 | 0.309 meV/atom | 13.76 | 0.47% |
+| Plan D→POLAR 5 ps | 10 | 0.132 meV/atom | 5.90 | 15.9% |
+| **Plan D→POLAR 15 ps** | **30** | **0.275 meV/atom** | **12.24** | **3.65%** |
 
 ## Why ASE, not the Symmetrix LAMMPS pair style
 

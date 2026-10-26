@@ -1,0 +1,13 @@
+{
+ "traj": "/workspace/caches/md_scratch/planD_ase_1152_1fs_15ps_snapshot.xyz",
+ "n_frames": 30,
+ "n_atoms": 1152,
+ "temperature_K": 300.0,
+ "dE_meV_per_atom_mean": 0.2807097661624775,
+ "dE_meV_per_atom_std": 0.274611745241329,
+ "dE_total_eV_std": 0.316352730518011,
+ "sigma_beta": 12.237069980533185,
+ "ess": 1.095397699623066,
+ "ess_fraction": 0.036513256654102204,
+ "verdict": "marginal"
+}
