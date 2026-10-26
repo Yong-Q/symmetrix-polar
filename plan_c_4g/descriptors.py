@@ -71,6 +71,32 @@ class DescriptorConfig:
         return self.n_rbf * N_ELEM + self.n_ang * N_PAIR
 
 
+def angular_basis_preset(n: int) -> Tuple[Tuple[float, float, float], ...]:
+    """Return an element-resolved G4 basis of size n.
+
+    8 is the original preset.  16/24 widen the eta/zeta grid, which is the
+    part that C2H4/C2H6 need for C-C bond and torsion resolution.
+    """
+    if n == 8:
+        return (
+            (0.30, 2.0, 1.0), (0.30, 2.0, -1.0),
+            (0.30, 4.0, 1.0), (0.30, 4.0, -1.0),
+            (1.50, 2.0, 1.0), (1.50, 2.0, -1.0),
+            (1.50, 4.0, 1.0), (1.50, 4.0, -1.0),
+        )
+    if n == 16:
+        return tuple((eta, zeta, lam)
+                     for eta in (0.10, 0.50, 1.50, 6.00)
+                     for zeta in (2.0, 4.0)
+                     for lam in (1.0, -1.0))
+    if n == 24:
+        return tuple((eta, zeta, lam)
+                     for eta in (0.10, 0.50, 1.50)
+                     for zeta in (2.0, 3.0, 4.0, 6.0)
+                     for lam in (1.0, -1.0))
+    raise ValueError(f"unsupported angular preset {n}; use 8, 16, or 24")
+
+
 def _radial_centers(cfg: DescriptorConfig, device, dtype):
     mu = torch.linspace(cfg.r_min, cfg.r_cut_rad, cfg.n_rbf, device=device, dtype=dtype)
     return mu

@@ -66,6 +66,11 @@ class ModelConfig:
     # q_max ~ 1 e and the wrong charge scale.  Off by default so old
     # checkpoints load unchanged; new runs pass physical_init=True.
     physical_init: bool = False
+    # ee4G: append the QEq electrostatic potential at each site to the local
+    # energy network.  Off by default so old checkpoints keep their e_head
+    # input width; new 4G+ runs enable it.
+    use_ee4g: bool = False
+    phi_scale: float = 1.0
 
 
 class FourGStudent(nn.Module):
@@ -93,8 +98,9 @@ class FourGStudent(nn.Module):
 
         self.chi_head = _head(m.trunk_hidden)
         self.j_head = _head(m.trunk_hidden)
+        e_in_dim = m.trunk_hidden + 1 + (1 if m.use_ee4g else 0)
         self.e_head = nn.Sequential(
-            nn.Linear(m.trunk_hidden + 1, m.head_hidden), nn.SiLU(),
+            nn.Linear(e_in_dim, m.head_hidden), nn.SiLU(),
             nn.Linear(m.head_hidden, 1),
         )
         # Element-specific Hirshfeld volume-ratio networks (paper Sec. II F 1).
@@ -186,12 +192,19 @@ class FourGStudent(nn.Module):
             q = sol.q.detach()
 
         qr = q.requires_grad_(True) if compute_forces else q
-        e_in = torch.cat([h, (qr / m.q_scale).unsqueeze(-1)], dim=1)
-        e_atom = self.e_head(e_in).squeeze(-1)
-        E_s = e_atom.sum()
         # one differentiable stencil, reused for the energy and the adjoint term
         st_g = self.qeq.coulomb.build_stencil(pos, cell, batch, G)
         Ecq = self.qeq.coulomb.apply_stencil(st_g, q)
+        if m.use_ee4g:
+            # keep the potential graph-connected to q so dEs/dq includes the
+            # ee4G feature; the value is the QEq electrostatic potential.
+            Ecq_feat = self.qeq.coulomb.apply_stencil(st_g, qr)
+            e_in = torch.cat([h, (qr / m.q_scale).unsqueeze(-1),
+                              (Ecq_feat / m.phi_scale).unsqueeze(-1)], dim=1)
+        else:
+            e_in = torch.cat([h, (qr / m.q_scale).unsqueeze(-1)], dim=1)
+        e_atom = self.e_head(e_in).squeeze(-1)
+        E_s = e_atom.sum()
         # Gaussian self term, paper Eq. 12: E_ii = 1/(sigma sqrt(pi)).
         self_diag = (self.qeq.coulomb.self_energy_diag()
                      if m.include_self_energy else 0.0)

@@ -21,7 +21,7 @@ import torch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from plan_c_4g.data import collate, load_frames, per_element_reference  # noqa: E402
-from plan_c_4g.descriptors import DescriptorConfig  # noqa: E402
+from plan_c_4g.descriptors import DescriptorConfig, angular_basis_preset  # noqa: E402
 from plan_c_4g.model import FourGStudent, ModelConfig  # noqa: E402
 from plan_c_4g.train import evaluate  # noqa: E402
 
@@ -100,6 +100,12 @@ def main():
     ap.add_argument("--gas-batch", type=int, default=16)
     ap.add_argument("--select", choices=["gas", "bulk", "mixed"], default="bulk")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--ang-preset", type=int, choices=[8, 16, 24], default=8)
+    ap.add_argument("--n-rbf", type=int, default=12)
+    ap.add_argument("--r-cut-ang", type=float, default=3.5)
+    ap.add_argument("--use-ee4g", action="store_true",
+                    help="append the QEq electrostatic potential as a local feature")
+    ap.add_argument("--no-vdw", action="store_true")
     # RuNNer2 4G fixes / two-stage training.
     ap.add_argument("--physical-init", action="store_true",
                     help="initialise element chi/J from Pearson values (RuNNer2 4G)")
@@ -129,7 +135,9 @@ def main():
     torch.set_default_dtype(torch.float64)
     device = args.device if torch.cuda.is_available() else "cpu"
     os.makedirs(args.outdir, exist_ok=True)
-    cfg = DescriptorConfig()
+    cfg = DescriptorConfig(n_rbf=args.n_rbf,
+                           r_cut_ang=args.r_cut_ang,
+                           angular_basis=angular_basis_preset(args.ang_preset))
 
     bulk_frames = []
     if args.bulk_train_file:
@@ -165,6 +173,11 @@ def main():
         gas_valid = load_frames(args.gas_valid, cfg, verbose=True)
 
     if args.init:
+        if (args.ang_preset != 8 or args.n_rbf != 12
+                or abs(args.r_cut_ang - 3.5) > 1e-9 or args.use_ee4g):
+            raise SystemExit(
+                "--init cannot change the descriptor or enable ee4G; train the "
+                "new architecture from scratch or provide a matching checkpoint")
         ck = torch.load(args.init, map_location="cpu", weights_only=False)
         mcfg_kwargs = dict(ck["model_config"])
         # Old checkpoints predate the vdW ablation and were trained without it;
@@ -174,6 +187,9 @@ def main():
         mcfg = ModelConfig(**mcfg_kwargs)
         mcfg.include_self_energy = not args.no_self_energy
         mcfg.physical_init = bool(args.physical_init)
+        mcfg.use_ee4g = bool(args.use_ee4g)
+        if args.no_vdw:
+            mcfg.use_vdw = False
         model = FourGStudent(DescriptorConfig(**ck["descriptor_config"]), mcfg)
         missing, unexpected = model.load_state_dict(ck["model"], strict=False)
         model = model.to(device)
@@ -191,7 +207,9 @@ def main():
                                               cg_iters=args.cg_iters,
                                               cg_tol=1e-8,
                                               include_self_energy=not args.no_self_energy,
-                                              physical_init=bool(args.physical_init))).to(device)
+                                              physical_init=bool(args.physical_init),
+                                              use_ee4g=bool(args.use_ee4g),
+                                              use_vdw=not args.no_vdw)).to(device)
         all_ref = list(gas_train) + list(bulk_frames)
         eps = per_element_reference(all_ref, list(range(len(all_ref))))
         model.set_element_reference(eps)
