@@ -35,3 +35,9 @@ still required for an end-to-end measurement.
 
 Caveats: q/μ trained on 6,809 frames, not 23K; CO2/H2O/NH3 are
 representation-limited (0.4–0.6 meV/atom); 20 µs is projected.
+
+Reweighting: student→POLAR one-step reweighting at 1,152 atoms gives
+σ_β=8.02 and ESS=0.24 % (top frame 91.5 % of the weight), so it is not
+usable at production size; 96 atoms gives ESS≈44 % and gas 98 %. Use direct
+student sampling, or λ-intermediate + BAR/MBAR. See
+`docs/results/ESS_STUDENT_TO_POLAR_2026-10-27.md`.

@@ -87,7 +87,8 @@ is the remaining implementation.
 Full write-up: [theory & performance PDF](docs/results/DISTILLATION_THEORY_PERFORMANCE_2026-10-27.pdf) ·
 [final metrics](docs/results/CHARGE_DIPOLE_FINAL_2026-10-27.md) ·
 [route decision](docs/results/MODEL_ROUTE_DECISION_2026-10-26.md) ·
-[per-species E/F](docs/results/data/valid_by_species.json)
+[per-species E/F](docs/results/data/valid_by_species.json) ·
+[student→POLAR ESS audit](docs/results/ESS_STUDENT_TO_POLAR_2026-10-27.md)
 
 **Engine updates (2026-10-23):**
 
