@@ -218,6 +218,27 @@ write_restart final.restart
     return inp
 
 
+def wait_for_gpu_reserve(min_free_mib: int = 15000, poll_s: int = 30,
+                         max_wait_s: int = 3600) -> None:
+    """Do not start a new state if the GPU is close to full."""
+    import time
+    t0 = time.time()
+    while time.time() - t0 < max_wait_s:
+        try:
+            out = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.free",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=10)
+            free = min(int(x) for x in out.stdout.split())
+        except Exception:
+            return
+        if free >= min_free_mib:
+            return
+        print(f"[gpu] free {free} MiB < {min_free_mib} MiB; waiting",
+              flush=True)
+        time.sleep(poll_s)
+
+
 def run_state(species: str, rho, T: int, seed: int, args) -> dict:
     sampler = SAMPLERS[args.sampler]
     if rho is None:
@@ -226,6 +247,7 @@ def run_state(species: str, rho, T: int, seed: int, args) -> dict:
     else:
         tag = f"{sampler['tag']}-{species}-{args.nmols}mol-r{rho:g}-{T}K-f{seed}"
         data_src = "built"
+    wait_for_gpu_reserve(args.min_free_gpu_mib)
     work = OUT / tag
     work.mkdir(parents=True, exist_ok=True)
     if rho is None:
@@ -296,6 +318,8 @@ def main():
     ap.add_argument("--steps-prod", type=int, default=20000)
     ap.add_argument("--dump-every", type=int, default=1000)
     ap.add_argument("--min-steps", type=int, default=600)
+    ap.add_argument("--min-free-gpu-mib", type=int, default=15000,
+                    help="do not start a new state below this free memory")
     ap.add_argument("--timestep", type=float, default=0.001,
                     help="ps; use 0.0005 for dense/hot boxes")
     ap.add_argument("--smoke", action="store_true")
