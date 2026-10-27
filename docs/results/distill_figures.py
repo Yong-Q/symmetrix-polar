@@ -202,12 +202,12 @@ def speed_fig():
     fig, axes = plt.subplots(1, 2, figsize=(10.6, 4.0),
                              gridspec_kw={"width_ratios": [1.25, 1.0]})
     ax = axes[0]
-    names = ["linear MACE-OFF23\nFP32 (engine)",
-             "distilled backbone\nFP32 (engine)",
-             "distilled backbone\nFP64 (engine)",
-             "distilled + q/$\\mu$ + Ewald\nFP64 (projected)",
-             "128L1 polar student\nFP64 (engine)",
-             "exact PolarMACE\nFP64 (engine)"]
+    names = ["linear MACE-OFF23\nFP32 · reference",
+             "backbone only\nFP32 · measured",
+             "backbone only\nFP64 · measured",
+             "full package (+ q/$\\mu$ + Ewald)\nFP64 · projected",
+             "128L1 polar student\nFP64 · measured",
+             "exact PolarMACE\nFP64 · measured"]
     speeds = [4.50, 4.47, 12.3, 20.2, 95.11, 128.99]
     colors = [C["grey"], C["blue"], C["sky"], C["orange"], C["green"], C["purple"]]
     bars = ax.barh(np.arange(len(names)), speeds, color=colors, height=0.62)
@@ -215,7 +215,7 @@ def speed_fig():
     bars[3].set_edgecolor("white")
     ax.set_yticks(np.arange(len(names))); ax.set_yticklabels(names, fontsize=7.6)
     ax.set_xscale("log"); ax.set_xlabel("$\\mu$s atom$^{-1}$ step$^{-1}$ (log)")
-    ax.set_title("Speed at 5,184 atoms on one A100")
+    ax.set_title("Speed at 5,184 atoms, one A100\n(backbone-only vs full package)")
     for i, v in enumerate(speeds):
         ax.text(v * 1.09, i, f"{v:.2f}", va="center", fontsize=7.8)
     ax.set_xlim(3, 320)

@@ -115,7 +115,7 @@ def cover_page(pdf):
         ("l=1 dipole $\\mu$", "0.0475", "e A · 4$\\pi$ scale"),
         ("GTO/Ewald from $q,\\mu$", "0.311", "meV atom$^{-1}$ overall"),
         ("Speed, 5,184 atoms", "4.47 / ~20.2",
-         "backbone FP32 / +q,$\\mu$,Ewald (proj.)"),
+         "backbone-only FP32 / full FP64 (proj.)"),
     ]
     x0, y0, w, h = 0.07, 0.725, 0.27, 0.105
     dx, dy = 0.295, 0.122
@@ -200,11 +200,14 @@ with PdfPages(OUT) as pdf:
     figure_page(
         pdf, speed_fig(), "3 · Speed and the speed-accuracy map", [
             "All measurements are us/atom/step at 5,184 atoms on one A100.  "
-            "The FP32 direct/JIT engine path runs the distilled backbone at "
-            "4.47, matching the paper's linear MACE-OFF23 range; the FP64 "
-            "materialized backbone is 12.3.  Adding the q/mu heads and the "
-            "Ewald kernel is projected to land at ~20.2 (hatched), because the "
-            "engine hybrid pair style is not yet implemented.  The 128L1 "
+            "The FP32 direct/JIT engine path runs the bare backbone at 4.47 "
+            "(no q/mu heads, no Ewald), matching the paper's linear "
+            "MACE-OFF23 range; the same backbone in FP64 is 12.3.  The full "
+            "package adds the q/mu heads and the exact GTO/Ewald kernel and is "
+            "projected to land at ~20.2 in FP64 (hatched), because the engine "
+            "hybrid pair style is not yet implemented.  The 4.47 and the ~20.2 "
+            "are therefore different scopes, not two measurements of the same "
+            "quantity.  The 128L1 "
             "nonlinear polar student (95.1) and the exact teacher (129.0) "
             "bracket the current exact-PolarMACE cost.",
         ])

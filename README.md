@@ -30,7 +30,17 @@ C₂H₆, CO₂):
 | `l=1` dipole `μ`, 867 frames (4π scale) | **0.0475 e·Å** |
 | GTO/Ewald energy from predicted `q`, `μ` | **0.311 meV/atom** (0.013–0.63 by species) |
 | NVE drift / force rotation | 0.245 meV/atom/ps / 4.0e-5 |
-| Speed, 5,184 atoms, one A100 | **4.47 µs/atom/step** FP32 backbone · 12.3 FP64 · **~20.2 projected** with `q`, `μ` + Ewald |
+| Speed, backbone **only** (E, F), FP32 | **4.47 µs/atom/step** (measured) |
+| Speed, backbone **only** (E, F), FP64 | 12.3 µs/atom/step (measured) |
+| Speed, **full package** (backbone + `q`,`μ` + Ewald), FP64 | **~20.2 µs/atom/step** (projected) |
+
+**Why both 4.47 and ~20.2 appear — they are not the same measurement.**
+4.47 is the **bare backbone in FP32 with no charge/dipole heads and no Ewald
+term**; it is there only to show parity with the paper's linear MACE-OFF23
+(4.50). The deliverable package needs `q`/`μ` readout plus the exact GTO/Ewald
+kernel, and the project runs it in FP64: 12.3 (backbone) + 7.9 (Ewald) +
+<0.1 (heads) ≈ **20.2 projected**. So the honest headline for the full model
+is **~20 µs/atom/step**, not 4.47.
 
 ![Distillation architecture](docs/results/figures/DISTILLATION_ARCHITECTURE_2026-10-27.png)
 
@@ -185,9 +195,9 @@ activation serialization); in-domain H2O parity is 5.8e-9 eV / ~1e-8 eV/Å.
 | Gas-only, 336 held-out | 1.17 meV/atom / 1.00 meV/Å | 5 / 30 |
 | Charge `q`, 867 held-out (4π scale) | **0.0117 e** | — |
 | Dipole `μ`, 867 held-out (4π scale) | **0.0475 e·Å** | — |
-| Speed at 5,184, FP32 engine | **4.47 µs/atom/step** (measured) | — |
-| Speed at 5,184, FP64 engine | 12.3 µs/atom/step (measured) | — |
-| Speed with `q`, `μ` + Ewald, FP64 | **~20.2 µs/atom/step** (projected) | 20 |
+| Speed, 5,184, **backbone only** (E, F; no `q`/`μ`, no Ewald), FP32 engine | **4.47 µs/atom/step** (measured) | — |
+| Speed, 5,184, **backbone only** (E, F; no `q`/`μ`, no Ewald), FP64 engine | 12.3 µs/atom/step (measured) | — |
+| Speed, 5,184, **full package** (backbone + `q`,`μ` + Ewald), FP64 | **~20.2 µs/atom/step** (projected) | 20 |
 
 **Per-molecule E/F (3,465 held-out; E in meV/atom, F in meV/Å):**
 
