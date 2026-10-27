@@ -90,6 +90,51 @@ Full write-up: [theory & performance PDF](docs/results/DISTILLATION_THEORY_PERFO
 [per-species E/F](docs/results/data/valid_by_species.json) ·
 [student→POLAR ESS audit](docs/results/ESS_STUDENT_TO_POLAR_2026-10-27.md)
 
+### Reweighting: student → POLAR
+
+One-step importance sampling from the student to the teacher is **not usable
+at production size**:
+
+| system | frames | σ_β | ESS | note |
+|---|---:|---:|---:|---|
+| **1,152 atoms** (500 ps frames) | 501 | **8.02** | **0.24 %** | one frame holds 91.5 % of the weight |
+| 96 atoms (student-sampled pilot) | 19 | 1.87 | ~44 % | small, correlated sample |
+| Gas subset (23K validation) | 336 | 0.16 | 98 % | essentially perfect |
+| OFF23 → POLAR, 1,152 atoms | 501 | 13.76 | 0.47 % | prior audit, same failure mode |
+
+The student is closer to POLAR than OFF23 (σ_β 8.0 vs 13.8), but ESS is
+controlled by the largest weights, not by σ_β: the 1,152-atom frames were
+sampled by OFF23 and are out of distribution for the student, and frame 277
+alone carries 91.5 % of the weight. ΔU is extensive — 0.207 eV frame to
+frame at 1,152 atoms (0.18 meV/atom) — so its fluctuation grows with N; to
+reach σ_β ≤ 3 one would need ~0.07 meV/atom, a 2.5–3× tighter model than the
+current student.
+
+**Consequence:** use direct student sampling for c₁/c₂ production (no
+weights), or follow the λ-intermediate + BAR/MBAR route in the test
+repository's Task 6. Do not use one-step reweighting at 1,152 atoms.
+
+**Why published reweighting works.** Successful studies satisfy at least one
+of: a small perturbation or the same target Hamiltonian; intermediate states
+with BAR/MBAR; 10⁵–10⁶ frames; or non-extensive/local observables.
+
+| work | approach | key condition | difference here |
+|---|---|---|---|
+| Herzog et al., *JCTC* **18**, 1382 (2022) | MLPT learns ΔU then reweights; MLMC resamples with a corrected potential and reweights the residual | 200 training + 25 test configurations; adsorption enthalpy; small correction between electronic-structure levels | we cross two different potentials and target whole-box c₁/c₂ |
+| Chehaibou et al., *JCTC* **15**, 6333 (2019) | MLPT for RPA adsorption enthalpies | same small-perturbation, local-observable setting | as above |
+| Hilpert & Kresse, *JCP* **164**, 194504 (2026) | 63 water molecules, 292 K, 5,000 decorrelated configurations, DFT−MLIP ΔU, volume reweighting | MACE ESS ≈ 4,200, KbP < 800; MLIP and target are the same RPBE-D3 DFT | same target; extensive ΔU at 1,152 atoms |
+| Thaler & Zavadlav, *Nat Commun* (2021) | differentiable trajectory reweighting inside training | reweighting is part of the optimization loop | we diagnose a fixed model |
+| Shirts & Chodera, *JCP* **129**, 124105 (2008) | MBAR over multiple equilibrium states | requires real sampling of intermediate λ states | we have a single source/target pair |
+
+Links: [Herzog](https://doi.org/10.1021/acs.jctc.1c01034) ·
+[Chehaibou](https://doi.org/10.1021/acs.jctc.9b00782) ·
+[Hilpert–Kresse](https://doi.org/10.1063/5.0325444) ·
+[Thaler–Zavadlav](https://www.nature.com/articles/s41467-021-27241-4) ·
+[Shirts–Chodera](https://doi.org/10.1063/1.2978177)
+
+Full audit with inputs, hashes, and per-frame data:
+[docs/results/ESS_STUDENT_TO_POLAR_2026-10-27.md](docs/results/ESS_STUDENT_TO_POLAR_2026-10-27.md).
+
 **Engine updates (2026-10-23):**
 
 | Update | Result | Evidence |
