@@ -10,12 +10,19 @@ every atom site (orientation-resolving, no COM projection):
 MACE-OFF23 is only the *sampler*; MACE-Polar remains the label source.  The
 engine runs the FP32 streamed-edges path used by the 500 ps audit.
 
-Example:
+Examples:
+    # the 1,152-atom water box
     python scripts/run_site_symm.py --smoke
     python scripts/run_site_symm.py --temps 300 500 700 --seeds 101 202 \
         --steps-prod 20000 --dump-every 1000
+
+    # 125-molecule CO2 boxes at two densities
+    python scripts/run_site_symm.py --species CO2 --rhos 0.02 0.035 \
+        --nmols 125 --temps 300 500 700 --seeds 101 \
+        --steps-eq 2000 --steps-prod 3000 --dump-every 500
 """
 import argparse
+import math
 import hashlib
 import json
 import os
@@ -29,10 +36,24 @@ REPO = Path("/workspace/group/shared/bza/symmetrix-polar")
 OUT = REPO / "bench/plan_d_inhomog_2026-10-27"
 DATA = REPO / "bench/off23_500ps_water1152_2026-10-23/data.lammps"
 MODEL = Path("/workspace/group/shared/bza/task3_sampling_database/mlip/models/symmetrix/mace-off23-medium.json")
+TORCH_MODEL = Path("/workspace/group/shared/bza/task3_sampling_database/mlip/models/MACE-OFF23_medium.model")
 LMP = Path("/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-lammps-aacd036df381800a/lmp")
 CUBIN = Path("/workspace/group/shared/bza/symmetrix-polar/bench/plan_d_linear_2026-10-23/jit_cache/artifacts/9831e6a1a234bfe74d76b597d598ff09d50f6b129aae2dbb913beff5a78961b5/factorized_cuda_module_gen11_src847380c859abdbe6d213af7f595ebc0cba0f1986c73e8bce6c2a05b98cffecb1.cubin")
+STUDENT_LMP = Path("/workspace/group/shared/bza/external-repos/symmetrix-xl/symmetrix/build-kernel-r3/lmp")
+STUDENT_MODEL = REPO / "bench/plan_d_bulk_2026-10-25/models/bulk/plan_d_bulk_symmetrix.json"
+STUDENT_CUBIN = Path("/workspace/group/shared/bza/symmetrix-polar/bench/plan_d_linear_2026-10-23/jit_cache/artifacts/77e83555653584dac8c1bbc4914aba36e995e70e757b7a32324b7aaf69a4f305/factorized_cuda_module_gen11_src847380c859abdbe6d213af7f595ebc0cba0f1986c73e8bce6c2a05b98cffecb1.cubin")
+
+SAMPLERS = {
+    "off23": {"lmp": LMP, "model": MODEL, "cubin": CUBIN,
+              "tag": "site", "label": "MACE-OFF23 medium"},
+    "student": {"lmp": STUDENT_LMP, "model": STUDENT_MODEL,
+                "cubin": STUDENT_CUBIN, "tag": "student-site",
+                "label": "distilled Plan D student (MACE-Polar surrogate)"},
+}
 KB_EV_PER_K = 8.617333262e-5
 N_HARM = 4
+PAIR_ELEMENTS = {"H2O": ["O", "H"], "CO2": ["C", "O"]}
+MASS = {"H": 1.008, "C": 12.011, "O": 15.999, "N": 14.007}
 
 
 def sha256(path: Path) -> str:
@@ -43,12 +64,88 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def box_length_x() -> float:
-    for line in DATA.read_text().splitlines():
+def box_length_x(path: Path) -> float:
+    for line in path.read_text().splitlines():
         parts = line.split()
         if len(parts) == 4 and parts[-2:] == ["xlo", "xhi"]:
             return float(parts[1]) - float(parts[0])
-    raise RuntimeError("xlo/xhi not found in data.lammps")
+    raise RuntimeError(f"xlo/xhi not found in {path}")
+
+
+def build_box(species: str, n_mol: int, rho: float, seed: int):
+    """Grid placement with random orientations, as in the dense sampler."""
+    from ase import Atoms
+    from ase.build import molecule as ase_molecule
+    rng = np.random.default_rng(seed)
+    mol = ase_molecule(species)
+    base = mol.get_positions() - mol.get_positions().mean(axis=0)
+    numbers = mol.numbers
+    L = (n_mol / rho) ** (1.0 / 3.0)
+    n_side = int(math.ceil(n_mol ** (1.0 / 3.0)))
+    spacing = L / n_side
+    sites = [((i + 0.5) * spacing, (j + 0.5) * spacing, (k + 0.5) * spacing)
+             for i in range(n_side) for j in range(n_side) for k in range(n_side)]
+    rng.shuffle(sites)
+    centers = [np.asarray(s) + rng.uniform(-0.05 * spacing, 0.05 * spacing, 3)
+               for s in sites[:n_mol]]
+    pos = []
+    for c in centers:
+        q = rng.normal(size=4)
+        q /= np.linalg.norm(q)
+        w, x, y, z = q
+        R = np.array([
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ])
+        pos.append(base @ R.T + c + rng.normal(scale=0.05, size=base.shape))
+    return Atoms(numbers=np.tile(numbers, n_mol),
+                 positions=np.vstack(pos), cell=[L, L, L], pbc=True)
+
+
+def write_lammps_data(atoms, path: Path, elements: list) -> None:
+    L = atoms.cell.lengths()
+    sym2type = {e: i for i, e in enumerate(elements, 1)}
+    lines = [f"{atoms.get_chemical_formula()} site-field box", "",
+             f"{len(atoms)} atoms", f"{len(elements)} atom types", "",
+             f"0.0 {L[0]:.10f} xlo xhi",
+             f"0.0 {L[1]:.10f} ylo yhi",
+             f"0.0 {L[2]:.10f} zlo zhi", "", "Masses", ""]
+    for i, e in enumerate(elements, 1):
+        lines.append(f"{i} {MASS[e]:.6f}")
+    lines += ["", "Atoms # atomic", ""]
+    for i, (s, p) in enumerate(zip(atoms.get_chemical_symbols(),
+                                   atoms.get_positions()), 1):
+        lines.append(f"{i} {sym2type[s]} {p[0]:.10f} {p[1]:.10f} {p[2]:.10f}")
+    path.write_text("\n".join(lines) + "\n")
+
+
+def prepare_box(species: str, n_mol: int, rho: float, seed: int,
+                work: Path, min_steps: int) -> Path:
+    """Build, relax, and (for dense boxes) compress from a dilute packing.
+
+    Random placement directly at 0.035 molecules/A^3 leaves ~0.7 A contacts
+    that FIRE cannot remove; build at 0.02, relax, then compress to the
+    target density and relax again.
+    """
+    rho_build = min(rho, 0.02) if species == "CO2" else rho
+    atoms = build_box(species, n_mol, rho_build, seed)
+    if min_steps > 0:
+        from ase.optimize import FIRE
+        from mace.calculators import MACECalculator
+        calc = MACECalculator(model_paths=str(TORCH_MODEL), device="cuda",
+                              default_dtype="float32")
+        atoms.calc = calc
+        FIRE(atoms, logfile=None).run(fmax=0.3, steps=min_steps)
+        if rho > rho_build + 1e-12:
+            scale = (rho_build / rho) ** (1.0 / 3.0)
+            atoms.set_cell(atoms.cell * scale, scale_atoms=True)
+            FIRE(atoms, logfile=None).run(fmax=0.1,
+                                          steps=max(1000, 4 * min_steps))
+    atoms.wrap()
+    path = work / "data.lammps"
+    write_lammps_data(atoms, path, PAIR_ELEMENTS[species])
+    return path
 
 
 def make_field(T: float, seed: int, L: float):
@@ -72,11 +169,12 @@ def field_variables(f: dict) -> str:
 
 
 def write_input(work: Path, T: float, seed: int, steps_eq: int,
-                steps_prod: int, dump_every: int, field: dict) -> Path:
+                steps_prod: int, dump_every: int, field: dict,
+                elements: list, sampler: dict) -> Path:
     sin_terms, cos_terms = field_variables(field)
     jit = ""
-    if CUBIN.exists():
-        jit = (f" jit_device_artifact {CUBIN}"
+    if sampler["cubin"].exists():
+        jit = (f" jit_device_artifact {sampler['cubin']}"
                " jit_device_blocks_per_compute_unit 8")
     inp = work / "in.site"
     inp.write_text(f"""units metal
@@ -87,7 +185,7 @@ package kokkos neigh half newton on
 newton on
 read_data data.lammps
 pair_style symmetrix/mace/float32/kk streamed_edges direct profile speed{jit}
-pair_coeff * * {MODEL} O H
+pair_coeff * * {sampler['model']} {' '.join(elements)}
 neighbor 2.0 bin
 neigh_modify every 100 delay 0 check no
 timestep 0.001
@@ -110,25 +208,40 @@ write_restart final.restart
     return inp
 
 
-def run_state(T: int, seed: int, args) -> dict:
-    tag = f"site-H2O-1152-{T}K-f{seed}"
+def run_state(species: str, rho, T: int, seed: int, args) -> dict:
+    sampler = SAMPLERS[args.sampler]
+    if rho is None:
+        tag = f"{sampler['tag']}-{species}-1152-{T}K-f{seed}"
+        data_src = "water_1152"
+    else:
+        tag = f"{sampler['tag']}-{species}-{args.nmols}mol-r{rho:g}-{T}K-f{seed}"
+        data_src = "built"
     work = OUT / tag
     work.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(DATA, work / "data.lammps")
-    field = make_field(T, seed, box_length_x())
+    if rho is None:
+        shutil.copy2(DATA, work / "data.lammps")
+    else:
+        prepare_box(species, args.nmols, rho, seed, work, args.min_steps)
+    data_path = work / "data.lammps"
+    elements = PAIR_ELEMENTS[species]
+    field = make_field(T, seed, box_length_x(data_path))
     inp = write_input(work, T, seed, args.steps_eq, args.steps_prod,
-                      args.dump_every, field)
-    (work / "field.json").write_text(json.dumps({
-        "tag": tag, "T_K": T, "seed": seed,
+                      args.dump_every, field, elements, sampler)
+    meta = {
+        "tag": tag, "species": species, "T_K": T, "seed": seed,
+        "density_mol_A3": rho, "n_molecules": args.nmols if rho else 384,
         "a": field["a"].tolist(), "phi": field["phi"].tolist(),
         "k_invA": field["k"].tolist(), "A_eV": field["A"].tolist(),
         "k_convention": "2n_pi_over_L", "n_harm": N_HARM,
         "direction": "x", "L_A": field["L"],
         "V_eV": "sum_n A_n sin(k_n x + phi_n)",
         "F_eV_per_A": "-sum_n A_n k_n cos(k_n x + phi_n)",
-        "sampler": "MACE-OFF23 medium via Symmetrix engine",
+        "sampler": sampler["label"] + " via Symmetrix engine",
         "label_source": "MACE-Polar-1-M (separate teacher pass)",
-    }, indent=1))
+        "data_source": data_src, "data_sha256": sha256(data_path),
+        "pair_elements": elements,
+    }
+    (work / "field.json").write_text(json.dumps(meta, indent=1))
     env = {**os.environ,
            "LD_LIBRARY_PATH": (
                "/workspace/caches/conda/envs/lammps-deepmd/lib:"
@@ -137,14 +250,15 @@ def run_state(T: int, seed: int, args) -> dict:
            "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "0")}
     env.pop("PYTHONPATH", None)
     proc = subprocess.run(
-        [str(LMP), "-k", "on", "g", "1", "-in", inp.name,
+        [str(sampler["lmp"]), "-k", "on", "g", "1", "-in", inp.name,
          "-log", "log.site"], cwd=work, env=env, text=True,
         capture_output=True)
     (work / "stdout.site").write_text(proc.stdout)
     (work / "stderr.site").write_text(proc.stderr)
     ok = proc.returncode == 0 and (work / "traj.lammpstrj").exists()
-    rec = {"tag": tag, "T_K": T, "seed": seed, "rc": proc.returncode,
-           "ok": ok, "workdir": str(work),
+    rec = {"tag": tag, "species": species, "T_K": T, "seed": seed,
+           "density_mol_A3": rho, "rc": proc.returncode, "ok": ok,
+           "workdir": str(work),
            "traj": str(work / "traj.lammpstrj") if ok else None,
            "n_frames": 0}
     if ok:
@@ -159,29 +273,44 @@ def run_state(T: int, seed: int, args) -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--species", choices=sorted(PAIR_ELEMENTS), default="H2O")
+    ap.add_argument("--sampler", choices=sorted(SAMPLERS), default="off23")
+    ap.add_argument("--rhos", type=float, nargs="+", default=None,
+                    help="densities in molecules/A^3; omit for the 1152-atom "
+                         "water box")
+    ap.add_argument("--nmols", type=int, default=125)
     ap.add_argument("--temps", type=int, nargs="+", default=[300, 500, 700])
     ap.add_argument("--seeds", type=int, nargs="+", default=[101, 202])
     ap.add_argument("--steps-eq", type=int, default=2000)
     ap.add_argument("--steps-prod", type=int, default=20000)
     ap.add_argument("--dump-every", type=int, default=1000)
+    ap.add_argument("--min-steps", type=int, default=600)
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
     if args.smoke:
         args.temps, args.seeds = [300], [101]
         args.steps_eq, args.steps_prod, args.dump_every = 100, 200, 100
+        if args.rhos:
+            args.nmols = min(args.nmols, 32)
     OUT.mkdir(parents=True, exist_ok=True)
+    rhos = args.rhos if args.rhos else [None]
     records = []
-    for T in args.temps:
-        for seed in args.seeds:
-            records.append(run_state(T, seed, args))
+    for rho in rhos:
+        for T in args.temps:
+            for seed in args.seeds:
+                records.append(run_state(args.species, rho, T, seed, args))
+    sampler = SAMPLERS[args.sampler]
     manifest = {
-        "engine": str(LMP), "engine_sha256": sha256(LMP),
-        "model": str(MODEL), "model_sha256": sha256(MODEL),
-        "data": str(DATA), "data_sha256": sha256(DATA),
-        "cubin": str(CUBIN) if CUBIN.exists() else None,
+        "sampler": sampler["label"],
+        "engine": str(sampler["lmp"]), "engine_sha256": sha256(sampler["lmp"]),
+        "model": str(sampler["model"]),
+        "model_sha256": sha256(sampler["model"]),
+        "torch_model": str(TORCH_MODEL),
+        "cubin": str(sampler["cubin"]) if sampler["cubin"].exists() else None,
         "states": records,
     }
-    (OUT / "manifest_site.json").write_text(json.dumps(manifest, indent=1))
+    (OUT / f"manifest_site_{args.species}_{args.sampler}.json").write_text(
+        json.dumps(manifest, indent=1))
     bad = [r for r in records if not r["ok"]]
     print(f"done: {len(records) - len(bad)}/{len(records)} states ok")
     if bad:
