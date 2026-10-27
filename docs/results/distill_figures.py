@@ -24,19 +24,19 @@ VALID = json.loads(VF.read_text()) if VF.exists() else {}
 plt.rcParams.update({
     "font.family": "serif",
     "font.serif": ["DejaVu Serif"],
-    "font.size": 9,
-    "axes.titlesize": 10,
-    "axes.labelsize": 9,
-    "xtick.labelsize": 8.5,
-    "ytick.labelsize": 8.5,
-    "legend.fontsize": 8,
+    "font.size": 10.5,
+    "axes.titlesize": 11.5,
+    "axes.labelsize": 10.5,
+    "xtick.labelsize": 9.5,
+    "ytick.labelsize": 9.5,
+    "legend.fontsize": 9.5,
     "axes.linewidth": 0.8,
     "xtick.direction": "in",
     "ytick.direction": "in",
     "xtick.major.width": 0.8,
     "ytick.major.width": 0.8,
     "figure.dpi": 150,
-    "savefig.dpi": 180,
+    "savefig.dpi": 500,
 })
 C = {"blue": "#0072B2", "orange": "#D55E00", "green": "#009E73",
      "purple": "#CC79A7", "yellow": "#E69F00", "sky": "#56B4E9",
@@ -58,7 +58,7 @@ def _tidy(ax, grid="y"):
 
 # ---------------------------------------------------------------- architecture
 def architecture_fig():
-    fig = plt.figure(figsize=(10.6, 5.9))
+    fig = plt.figure(figsize=(9.4, 5.4))
     ax = fig.add_axes([0.0, 0.08, 1.0, 0.84])
     ax.set_axis_off()
     ax.set_xlim(0, 10); ax.set_ylim(0, 8)
@@ -118,7 +118,7 @@ def accuracy_fig():
     have_ef = all(f"cross:{s}|bulk" in VALID and f"cross:{s}|gas" in VALID
                   for s in SPECIES)
 
-    fig, axes = plt.subplots(2, 2, figsize=(10.6, 7.0))
+    fig, axes = plt.subplots(2, 2, figsize=(9.6, 6.4))
     x = np.arange(len(SPECIES))
 
     ax = axes[0, 0]
@@ -199,7 +199,7 @@ def accuracy_fig():
 
 # ------------------------------------------------------------------ speed
 def speed_fig():
-    fig, axes = plt.subplots(1, 2, figsize=(10.6, 4.0),
+    fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.9),
                              gridspec_kw={"width_ratios": [1.25, 1.0]})
     ax = axes[0]
     names = ["linear MACE-OFF23\nFP32 · reference",
