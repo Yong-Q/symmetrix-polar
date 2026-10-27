@@ -1,0 +1,21 @@
+# Charge/dipole student — final effect (2026-10-27)
+
+| component | training data | validation | result |
+|---|---|---|---|
+| E/F backbone (Plan D bulk) | 23,376 frames | 3,465 | **1.2 meV/atom / 7.8 meV/Å**; gas 1.17 / 1.00 |
+| q head (MLP) | 6,809 frames (1,100 states) | 867 | **0.0117 e** (4π; 0.00093 raw) |
+| μ head (full linear ridge 384→3) | 6,809 frames | 867 | **0.0475** (4π; 0.00378 raw) |
+| Ewald diagnostic | 6,809-trained heads | 867 | **0.311 meV/atom** |
+
+Per-species Ewald (867 valid): C2H4 0.035, C2H6 0.055, CH4 0.013, CO2 0.628,
+H2O 0.516, NH3 0.375 meV/atom.
+
+Stability: force rotation 4.0e-5; NVE 0.245 meV/atom/ps over 1 ps;
+canonical-frame rotation 4.6e-14 meV/atom (vs 0.825 without).
+
+Speed: backbone ~4.5 µs/atom (engine FP32), heads <0.1, Ewald 7.9 (PyTorch);
+projected total ~20.2 µs, cutoff 1.2× → ≤20. Engine hybrid pair style is
+still required for an end-to-end measurement.
+
+Caveats: q/μ trained on 6,809 frames, not 23K; CO2/H2O/NH3 are
+representation-limited (0.4–0.6 meV/atom); 20 µs is projected.
