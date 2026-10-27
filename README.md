@@ -24,8 +24,10 @@ C₂H₆, CO₂):
 
 | Quantity | Held-out result |
 |---|---:|
-| Energy / force, 3,465 frames (bulk + gas) | **1.2 meV/atom / 7.8 meV/Å** |
-| Energy / force, gas only (336 frames) | 1.17 meV/atom / 1.00 meV/Å |
+| Energy MAE, 3,465 frames (bulk + gas) | **1.12 meV/atom** |
+| Force MAE, 3,465 frames (bulk + gas) | **7.75 meV/Å** |
+| Energy MAE, gas only (336 frames) | 1.17 meV/atom |
+| Force MAE, gas only (336 frames) | 1.00 meV/Å |
 | Atomic charge `q`, 867 frames (4π scale) | **0.0117 e** |
 | `l=1` dipole `μ`, 867 frames (4π scale) | **0.0475 e·Å** |
 | GTO/Ewald energy from predicted `q`, `μ` | **0.311 meV/atom** (0.013–0.63 by species) |
@@ -146,7 +148,6 @@ Full audit with inputs, hashes, and per-frame data:
 
 | Update | Result | Evidence |
 |---|---|---|
-| **Plan D linear student (gas)** — *superseded 2026-10-27* | Historic gas-only model: 0.924 meV/atom / 3.984 meV/Å on 432 frames. Replaced by the bulk + gas six-molecule distillation above (1.2 / 7.8 on 3,465 held-out); the "bulk gate blocked" status no longer applies | `docs/design/PLAN_D_LINEAR_2026-10-23.md`; new section above |
 | **Plan C 4G-HDNNP speed** | **19.26 µs/atom/step** FP64 converged (88 CG), **13.45** at 60 CG, 5,184 atoms, 72k params; **accuracy not gated** (gas 38.2/40.3; bulk 73.2/95.0) | `docs/design/PLAN_C_4G_2026-10-23.md` |
 | **Off→Polar reweighting** | 96-atom probe: σ_β=3.89, ESS=10.1% (marginal); extrapolates to σ_β≈14/29 and collapse at 1,296/5,184 atoms. Standalone interface + analytic √N validation | https://github.com/Yong-Q/test |
 | **Plan B bulk pipeline** | 15,641 frames merged (13,475 bulk + 2,166 gas), 0 duplicates; state split 1,098/176; ACF **N_eff 4,165 (26.6%)**; gas-only 128L1 diverges on dense bulk (expected), fine-tune staged | `docs/results/PATH_B_BULK_PIPELINE_2026-10-23.md` |
