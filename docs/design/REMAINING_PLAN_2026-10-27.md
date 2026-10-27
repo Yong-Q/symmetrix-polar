@@ -75,3 +75,16 @@ items are listed here so they survive context switches.
   `scripts/dipole_pme_bench.py`, `scripts/longrange_probe_l1.py`,
   `scripts/collect_dense_slabs.py` (to be copied from bench).
 - Figures/docs: `docs/results/CHARGE_MULTIPOLE_PROGRESS_2026-10-27.md`.
+
+## Status update 2026-10-27 03:45 UTC
+
+- q/μ labels complete: 5,844 train + 867 valid + 965 supplement.
+- Merged train: `data_20261025_charges/train_6809_multipole.xyz`
+  (6,809 frames / 1,100 states).
+- MACE 0e/1o features extracted: `features_train.npz` (822,940 atoms),
+  `features_valid.npz` (111,670 atoms).
+- Dense 0.035 and slab sampling launched in parallel (`--mode dense`,
+  `--mode slabs`). Current 3 ps slab run is a smoke; the production slab run
+  should use 10 ps equilibration + 20 ps production (20 frames/state) or
+  20 + 30 ps (30 frames/state).
+- Q4 still 0/64 free; local A100 is shared but has memory headroom.

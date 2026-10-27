@@ -38,7 +38,7 @@ def build_box(species: str, n_mol: int, rho: float, seed: int) -> Atoms:
     # grid placement with jitter: reliable even near the jamming limit
     n_side = int(math.ceil(n_mol ** (1.0 / 3.0)))
     spacing = L / n_side
-    sites = [(i + 0.5) * spacing, (j + 0.5) * spacing, (k + 0.5) * spacing
+    sites = [((i + 0.5) * spacing, (j + 0.5) * spacing, (k + 0.5) * spacing)
              for i in range(n_side) for j in range(n_side) for k in range(n_side)]
     rng.shuffle(sites)
     centers = [np.asarray(s) + rng.uniform(-0.25 * spacing, 0.25 * spacing, 3)
@@ -101,6 +101,7 @@ def run_state(atoms, tag, T, steps, dump_every, out_path, calc):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--smoke", action="store_true")
+    ap.add_argument("--mode", choices=["all", "dense", "slabs"], default="all")
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
     from mace.calculators import MACECalculator
@@ -109,13 +110,13 @@ def main():
 
     dense_path = OUT / "dense_0035_64mol.xyz"
     slab_path = OUT / "slabs_validation.xyz"
-    if dense_path.exists():
+    if args.mode in ("all", "dense") and dense_path.exists():
         dense_path.unlink()
-    if slab_path.exists():
+    if args.mode in ("all", "slabs") and slab_path.exists():
         slab_path.unlink()
 
     # dense homogeneous
-    for si, sp in enumerate(SPECIES):
+    for si, sp in enumerate(SPECIES if args.mode in ("all", "dense") else []):
         for T in (300, 400, 500):
             if args.smoke and not (sp == "H2O" and T == 300):
                 continue
@@ -131,6 +132,8 @@ def main():
     slab_species = [("H2O", 125), ("H2O", 125), ("H2O", 125),
                     ("CO2", 125), ("NH3", 125)]
     slab_T = [300, 400, 500, 300, 300]
+    if args.mode not in ("all", "slabs"):
+        slab_species, slab_T = [], []
     for (sp, n), T in zip(slab_species, slab_T):
         atoms = make_slab(sp, n, 0.035, seed=20261028 + n + T)
         atoms.info["rho"] = 0.035
