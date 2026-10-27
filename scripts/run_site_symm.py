@@ -52,7 +52,9 @@ SAMPLERS = {
 }
 KB_EV_PER_K = 8.617333262e-5
 N_HARM = 4
-PAIR_ELEMENTS = {"H2O": ["O", "H"], "CO2": ["C", "O"]}
+PAIR_ELEMENTS = {"H2O": ["O", "H"], "CO2": ["C", "O"],
+                 "NH3": ["N", "H"], "CH4": ["C", "H"],
+                 "C2H4": ["C", "H"], "C2H6": ["C", "H"]}
 MASS = {"H": 1.008, "C": 12.011, "O": 15.999, "N": 14.007}
 
 
