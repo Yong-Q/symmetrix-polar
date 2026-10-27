@@ -3,17 +3,21 @@
 **GPU-accelerated PolarMACE** — nonlinear polar MACE with long-range
 electrostatics — in the Symmetrix-XL C++/Kokkos/LAMMPS engine.
 
-| Best 1,296 | Best 5,184 | Paper parity | Single-GPU floor |
-|---:|---:|---:|---:|
-| **133.04 µs/atom/step** | **128.99 µs/atom/step** | **4.47–4.53 vs 4.50 µs/atom/step** | **~120–130 µs/atom/step** |
-| FP64 · exact Ewald · 2-step SCF · node-owned forward + fused2 reverse | FP64 · 5,184 atoms | linear MACE FP32, 5,184 atoms | projection |
+![accuracy](https://img.shields.io/badge/E%2FF-1.12%20meV%2Fatom%20%7C%207.75%20meV%2F%C3%85-0072B2?style=flat-square)
+![speed](https://img.shields.io/badge/speed-4.47%20%E2%86%92%20~20.2%20%C2%B5s%2Fatom-D55E00?style=flat-square)
+![ESS](https://img.shields.io/badge/ESS%20at%201%2C152%20atoms-0.24%25%20collapse-CC79A7?style=flat-square)
+![molecules](https://img.shields.io/badge/molecules-6-009E73?style=flat-square)
 
-**Definition:** `µs/atom/step = 10^6 × seconds per evaluation / atoms`.
-All speed values in this README use **µs/atom/step**. Task wall times are
-reported separately in seconds and are not used for speed comparisons.
-
-*Paper parity is measured on the paper's linear MACE FP32 workload; full
-PolarMACE is a different model.*
+> **TL;DR (2026-10-27).** A 128-channel linear student distilled from
+> MACE-Polar-1-M matches the teacher on six molecules and fits a ~20 µs/atom
+> budget.
+> - **Accuracy:** **1.12 meV/atom**, **7.75 meV/Å** on 3,465 held-out frames.
+> - **Charge / dipole:** **0.0117 e**, **0.0475** (4π scale); Ewald energy from
+>   predicted multipoles to **0.311 meV/atom**.
+> - **Speed** (µs/atom/step, 5,184 atoms, one A100): **4.47** backbone FP32,
+>   **12.3** backbone FP64, **~20.2** full package (projected, FP64).
+> - **c1/c2:** sample **directly with the student**; one-step reweighting is
+>   **not usable at 1,152 atoms** (ESS 0.24 %).
 
 ## Distillation: MACE-Polar → linear MACE + charge/dipole readout
 
@@ -82,6 +86,33 @@ every frame is rotated to a canonical cell frame (QR) before the head and
 rotated back afterwards — 4.6e-14 meV/atom, with no retraining for the
 orthorhombic cells.
 
+### Route to the 20 µs student
+
+| route | what it does | measured result | verdict |
+|---|---|---|---|
+| exact PolarMACE | full nonlinear teacher in the engine | 128.99 µs/atom (FP64, 5,184) | ![rejected](https://img.shields.io/badge/REJECTED-CC0000?style=flat-square) too slow |
+| 4G-HDNNP | 4G message passing, no l=1 multipoles | 13.45–19.26 µs but 31 meV/atom, 75 meV/Å | ![rejected](https://img.shields.io/badge/REJECTED-CC0000?style=flat-square) accuracy gate failed |
+| OFF23 → POLAR reweighting | sample OFF23, reweight every frame | ESS 0.47 % at 1,152 atoms (σ_β=13.76) | ![rejected](https://img.shields.io/badge/REJECTED-CC0000?style=flat-square) collapses at 1,152 atoms |
+| **linear student (this work)** | **OFF23-initialized 128-ch linear MACE, trained on POLAR labels** | **1.12 meV/atom, 7.75 meV/Å; 4.47/12.3 backbone; ~20.2 full (projected)** | ![chosen](https://img.shields.io/badge/CHOSEN-009E73?style=flat-square) **distillation** |
+| student direct sampling | use the student for c1/c2, no weights | ESS not applicable; bias = model error | ![chosen](https://img.shields.io/badge/CHOSEN-009E73?style=flat-square) for c1/c2 |
+| λ-intermediate + BAR/MBAR | resample a mixed potential, then reweight the residual | not run | ![conditional](https://img.shields.io/badge/ONLY%20IF%20NEEDED-E69F00?style=flat-square) correction path |
+
+The four steps of the chosen route:
+
+1. **Initialization.** Start from the MACE-OFF23-medium checkpoint (H/C/N/O).
+   OFF23 is a physics prior and an architecture donor, not the target: it
+   makes the 60-epoch training converge, but every label the student sees is
+   MACE-Polar.
+2. **Backbone distillation.** Train the 128-channel linear MACE on the
+   teacher's `REF_energy`/`REF_forces` (23,376 frames, force weight 20).
+3. **Readout.** Freeze the backbone; fit the charge MLP on 0e features and
+   the linear 384→3 dipole map on 1o features against the teacher multipoles
+   (6,809 frames), in the canonical frame.
+4. **Deployment.** Export to the Symmetrix JSON contract; measure the FP32
+   and FP64 backbone; add the q/μ heads and the GTO/Ewald kernel for the full
+   package. For c1/c2, sample directly with the student and validate against
+   short teacher trajectories at the same state.
+
 **Long-range.** Predicted `q` and `μ` are fed to the teacher's exact
 `GTOElectrostaticEnergy` kernel (`l=1`, 1.5 Å smearing, self + PBC
 corrections). Ewald beats PME on speed (7.9 vs 9.3 µs/atom at 1,152 atoms) and
@@ -95,7 +126,7 @@ multipole basis, not a frame-count limit. The ~20 µs total is a projection
 standard MACE pair style has no charge/dipole output yet, so an engine hybrid
 is the remaining implementation.
 
-**Technical report (Chinese, 10 pages):
+**Technical report (Chinese, 11 pages):
 [从 MACE-Polar 蒸馏线性 MACE](docs/results/DISTILLATION_THEORY_PERFORMANCE_2026-10-27.pdf).**
 The report covers the data/model chain, six-molecule accuracy with the CO₂
 dense-phase caveat, the measured-vs-projected speed ladder, the reweighting
@@ -153,6 +184,21 @@ Links: [Herzog](https://doi.org/10.1021/acs.jctc.1c01034) ·
 Full audit with inputs, hashes, and per-frame data:
 [docs/results/ESS_STUDENT_TO_POLAR_2026-10-27.md](docs/results/ESS_STUDENT_TO_POLAR_2026-10-27.md).
 
+<details>
+<summary><b>Engine updates (2026-10-23)</b> — historical speed work, folded away</summary>
+
+| Best 1,296 | Best 5,184 | Paper parity | Single-GPU floor |
+|---:|---:|---:|---:|
+| **133.04 µs/atom/step** | **128.99 µs/atom/step** | **4.47–4.53 vs 4.50 µs/atom/step** | **~120–130 µs/atom/step** |
+| FP64 · exact Ewald · 2-step SCF · node-owned forward + fused2 reverse | FP64 · 5,184 atoms | linear MACE FP32, 5,184 atoms | projection |
+
+**Definition:** `µs/atom/step = 10^6 × seconds per evaluation / atoms`.
+All speed values in this README use **µs/atom/step**. Task wall times are
+reported separately in seconds and are not used for speed comparisons.
+
+*Paper parity is measured on the paper's linear MACE FP32 workload; full
+PolarMACE is a different model.*
+
 **Engine updates (2026-10-23):**
 
 | Update | Result | Evidence |
@@ -172,6 +218,8 @@ Full audit with inputs, hashes, and per-frame data:
 | **Path B pruning audit** | zero-shot no-go beyond ~1.1×; rebuild + fine-tune targets 1.5–4× (C=384→320 first) | `docs/results/PATH_B_PRUNING_AUDIT_2026-10-22.md` |
 | **Path B student in engine** | 192 max_L=1: **2.1 meV/atom / 6.7 meV/Å** (432 held-out); **116.84 / 121.16 µs/atom/step** at 1,296 / 5,184 (clean q4) | `docs/results/PATH_B_STUDENT128_TRAIN_2026-10-22.md` |
 | **Path B active learning** | 240 selected / 697 train, 192 max_L=1: **9.2 meV/atom / 9.8 meV/Å** (force passes, energy fails); random 2,166 data remains better (2.1 / 6.7) | `docs/design/PATH_B_ACTIVE_LEARNING_2026-10-22.md` |
+
+</details>
 
 [Latest speed & plan](docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md) ·
 [Optimization ledger](docs/results/OPTIMIZATION_LEDGER.md) ·
