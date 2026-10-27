@@ -194,7 +194,9 @@ with PdfPages(OUT) as pdf:
             "predicted q and mu with the teacher GTO/Ewald kernel, compared "
             "with the same kernel on teacher coefficients.  CO2, H2O, and NH3 "
             "carry the residual (purple bars); the representation, not the "
-            "frame count, is the limit.",
+            "frame count, is the limit.  CO2's larger absolute force error "
+            "tracks its ~2x larger reference forces (1.34 vs 0.65-0.76 eV/A): "
+            "its relative error is 1.8%, similar to H2O (1.7%) and NH3 (1.3%).",
         ])
 
     figure_page(

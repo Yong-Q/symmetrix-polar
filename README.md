@@ -199,16 +199,27 @@ activation serialization); in-domain H2O parity is 5.8e-9 eV / ~1e-8 eV/Å.
 | Speed, 5,184, **backbone only** (E, F; no `q`/`μ`, no Ewald), FP64 engine | 12.3 µs/atom/step (measured) | — |
 | Speed, 5,184, **full package** (backbone + `q`,`μ` + Ewald), FP64 | **~20.2 µs/atom/step** (projected) | 20 |
 
-**Per-molecule E/F (3,465 held-out; E in meV/atom, F in meV/Å):**
+**Per-molecule E/F (3,465 held-out; all entries are MAE vs the teacher).
+E is in meV/atom; F is in meV/Å (mean absolute Cartesian component error):**
 
-| molecule | gas E | gas F | dense E | dense F |
-|---|---:|---:|---:|---:|
-| C₂H₄ | 0.94 | 1.32 | 0.64 | 4.25 |
-| C₂H₆ | 0.65 | 1.14 | 0.82 | 2.46 |
-| CH₄ | 1.35 | 0.38 | 1.10 | 2.05 |
-| CO₂ | 1.44 | 0.71 | 1.47 | **23.62** |
-| H₂O | 2.05 | 0.73 | 1.51 | **11.12** |
-| NH₃ | 1.46 | 1.46 | 1.40 | **8.33** |
+| molecule | gas E | gas F | dense E | dense F | dense mean \|F\| | dense rel. F |
+|---|---:|---:|---:|---:|---:|---:|
+| C₂H₄ | 0.94 | 1.32 | 0.64 | 4.25 | 757 | 0.56 % |
+| C₂H₆ | 0.65 | 1.14 | 0.82 | 2.46 | 647 | 0.38 % |
+| CH₄ | 1.35 | 0.38 | 1.10 | 2.05 | 653 | 0.31 % |
+| CO₂ | 1.44 | 0.71 | 1.47 | **23.62** | 1337 | 1.77 % |
+| H₂O | 2.05 | 0.73 | 1.51 | **11.12** | 666 | 1.67 % |
+| NH₃ | 1.46 | 1.46 | 1.40 | **8.33** | 661 | 1.26 % |
+
+Dense CO₂'s larger absolute F error is mostly a **scale effect**: its
+reference forces are ~2× larger (1.34 eV/Å mean vs 0.65–0.76 eV/Å for the
+other dense species), so its relative error (1.8 %) is in the same range as
+dense H₂O (1.7 %) and NH₃ (1.3 %). One CO₂ state (0.02 mol/Å³, 150 K) is a
+still-relaxing transient whose energy drops ~1.1 eV/atom over the trajectory
+and whose early frames carry 3.6 eV/Å forces; it dominates the absolute
+number. Excluding that one state (103 of 624 CO₂ dense frames), dense CO₂ F
+falls from 23.6 to **~11.5 meV/Å** (relative 1.1 %). Overall relative force
+error is ~1 %, matching the training log.
 
 **Per-molecule `q`, `μ`, Ewald (867 held-out; 4π scale for `q`, `μ`):**
 
