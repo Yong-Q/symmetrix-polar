@@ -36,6 +36,15 @@ C₂H₆, CO₂):
 | Speed, backbone **only** (E, F), FP64 | 12.3 µs/atom/step (measured) |
 | Speed, **full package** (backbone + `q`,`μ` + Ewald), FP64 | **~20.2 µs/atom/step** (projected) |
 
+**What "gas" and "bulk/dense" mean here.** Both labels describe the same six
+molecules; they are thermodynamic states, not different chemistries. Gas
+frames place isolated molecules in a large box (≈0.0001 molecules/Å³, no
+intermolecular contacts). Bulk/dense frames are periodic boxes at
+0.0001–0.035 molecules/Å³ and 150–1500 K — liquid or supercritical states
+with intermolecular contacts. The 3,465-frame validation set is 336 gas +
+3,129 dense; one model is evaluated on both subsets, and dense is the
+deployment-relevant one.
+
 **Why both 4.47 and ~20.2 appear — they are not the same measurement.**
 4.47 is the **bare backbone in FP32 with no charge/dipole heads and no Ewald
 term**; it is there only to show parity with the paper's linear MACE-OFF23
