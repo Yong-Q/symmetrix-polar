@@ -91,7 +91,10 @@ def run_state(atoms, tag, T, steps, dump_every, out_path, calc):
             a.info.update({"state_id": tag, "temperature_K": T,
                            "density_mol_A3": atoms.info.get("rho", 0.0),
                            "step": i + 1, "time_ps": (i + 1) * 1e-3})
-            ase.io.write(str(out_path), a, format="extxyz", append=written > 0)
+            # Append across states: never truncate at the first frame of a
+            # new state (that silently dropped earlier states pre-2026-10-27).
+            ase.io.write(str(out_path), a, format="extxyz",
+                         append=out_path.exists())
             written += 1
     print(f"[collect] {tag} T={T} E0={e0:.3f} frames={written} "
           f"wall={time.time()-t0:.1f}s", flush=True)

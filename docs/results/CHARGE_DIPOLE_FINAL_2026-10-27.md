@@ -10,6 +10,22 @@
 Per-species Ewald (867 valid): C2H4 0.035, C2H6 0.055, CH4 0.013, CO2 0.628,
 H2O 0.516, NH3 0.375 meV/atom.
 
+Per-species E/F on the 3,465 held-out frames (FP64, MACE component-MAE
+convention; overall 1.124 meV/atom / 7.753 meV/Å):
+
+| species | gas E | gas F | dense E | dense F |
+|---|---:|---:|---:|---:|
+| C2H4 | 0.94 | 1.32 | 0.64 | 4.25 |
+| C2H6 | 0.65 | 1.14 | 0.82 | 2.46 |
+| CH4 | 1.35 | 0.38 | 1.10 | 2.05 |
+| CO2 | 1.44 | 0.71 | 1.47 | 23.62 |
+| H2O | 2.05 | 0.73 | 1.51 | 11.12 |
+| NH3 | 1.46 | 1.46 | 1.40 | 8.33 |
+
+Units: E meV/atom, F meV/Å. Dense CO2/H2O/NH3 dominate the force residual;
+the other three species stay below 4.3 meV/Å. Raw table:
+`docs/results/data/valid_by_species.json`.
+
 Stability: force rotation 4.0e-5; NVE 0.245 meV/atom/ps over 1 ps;
 canonical-frame rotation 4.6e-14 meV/atom (vs 0.825 without).
 
