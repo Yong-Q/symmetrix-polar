@@ -138,20 +138,18 @@ def prepare_box(species: str, n_mol: int, rho: float, seed: int,
         atoms.calc = calc
         FIRE(atoms, logfile=None).run(fmax=0.2, steps=min_steps)
         if rho > rho_build + 1e-12:
-            # staged compression: 0.02 -> target in five steps, relaxing at
-            # each density; a single jump leaves ~0.7 A contacts and FIRE
-            # cannot recover before LAMMPS starts.
             stages = 5
             rho_cur = rho_build
             for k in range(1, stages + 1):
                 rho_k = rho_build + (rho - rho_build) * k / stages
-                # scale from the CURRENT density, not from rho_build
                 scale = (rho_cur / rho_k) ** (1.0 / 3.0)
                 atoms.set_cell(atoms.cell * scale, scale_atoms=True)
-                FIRE(atoms, logfile=None).run(fmax=0.15, steps=250)
+                FIRE(atoms, logfile=None).run(fmax=0.2, steps=300)
                 rho_cur = rho_k
-            FIRE(atoms, logfile=None).run(fmax=0.08,
-                                          steps=max(800, 2 * min_steps))
+        calc = MACECalculator(model_paths=str(TORCH_MODEL), device="cuda",
+                              default_dtype="float32")
+        atoms.calc = calc
+        FIRE(atoms, logfile=None).run(fmax=0.08, steps=max(1000, 2 * min_steps))
     atoms.wrap()
     path = work / "data.lammps"
     write_lammps_data(atoms, path, PAIR_ELEMENTS[species])
