@@ -136,12 +136,22 @@ def prepare_box(species: str, n_mol: int, rho: float, seed: int,
         calc = MACECalculator(model_paths=str(TORCH_MODEL), device="cuda",
                               default_dtype="float32")
         atoms.calc = calc
-        FIRE(atoms, logfile=None).run(fmax=0.3, steps=min_steps)
+        FIRE(atoms, logfile=None).run(fmax=0.2, steps=min_steps)
         if rho > rho_build + 1e-12:
-            scale = (rho_build / rho) ** (1.0 / 3.0)
-            atoms.set_cell(atoms.cell * scale, scale_atoms=True)
-            FIRE(atoms, logfile=None).run(fmax=0.1,
-                                          steps=max(1000, 4 * min_steps))
+            # staged compression: 0.02 -> target in five steps, relaxing at
+            # each density; a single jump leaves ~0.7 A contacts and FIRE
+            # cannot recover before LAMMPS starts.
+            stages = 5
+            rho_cur = rho_build
+            for k in range(1, stages + 1):
+                rho_k = rho_build + (rho - rho_build) * k / stages
+                # scale from the CURRENT density, not from rho_build
+                scale = (rho_cur / rho_k) ** (1.0 / 3.0)
+                atoms.set_cell(atoms.cell * scale, scale_atoms=True)
+                FIRE(atoms, logfile=None).run(fmax=0.15, steps=250)
+                rho_cur = rho_k
+            FIRE(atoms, logfile=None).run(fmax=0.08,
+                                          steps=max(800, 2 * min_steps))
     atoms.wrap()
     path = work / "data.lammps"
     write_lammps_data(atoms, path, PAIR_ELEMENTS[species])
@@ -170,7 +180,7 @@ def field_variables(f: dict) -> str:
 
 def write_input(work: Path, T: float, seed: int, steps_eq: int,
                 steps_prod: int, dump_every: int, field: dict,
-                elements: list, sampler: dict) -> Path:
+                elements: list, sampler: dict, timestep: float = 0.001) -> Path:
     sin_terms, cos_terms = field_variables(field)
     jit = ""
     if sampler["cubin"].exists():
@@ -188,7 +198,7 @@ pair_style symmetrix/mace/float32/kk streamed_edges direct profile speed{jit}
 pair_coeff * * {sampler['model']} {' '.join(elements)}
 neighbor 2.0 bin
 neigh_modify every 100 delay 0 check no
-timestep 0.001
+timestep {timestep}
 velocity all create {T} {seed} mom yes rot no dist gaussian
 fix 1 all nvt temp {T} {T} 0.1
 variable field_energy atom "{sin_terms}"
@@ -226,7 +236,8 @@ def run_state(species: str, rho, T: int, seed: int, args) -> dict:
     elements = PAIR_ELEMENTS[species]
     field = make_field(T, seed, box_length_x(data_path))
     inp = write_input(work, T, seed, args.steps_eq, args.steps_prod,
-                      args.dump_every, field, elements, sampler)
+                      args.dump_every, field, elements, sampler,
+                      args.timestep)
     meta = {
         "tag": tag, "species": species, "T_K": T, "seed": seed,
         "density_mol_A3": rho, "n_molecules": args.nmols if rho else 384,
@@ -285,6 +296,8 @@ def main():
     ap.add_argument("--steps-prod", type=int, default=20000)
     ap.add_argument("--dump-every", type=int, default=1000)
     ap.add_argument("--min-steps", type=int, default=600)
+    ap.add_argument("--timestep", type=float, default=0.001,
+                    help="ps; use 0.0005 for dense/hot boxes")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
     if args.smoke:
