@@ -17,13 +17,13 @@ plt.rcParams.update({
 
 POINTS = [
     ("base student (production)", "bench/plan_d_bulk_2026-10-25/results/valid_by_species.json",
-     "bench/plan_d_ft3_20261028/results/base_on_holdout.json", "#000000", "o", 90),
+     "bench/plan_d_ft3_20261028/results/base_on_holdout_v2.json", "#000000", "o", 90),
     ("ft3  lr 1e-5, ep2", "bench/plan_d_ft3_20261028/results/ft3_ep2_valid_full.json",
-     "bench/plan_d_ft3_20261028/results/ft3_ep2_on_holdout.json", "#0072B2", "s", 70),
+     "bench/plan_d_ft3_20261028/results/ft3_on_holdout_v2.json", "#0072B2", "s", 70),
     ("ft4  lr 1e-5, ep0", "bench/plan_d_ft4_20261028/results/ft4_ep0_valid_full.json",
-     "bench/plan_d_ft4_20261028/results/ft4_ep0_on_holdout.json", "#D55E00", "^", 70),
+     "bench/plan_d_ft3_20261028/results/ft4_on_holdout_v2.json", "#D55E00", "^", 70),
     ("ft5  lr 2e-6, final", "bench/plan_d_ft5_20261028/results/ft5_valid_full.json",
-     "bench/plan_d_ft5_20261028/results/ft5_on_holdout.json", "#009E73", "D", 70),
+     "bench/plan_d_ft3_20261028/results/ft5_on_holdout_v2.json", "#009E73", "D", 70),
 ]
 
 
@@ -34,24 +34,25 @@ def load(rel):
 def main():
     fig, axes = plt.subplots(1, 2, figsize=(9.6, 4.3))
     for ax, idx, title in ((axes[0], 0, "(a) held-out bulk/gas, 3,465 frames"),
-                           (axes[1], 1, "(b) new whole-seed field holdout, 182 frames")):
+                           (axes[1], 1, "(b) new whole-seed field holdout, 228 frames")):
         for name, vrel, hrel, col, mk, ms in POINTS:
             d = load(vrel if idx == 0 else hrel)
             x = d["mae_f_meV_per_A"]
             y = d["mae_e_meV_per_atom"]
             ax.scatter(x, y, s=ms, color=col, marker=mk, edgecolor="k",
                        linewidth=0.6, zorder=3, label=name)
-            ax.annotate(name.split("  ")[0] if name.startswith(("ft",)) else "base",
-                        (x, y), textcoords="offset points", xytext=(7, 6),
-                        fontsize=7.6, color=col)
+            label = name.split("  ")[0] if name.startswith("ft") else "base"
+            dy = -13 if label == "ft5" else 6
+            ax.annotate(label, (x, y), textcoords="offset points",
+                        xytext=(7, dy), fontsize=7.6, color=col)
         ax.set_xlabel("force MAE (meV Å$^{-1}$)")
         ax.set_ylabel("energy MAE (meV atom$^{-1}$)")
         ax.set_title(title, fontsize=9.8)
         ax.grid(lw=0.35, alpha=0.4)
     axes[0].set_xlim(7.60, 7.82)
     axes[0].set_ylim(1.08, 1.34)
-    axes[1].set_xlim(26.4, 30.4)
-    axes[1].set_ylim(3.9, 4.8)
+    axes[1].set_xlim(26.3, 31.8)
+    axes[1].set_ylim(4.5, 5.3)
     axes[0].annotate("better", xy=(7.61, 1.09), fontsize=7.5, color="0.35")
     fig.suptitle("Combined distillation keeps the new region better but pays on "
                  "the old energy gate", fontsize=11)

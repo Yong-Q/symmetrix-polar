@@ -334,27 +334,27 @@ for the heads).
 
 ### 2026-10-28: one combined distillation over all new sampling
 
-1,366 frames were added to the 23,376-frame corpus — six-molecule site-field
+1,553 frames were added to the 23,376-frame corpus — six-molecule site-field
 MD at 300/500/700 K, unfielded slab frames, and dense CO₂ boxes — and distilled
-in a single run from `plan_d_bulk.model`. A **whole-seed holdout** (182 frames,
+in a single run from `plan_d_bulk.model`. A **whole-seed holdout** (228 frames,
 f106 + f202, CO₂-heavy) is held back, so the newly sampled region is scored on
 configurations the optimiser never saw. The first attempt at `lr = 1e-4` was
 discarded: it pushed the old gate from 7.75 to 7.97 meV/Å within one epoch.
 
 | model | old valid E / F | new field holdout E / F | CO₂ dense |
 |---|---|---|---|
-| **`plan_d_bulk.model` (production)** | **1.124 / 7.753** | 4.63 / 29.92 | 23.62 / 11.50 |
-| ft3, `lr` 1e-5, 3 ep | 1.289 / 7.673 | 4.04 / 26.89 | 23.85 / 11.66 |
-| ft4, `lr` 1e-5, +3 ep | 1.255 / 7.727 | 4.42 / 26.72 | 23.70 / 11.57 |
-| ft5, `lr` 2e-6, settled | 1.244 / **7.663** | 4.45 / 26.87 | 23.70 / 11.53 |
+| **`plan_d_bulk.model` (production)** | **1.124 / 7.753** | 5.17 / 31.40 | 23.62 / 11.50 |
+| ft3, `lr` 1e-5, 3 ep | 1.289 / 7.673 | **4.59 / 26.81** | 23.85 / 11.66 |
+| ft4, `lr` 1e-5, +3 ep | 1.255 / 7.727 | 5.00 / 26.60 | 23.70 / 11.57 |
+| ft5, `lr` 2e-6, settled | 1.244 / **7.663** | 5.00 / 26.77 | 23.70 / 11.53 |
 
 ![Combined distillation trade-off](docs/results/figures/FT_TRADEOFF_2026-10-28.png)
 
-The fine-tune buys **10 % force and 4 % energy on the new region** and
+The fine-tune buys **−15 % force and −3 to −11 % energy on the new region** and
 `−0.09 meV/Å` on the old forces, but it costs `+0.12 meV/atom` on the old
 energy gate and does not move the CO₂ dense headline. The energy cost is
 irreducible at 128 channels and sits entirely in C₂H₄: the old corpus stops at
-0.01 molecules Å⁻³ for C₂H₄ and 0.005 for C₂H₆, while 738 of the 1,366 new
+0.01 molecules Å⁻³ for C₂H₄ and 0.005 for C₂H₆, while 784 of the 1,553 new
 frames sit at 0.02 — a two-fold density extension, not a refinement. The
 production model is therefore unchanged; `ft5` is kept as the
 high-density/field variant.
