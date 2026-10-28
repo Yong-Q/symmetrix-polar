@@ -83,8 +83,8 @@ def main() -> int:
     def log(*_):
         e = atoms.get_potential_energy() / len(atoms)
         t = atoms.get_temperature()
-        print(f"[md] step {step} E/atom {e:.4f} eV T {t:.1f} K "
-              f"wall {time.time()-t0:.0f}s", flush=True)
+        print(f"[md] step {dyn.get_number_of_steps()} E/atom {e:.4f} eV "
+              f"T {t:.1f} K wall {time.time()-t0:.0f}s", flush=True)
         write(args.out, atoms, format="extxyz", append=os.path.exists(args.out))
 
     for i in range(n_eq):
