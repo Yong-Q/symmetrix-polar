@@ -80,18 +80,17 @@ def main() -> int:
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     t0 = time.time()
 
-    def log(step):
+    def log(*_):
         e = atoms.get_potential_energy() / len(atoms)
         t = atoms.get_temperature()
         print(f"[md] step {step} E/atom {e:.4f} eV T {t:.1f} K "
               f"wall {time.time()-t0:.0f}s", flush=True)
         write(args.out, atoms, format="extxyz", append=os.path.exists(args.out))
 
-    dyn.attach(lambda: None, interval=1)
     for i in range(n_eq):
         dyn.run(1)
         if (i + 1) % 2000 == 0:
-            log(i + 1)
+            log()
     dyn.attach(log, interval=every)
     dyn.run(n_prod)
     print("done", args.out, flush=True)
