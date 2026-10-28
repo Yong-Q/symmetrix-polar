@@ -69,6 +69,16 @@ E is in meV/atom; F is in meV/Å (mean absolute Cartesian component error):**
 | H₂O | 2.05 | 0.73 | 1.51 | **11.12** | 666 | 1.67 % |
 | NH₃ | 1.46 | 1.46 | 1.40 | **8.33** | 661 | 1.26 % |
 
+**CO₂ dense force: two calibers, one model.** Both rows below are the same
+latest model (`plan_d_bulk.model`, SHA-256 `765f91c2…`, 2026-10-25); no newer
+production model supersedes it (the 2026-10-26 AL fine-tune is 1.4 meV/atom /
+7.6 meV/Å, i.e. worse energy, and the fixed-state runs are diagnostics).
+
+| CO₂ dense F | frames | MAE |
+|---|---:|---:|
+| all dense frames | 624 | **23.62 meV/Å** |
+| excluding the 0.02 mol/Å³ / 150 K relaxing state | 521 | **11.5 meV/Å** |
+
 Dense CO₂'s larger absolute F error is mostly a **scale effect**: its
 reference forces are ~2× larger (1.34 eV/Å mean vs 0.65–0.76 eV/Å for the
 other dense species), so its relative error (1.8 %) is in the same range as
