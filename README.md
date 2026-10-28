@@ -334,7 +334,7 @@ for the heads).
 
 ### 2026-10-28: one combined distillation over all new sampling
 
-1,553 frames were added to the 23,376-frame corpus — six-molecule site-field
+1,564 frames were added to the 23,376-frame corpus — six-molecule site-field
 MD at 300/500/700 K, unfielded slab frames, and dense CO₂ boxes — and distilled
 in a single run from `plan_d_bulk.model`. A **whole-seed holdout** (228 frames,
 f106 + f202, CO₂-heavy) is held back, so the newly sampled region is scored on
@@ -354,7 +354,7 @@ The fine-tune buys **−15 % force and −3 to −11 % energy on the new region*
 `−0.09 meV/Å` on the old forces, but it costs `+0.12 meV/atom` on the old
 energy gate and does not move the CO₂ dense headline. The energy cost is
 irreducible at 128 channels and sits entirely in C₂H₄: the old corpus stops at
-0.01 molecules Å⁻³ for C₂H₄ and 0.005 for C₂H₆, while 784 of the 1,553 new
+0.01 molecules Å⁻³ for C₂H₄ and 0.005 for C₂H₆, while 784 of the 1,564 new
 frames sit at 0.02 — a two-fold density extension, not a refinement. The
 production model is therefore unchanged; `ft5` is kept as the
 high-density/field variant.

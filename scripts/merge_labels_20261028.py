@@ -13,7 +13,7 @@ import ase.io
 REPO = Path("/workspace/group/shared/bza/symmetrix-polar")
 DATA = REPO / "data_20261028_new"
 SOURCES = ["labeled_new.xyz", "labeled_delta_20261028b.xyz",
-           "labeled_delta_20261028c.xyz"]
+           "labeled_delta_20261028c.xyz", "labeled_delta_20261028d.xyz"]
 HOLDOUT_SEEDS = ("f106", "f202")
 
 
