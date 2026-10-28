@@ -1,13 +1,12 @@
 # Symmetrix-Polar
 
-> **2026-10-28 数据归档与重要修订：** [六分子 cDFT 采样、预算和两仓证据入口](docs/WEEKLY_ARCHIVE_2026-10-28.md)。本页历史表中“1152原子学生自采样ESS=0.24%”的解释不成立：对应501帧来自OFF23，只在其上重算了学生和POLAR能量；另有50 ps学生自采样试验，需分开理解。完整端到端势函数速度约20.2 µs/atom/step为分项推算而非实测。
+> **2026-10-28 数据归档：** [六分子 cDFT 采样与预算](docs/WEEKLY_ARCHIVE_2026-10-28.md)。水轨迹同帧比较：去除前20 ps后，OFF23 势能波动为 1.388 meV/atom，POLAR−OFF23 势差波动为 0.297 meV/atom，比值 0.214；用于初筛，目标性质仍需验证。
 
 **GPU-accelerated PolarMACE** — nonlinear polar MACE with long-range
 electrostatics — in the Symmetrix-XL C++/Kokkos/LAMMPS engine.
 
 ![accuracy](https://img.shields.io/badge/E%2FF-1.12%20meV%2Fatom%20%7C%207.75%20meV%2F%C3%85-0072B2?style=flat-square)
 ![speed](https://img.shields.io/badge/speed-4.47%20%E2%86%92%20~20.2%20%C2%B5s%2Fatom-D55E00?style=flat-square)
-![ESS](https://img.shields.io/badge/ESS%20at%201%2C152%20atoms-0.24%25%20collapse-CC79A7?style=flat-square)
 ![molecules](https://img.shields.io/badge/molecules-6-009E73?style=flat-square)
 
 > **TL;DR (2026-10-27).** A 128-channel linear student distilled from
@@ -18,8 +17,7 @@ electrostatics — in the Symmetrix-XL C++/Kokkos/LAMMPS engine.
 >   predicted multipoles to **0.311 meV/atom**.
 > - **Speed** (µs/atom/step, 5,184 atoms, one A100): **4.47** backbone FP32,
 >   **12.3** backbone FP64, **~20.2** full package (projected, FP64).
-> - **c1/c2:** sample **directly with the student**; one-step reweighting is
->   **not usable at 1,152 atoms** (ESS 0.24 %).
+> - **c1/c2:** density and correlation sampling with the student or reweighted reference requires property-level validation.
 
 ## Distillation: MACE-Polar → linear MACE + charge/dipole readout
 
@@ -132,9 +130,9 @@ orthorhombic cells.
 |---|---|---|---|
 | exact PolarMACE | full nonlinear teacher in the engine | 128.99 µs/atom (FP64, 5,184) | ![rejected](https://img.shields.io/badge/REJECTED-CC0000?style=flat-square) too slow |
 | 4G-HDNNP | 4G message passing, no l=1 multipoles | 13.45–19.26 µs but 31 meV/atom, 75 meV/Å | ![rejected](https://img.shields.io/badge/REJECTED-CC0000?style=flat-square) accuracy gate failed |
-| OFF23 → POLAR reweighting | sample OFF23, reweight every frame | ESS 0.47 % at 1,152 atoms (σ_β=13.76) | ![rejected](https://img.shields.io/badge/REJECTED-CC0000?style=flat-square) collapses at 1,152 atoms |
+| OFF23 → POLAR reweighting | sample OFF23, evaluate the target on source frames | water: energy-gap fluctuation 0.297 meV/atom versus MD 1.388 meV/atom | candidate; validate target properties |
 | **linear student (this work)** | **OFF23-initialized 128-ch linear MACE, trained on POLAR labels** | **1.12 meV/atom, 7.75 meV/Å; 4.47/12.3 backbone; ~20.2 full (projected)** | ![chosen](https://img.shields.io/badge/CHOSEN-009E73?style=flat-square) **distillation** |
-| student direct sampling | use the student for c1/c2, no weights | ESS not applicable; bias = model error | ![chosen](https://img.shields.io/badge/CHOSEN-009E73?style=flat-square) for c1/c2 |
+| student direct sampling | use the student for c1/c2 | target-property bias remains to be tested | candidate for c1/c2 |
 | λ-intermediate + BAR/MBAR | resample a mixed potential, then reweight the residual | not run | ![conditional](https://img.shields.io/badge/ONLY%20IF%20NEEDED-E69F00?style=flat-square) correction path |
 
 The four steps of the chosen route:
@@ -177,52 +175,11 @@ as this README, so numbers and plots cannot drift.
 Supporting records: [final metrics](docs/results/CHARGE_DIPOLE_FINAL_2026-10-27.md) ·
 [route decision](docs/results/MODEL_ROUTE_DECISION_2026-10-26.md) ·
 [per-species E/F](docs/results/data/valid_by_species.json) ·
-[student→POLAR ESS audit](docs/results/ESS_STUDENT_TO_POLAR_2026-10-27.md)
+[weekly sampling archive](docs/WEEKLY_ARCHIVE_2026-10-28.md)
 
-### Reweighting: student → POLAR
+### Sampling and energy-fluctuation comparison
 
-One-step importance sampling from the student to the teacher is **not usable
-at production size**:
-
-| system | frames | σ_β | ESS | note |
-|---|---:|---:|---:|---|
-| **1,152 atoms** (500 ps frames) | 501 | **8.02** | **0.24 %** | one frame holds 91.5 % of the weight |
-| 96 atoms (student-sampled pilot) | 19 | 1.87 | ~44 % | small, correlated sample |
-| Gas subset (23K validation) | 336 | 0.16 | 98 % | essentially perfect |
-| OFF23 → POLAR, 1,152 atoms | 501 | 13.76 | 0.47 % | prior audit, same failure mode |
-
-The student is closer to POLAR than OFF23 (σ_β 8.0 vs 13.8), but ESS is
-controlled by the largest weights, not by σ_β: the 1,152-atom frames were
-sampled by OFF23 and are out of distribution for the student, and frame 277
-alone carries 91.5 % of the weight. ΔU is extensive — 0.207 eV frame to
-frame at 1,152 atoms (0.18 meV/atom) — so its fluctuation grows with N; to
-reach σ_β ≤ 3 one would need ~0.07 meV/atom, a 2.5–3× tighter model than the
-current student.
-
-**Consequence:** use direct student sampling for c₁/c₂ production (no
-weights), or follow the λ-intermediate + BAR/MBAR route in the test
-repository's Task 6. Do not use one-step reweighting at 1,152 atoms.
-
-**Why published reweighting works.** Successful studies satisfy at least one
-of: a small perturbation or the same target Hamiltonian; intermediate states
-with BAR/MBAR; 10⁵–10⁶ frames; or non-extensive/local observables.
-
-| work | approach | key condition | difference here |
-|---|---|---|---|
-| Herzog et al., *JCTC* **18**, 1382 (2022) | MLPT learns ΔU then reweights; MLMC resamples with a corrected potential and reweights the residual | 200 training + 25 test configurations; adsorption enthalpy; small correction between electronic-structure levels | we cross two different potentials and target whole-box c₁/c₂ |
-| Chehaibou et al., *JCTC* **15**, 6333 (2019) | MLPT for RPA adsorption enthalpies | same small-perturbation, local-observable setting | as above |
-| Hilpert & Kresse, *JCP* **164**, 194504 (2026) | 63 water molecules, 292 K, 5,000 decorrelated configurations, DFT−MLIP ΔU, volume reweighting | MACE ESS ≈ 4,200, KbP < 800; MLIP and target are the same RPBE-D3 DFT | same target; extensive ΔU at 1,152 atoms |
-| Thaler & Zavadlav, *Nat Commun* (2021) | differentiable trajectory reweighting inside training | reweighting is part of the optimization loop | we diagnose a fixed model |
-| Shirts & Chodera, *JCP* **129**, 124105 (2008) | MBAR over multiple equilibrium states | requires real sampling of intermediate λ states | we have a single source/target pair |
-
-Links: [Herzog](https://doi.org/10.1021/acs.jctc.1c01034) ·
-[Chehaibou](https://doi.org/10.1021/acs.jctc.9b00782) ·
-[Hilpert–Kresse](https://doi.org/10.1063/5.0325444) ·
-[Thaler–Zavadlav](https://www.nature.com/articles/s41467-021-27241-4) ·
-[Shirts–Chodera](https://doi.org/10.1063/1.2978177)
-
-Full audit with inputs, hashes, and per-frame data:
-[docs/results/ESS_STUDENT_TO_POLAR_2026-10-27.md](docs/results/ESS_STUDENT_TO_POLAR_2026-10-27.md).
+The source distribution must match the potential used to generate each trajectory. For the 300 K water OFF23 trajectory, after excluding the first 20 ps, the standard deviation of the same-frame POLAR−OFF23 energy difference is 0.297 meV/atom; the OFF23 potential-energy fluctuation is 1.388 meV/atom. The ratio is 0.214. This is a preliminary energy-scale comparison, not a validation of target density or correlation functions. See the [weekly archive](docs/WEEKLY_ARCHIVE_2026-10-28.md) for the sampling plan.
 
 <details>
 <summary><b>Engine updates (2026-10-23)</b> — historical speed work, folded away</summary>
@@ -244,7 +201,6 @@ PolarMACE is a different model.*
 | Update | Result | Evidence |
 |---|---|---|
 | **Plan C 4G-HDNNP speed** | **19.26 µs/atom/step** FP64 converged (88 CG), **13.45** at 60 CG, 5,184 atoms, 72k params; **accuracy not gated** (gas 38.2/40.3; bulk 73.2/95.0) | `docs/design/PLAN_C_4G_2026-10-23.md` |
-| **Off→Polar reweighting** | 96-atom probe: σ_β=3.89, ESS=10.1% (marginal); extrapolates to σ_β≈14/29 and collapse at 1,296/5,184 atoms. Standalone interface + analytic √N validation | https://github.com/Yong-Q/test |
 | **Plan B bulk pipeline** | 15,641 frames merged (13,475 bulk + 2,166 gas), 0 duplicates; state split 1,098/176; ACF **N_eff 4,165 (26.6%)**; gas-only 128L1 diverges on dense bulk (expected), fine-tune staged | `docs/results/PATH_B_BULK_PIPELINE_2026-10-23.md` |
 | **10,368-atom capacity** | **149.14 µs/atom/step**, 33.71 GiB peak; 2× the 5,184 capacity on one A100-80GB | q4 task `t-20261022144341-pzc9x`; `docs/results/LATEST_SPEED_AND_PLAN_2026-10-22.md` |
 | **R1 reverse MH-1** | exact, **−3.05%** same-binary; dPE 0, max dF 4.9e-16 eV/Å; projected 141.3 µs/atom/step at 1,296 | `docs/results/data/rev_r1_2026-10-22.json` |

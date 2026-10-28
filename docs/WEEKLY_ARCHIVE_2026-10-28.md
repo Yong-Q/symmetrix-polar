@@ -1,12 +1,12 @@
 # 六分子 cDFT 数据准备：本周跨仓归档
 
-截至 2026-10-28，`symmetrix-polar` 的本次证据快照为 `68f08d1`；统一报告、图、交互工作台和数据预算保存在 [Yong-Q/test 归档目录](https://github.com/Yong-Q/test/tree/main/docs/reports/WEEKLY_CDFT_DATA_20261028)。原本仓性能、模型和历史记录保留。
+截至 2026-10-28，`symmetrix-polar` 的本次证据快照为 `68f08d1`；统一报告、图、交互工作台和数据预算保存在 [Yong-Q/test 归档目录](https://github.com/Yong-Q/test/tree/main/docs/reports/WEEKLY_CDFT_THERMAL_20261028)。原本仓性能、模型和历史记录保留。
 
-## 需注意的采样来源
+## 按 MD 热波动比较势能差
 
-本仓旧的 `docs/results/ESS_STUDENT_TO_POLAR_2026-10-27.md` 和首页，将 1152 原子 501 帧上使用 `U_POLAR − U_student` 得到的 `1.19/501` 描述成学生势生成轨迹的ESS；但这些帧实际来自 **OFF23**。因此该数只是OFF23构型上的该指数评分集中度，不能用来判断学生势采样后到POLAR的重叠，也不能单凭它断言学生生产尺寸不可用。目标/源权重的分母必须匹配实际采样源。完整说明见 [test仓的来源核查](https://github.com/Yong-Q/test/blob/65a0423/docs/reports/STUDENT_SOURCE_MEASURE_NOTE_2026-10-27.md)。
+按老师提出的口径，使用同一条 300 K OFF23 水轨迹计算势能差波动和 OFF23 势能波动。取 t≥20 ps 的481帧，两者分别为 **0.297 meV/atom** 与 **1.388 meV/atom**，比值 **0.214**；全部501帧分别为 **0.309** 与 **1.562 meV/atom**，比值 **0.198**。数值均为整盒能量标准差除以1152原子；20 ps仅是敏感性切点，不能据此证明平衡。该比较用于初筛，目标密度与关联函数仍需独立验证。
 
-本仓另有50 ps学生自采样的独立试验记录，应与上述OFF23来源的501帧评分区分；其单轨迹、平衡和目标性质精度仍需验证。学生模型E/F对教师的留出集误差不等于对DFT或实验的确认，完整电荷/偶极/Ewald端到端速度标称约20.2 µs/atom/step是分项推算、非同配置完整实测。
+学生模型 E/F 对教师的留出集误差不是对 DFT 或实验的验证；完整电荷、偶极和 Ewald 耦合端到端速度约20.2 µs/atom/step 是分项推算，不是完整实测。
 
 ## 归档中的轨迹预算
 
