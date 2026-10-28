@@ -21,6 +21,9 @@ docs/report/figures/references/
 
 # generated bulk/active-learning datasets and remote staging (large)
 data_20261025/
+data_20261025_charges/
+data_20261025_new/
+data_20261028_new/
 data_20261025_al_full/
 data_20261025_al_r1/
 data_20261025_subset/
