@@ -1,5 +1,7 @@
 # Symmetrix-Polar
 
+> **2026-10-28 数据归档与重要修订：** [六分子 cDFT 采样、预算和两仓证据入口](docs/WEEKLY_ARCHIVE_2026-10-28.md)。本页历史表中“1152原子学生自采样ESS=0.24%”的解释不成立：对应501帧来自OFF23，只在其上重算了学生和POLAR能量；另有50 ps学生自采样试验，需分开理解。完整端到端势函数速度约20.2 µs/atom/step为分项推算而非实测。
+
 **GPU-accelerated PolarMACE** — nonlinear polar MACE with long-range
 electrostatics — in the Symmetrix-XL C++/Kokkos/LAMMPS engine.
 
