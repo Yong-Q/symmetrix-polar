@@ -26,19 +26,29 @@ electrostatics — in the Symmetrix-XL C++/Kokkos/LAMMPS engine.
 
 ## MACELES / LES speed on one A100 (2026-10-30)
 
-MACELES reuses the MACE backbone and adds two latent-charge readouts (linear
-H1 + MLP H2) and a periodic triclinic GTO-Ewald energy/force kernel. All
-numbers are µs/atom/step, FP32, `streamed_edges direct` + model-specific JIT
-cubin, dedicated q4 A100, NVT ensemble at 300 K (not `run 0`):
+MACELES is **one jointly trained model** — a MACE stack (128 channels, 2
+interactions) whose atom features feed two latent-charge readouts (linear H1 +
+MLP H2) and a periodic triclinic GTO-Ewald kernel. It is **not** MACE-OFF23
+with charges/electrostatics bolted on: the backbone and the `les_*` heads are
+trained together as `MACE_LES`. The "LES off" column is the same checkpoint
+with the `les_*` keys stripped, used only to isolate the electrostatic cost.
+All numbers are µs/atom/step, FP32, `streamed_edges direct` + model-specific
+JIT cubin, dedicated q4 A100, NVT ensemble at 300 K (not `run 0`):
 
-| system | atoms | density (molecules/Å³) | MACELES | same backbone | LES cost |
+| system | atoms | density (molecules/Å³) | MACELES | LES off (same checkpoint) | LES cost |
 |---|---:|---:|---:|---:|---:|
 | low-density bench box | 5,001 | 0.020 | **4.22** | 2.73 | +54 % |
 | low-density bench box | 1,002 | 0.020 | 5.09 | 3.66 | +39 % |
 | real water, NVT 300 K | 1,500 | 0.0334 (1.0 g/cm³) | **5.37** | 4.46 | +20 % |
 
 - **1 ns of real water MD** (1,500 atoms, 0.5 fs): **≈4.5 h** at the clean
-  20-step rate, **≈5.3 h** at the sustained 18,000-step rate, on one A100.
+  20-step rate, **≈5.3 h** at the sustained rate. The sustained number is a
+  measured ensemble trajectory, not a run-0 extrapolation: 18,000 consecutive
+  NVT steps (9 ps at 300 K) took **171.18 s**, i.e. 19.0 ms/step → 5.3 h/ns.
+  5 ns ≈ 26 h, 10 ns ≈ 53 h on one A100.
+- The bench checkpoint is a 1-epoch toy (24 synthetic water configs) used for
+  architecture speed, not accuracy; a different production MACELES checkpoint
+  should be re-measured.
 - The 1,500-atom box was equilibrated for 10 ps in the engine (299.05 K,
   −414.48 eV, 500 H₂O at 1.0 g/cm³) before timing; the 5,001/1,002 boxes are
   the earlier 0.02 molecules/Å³ benchmark boxes.
