@@ -1,0 +1,2092 @@
+From ccdde6b7ab9bd951d61a28855e518d7f0c7cbb7d Mon Sep 17 00:00:00 2001
+From: Yong-Q <yong-q@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 12:14:10 +0000
+Subject: [PATCH] maceles: complete LES integration with charge-response forces
+
+- les_ewald.hpp: periodic triclinic GTO-Ewald with analytic forces,
+  dE/dq, host reference and finite-difference self-test
+- LES charge readouts (linear H1 + MLP H2) in the Kokkos MACE path,
+  with charge finalization and model-provided les_norm_factor
+- apply_les_charge_adjoint(): backpropagates dE_LR/dq through both
+  charge readouts into H1_adj/H2_adj (the missing force term)
+- pair_symmetrix_mace_kokkos: LAMMPS box/positions plumbing, Ewald
+  force merge, charge debug dump
+- symmetrix/extract_maceles.py: checkpoint export with the compact
+  engine fusion basis, e3nn path normalization, model norm factor
+---
+ libsymmetrix/source/les_ewald.hpp             | 1021 +++++++++++++++++
+ libsymmetrix/source/mace_kokkos.hpp           |   72 ++
+ libsymmetrix/source/mace_kokkos_evaluate.cpp  |  240 ++++
+ libsymmetrix/source/mace_kokkos_model.cpp     |   38 +
+ libsymmetrix/source/mace_kokkos_runtime.cpp   |    6 +
+ .../source/mace_kokkos_second_interaction.cpp |  191 +++
+ pair_symmetrix/pair_symmetrix_mace_kokkos.cpp |   71 ++
+ pair_symmetrix/pair_symmetrix_mace_kokkos.h   |    3 +
+ symmetrix/source/symmetrix/extract_maceles.py |  197 ++++
+ 9 files changed, 1839 insertions(+)
+ create mode 100644 libsymmetrix/source/les_ewald.hpp
+ create mode 100644 symmetrix/source/symmetrix/extract_maceles.py
+
+diff --git a/libsymmetrix/source/les_ewald.hpp b/libsymmetrix/source/les_ewald.hpp
+new file mode 100644
+index 0000000..089945b
+--- /dev/null
++++ b/libsymmetrix/source/les_ewald.hpp
+@@ -0,0 +1,1021 @@
++#pragma once
++
++// -----------------------------------------------------------------------------
++// LesEwaldKokkosT: latent Ewald (LES) monopole energy and analytic forces for a
++// periodic triclinic cell.
++//
++// Reference implementation (formula-for-formula port):
++//   chengucb-les/src/les/module/ewald.py::Ewald.compute_potential_triclinic
++//
++// Physics / units
++//   * positions in Angstrom, charges in elementary charge e, energy in eV.
++//   * C is the 3x3 cell matrix, ROW-major, with lattice vectors on its ROWS:
++//         C = [ a1 ]        volume V = |det C|
++//             [ a2 ]
++//             [ a3 ]
++//     This matches the host convention used elsewhere in the engine
++//     (cell[3*row + column], e.g. MACEKokkos::update_factorized_cell and the
++//     polar k-space setup in mace_polar_impl.tpp).
++//   * G = 2*pi*inv(C)^T, k = n @ G for integer n.
++//   * Nk_i = max(1, int(|C_i| / dl)),  n_i in [-Nk_i, Nk_i].
++//   * mask 0 < k^2 <= (2*pi/dl)^2; keep one hemisphere (first non-zero n
++//     component positive); factor = 2 for n != 0.
++//   * kfac = exp(-sigma^2*k^2/2) / k^2.
++//   * E = (norm_factor/V) * sum_k factor*kfac*(S_re^2 + S_im^2)
++//         - norm_factor * sum_i q_i^2 / (sigma*(2*pi)^1.5)   [remove_self]
++//     with S_re(k) = sum_i q_i cos(k.r_i), S_im(k) = sum_i q_i sin(k.r_i).
++//   * F_i = -dE/dr_i
++//         = (2*norm_factor/V) * sum_k factor*kfac*q_i
++//           * (S_re*sin(k.r_i) - S_im*cos(k.r_i)) * k.
++//     norm_factor = 90.4756 = 2*pi*14.3996 (eV*A/e^2).
++//   * dE/dq_i = (2*norm_factor/V) * sum_k factor*kfac
++//               * (S_re*cos(k.r_i) + S_im*sin(k.r_i))
++//               - 2*norm_factor*q_i / (sigma*(2*pi)^1.5)   [remove_self]
++//     The charge gradient is exposed by
++//     energy_forces_with_charge_gradient(); energy_forces() keeps its
++//     original signature and does not compute it.
++//   * The k=0 term is excluded exactly as in the reference. For a non-neutral
++//     system the reference omits the k=0/surface correction as well; callers
++//     should pass a neutral charge set (or accept that convention).
++//   * One charge channel per call. The reference sums independent charge
++//     channels; for multiple channels call once per channel and add the
++//     energies/forces.
++//
++// Engine integration
++//   * Positions are accepted either as a flat interleaved 3N view
++//     (Kokkos::View<const Precision*>, x fastest - the MACEKokkos `xyz`
++//     convention) or as a rank-2 (N,3) view (Kokkos::View<const Precision*[3]>).
++//     Forces accept the matching flat 3N view or (N,3) view.
++//     Component access is stride-agnostic (view(i,axis) or view(3*i+axis)),
++//     so LayoutLeft/LayoutRight rank-2 views both work.
++//   * Cell may be passed as `const Precision cell[3][3]` (row-major rows) or
++//     as `std::span<const Precision>` of length 9 (the MACEKokkos cell type).
++//   * The function OVERWRITES all force components of the requested nodes.
++//
++// Kokkos / performance
++//   * Requires an initialized Kokkos session. Uses Kokkos::DefaultExecutionSpace
++//     (an explicit execution-space instance overload is provided).
++//   * The k-list is built on the host, once per distinct cell; it is cached in
++//     the (mutable) instance and only rebuilt when the cell changes (exact
++//     floating-point comparison) or set_params() is called. This keeps the
++//     per-step cost free of host round trips except for the final scalar
++//     energy returned by parallel_reduce.
++//   * Structure factors currently use Kokkos::atomic_add into one accumulator
++//     per k (O(N*K) atomics). A team-level reduction is the obvious follow-up
++//     if profiling shows this dominates. The force kernel maps one thread per
++//     node and loops over all k; this is efficient for the N >> 1 regime of
++//     MACE evaluation but gives little parallelism for very small N (e.g. the
++//     4-atom self-test).
++//   * Atomic accumulation makes the structure factors (and therefore the
++//     energy/forces) non-bitwise-reproducible at the roundoff level across
++//     runs. Results are deterministic up to floating-point summation order.
++//   * Not thread-safe: concurrent calls on the same instance race on the
++//     cached k-list/scratch views. Use one instance per stream/thread.
++//
++// Self-test (analytic forces and charge gradient against finite differences
++// of the host reference):
++//     compile with -DSYMMETRIX_LES_EWALD_SELF_TEST and call
++//         LesEwaldKokkos::run_self_test();
++//     inside an initialized Kokkos session (returns 0 on success).
++// -----------------------------------------------------------------------------
++
++#include <Kokkos_Core.hpp>
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstddef>
++#include <cstdio>
++#include <span>
++#include <stdexcept>
++#include <type_traits>
++#include <vector>
++
++namespace les_ewald_detail {
++
++inline constexpr double kNormFactor = 90.4756;  // 2*pi*14.3996 eV*A/e^2
++inline constexpr double kTwoPi = 6.283185307179586476925286766559;
++
++// Compile-time sentinel passed to the shared kernel implementation when no
++// charge gradient is requested. Kept at namespace scope because CUDA extended
++// lambdas reject private nested types in their template arguments.
++struct NoChargeGradientView {};
++
++template <typename Precision, class View>
++KOKKOS_INLINE_FUNCTION
++Precision position_component(const View& positions, const int node, const int axis) {
++    if constexpr (static_cast<int>(View::rank) == 2) {
++        return static_cast<Precision>(positions(node, axis));
++    } else {
++        return static_cast<Precision>(positions(3*node + axis));
++    }
++}
++
++template <typename Precision, class View>
++KOKKOS_INLINE_FUNCTION
++void set_force_component(const View& forces, const int node, const int axis,
++                         const Precision value) {
++    if constexpr (static_cast<int>(View::rank) == 2) {
++        forces(node, axis) = value;
++    } else {
++        forces(3*node + axis) = value;
++    }
++}
++
++// The charge-gradient pieces live in device helper functions rather than in
++// `if constexpr` blocks inside the node kernel: nvcc's extended lambdas
++// cannot first-capture a variable inside a constexpr-if context.
++template <bool WriteChargeGradient, typename Precision, class ScalarView>
++KOKKOS_INLINE_FUNCTION
++void accumulate_charge_gradient(const ScalarView& kweight,
++                                const ScalarView& s_re,
++                                const ScalarView& s_im,
++                                const int kk,
++                                const Precision cos_kr,
++                                const Precision sin_kr,
++                                Precision& grad) {
++    if constexpr (WriteChargeGradient) {
++        grad += kweight(kk)*(s_re(kk)*cos_kr + s_im(kk)*sin_kr);
++    } else {
++        (void)kweight;
++        (void)s_re;
++        (void)s_im;
++        (void)kk;
++        (void)cos_kr;
++        (void)sin_kr;
++        (void)grad;
++    }
++}
++
++template <bool WriteChargeGradient, typename Precision, class ChargeGradView>
++KOKKOS_INLINE_FUNCTION
++void store_charge_gradient(const ChargeGradView& charge_grad,
++                           const int node,
++                           Precision value,
++                           const Precision force_scale,
++                           const bool remove_self,
++                           const Precision self_scale,
++                           const Precision q) {
++    if constexpr (WriteChargeGradient) {
++        value *= force_scale;
++        if (remove_self)
++            value -= self_scale*q;
++        charge_grad(node) = value;
++    } else {
++        (void)charge_grad;
++        (void)node;
++        (void)value;
++        (void)force_scale;
++        (void)remove_self;
++        (void)self_scale;
++        (void)q;
++    }
++}
++
++// Shared kernel body behind LesEwaldKokkosT::energy_forces() and
++// energy_forces_with_charge_gradient(). Lives outside the class because CUDA
++// extended lambdas cannot be defined in private/protected member functions.
++// The caller has already built the k-list and resized the structure-factor
++// scratch views.
++template <bool WriteChargeGradient, typename Precision,
++          class PositionView, class ChargeView, class ForceView,
++          class ChargeGradView, class KVectorView, class ScalarView>
++Precision compute_energy_forces_impl(
++    const Kokkos::DefaultExecutionSpace& execution_space,
++    const int num_nodes,
++    const PositionView& positions,
++    const ChargeView& charges,
++    const ForceView& forces,
++    const ChargeGradView& charge_grad,
++    const KVectorView& k_vectors,
++    const ScalarView& k_weights,
++    const ScalarView& s_re,
++    const ScalarView& s_im,
++    const int num_k,
++    const double volume,
++    const bool remove_self,
++    const double self_coeff,
++    const double norm_factor) {
++    const auto kvec = k_vectors;
++    const auto kweight = k_weights;
++    const auto s_re_view = s_re;
++    const auto s_im_view = s_im;
++    const auto position_view = positions;
++    const auto charge_view = charges;
++    const auto force_view = forces;
++    const auto charge_grad_view = charge_grad;
++    const Precision self_scale =
++        static_cast<Precision>(2.0*norm_factor*self_coeff);
++
++    // ---- 1. Structure factors S(k) = sum_i q_i exp(i k.r_i) -------------
++    if (num_k > 0) {
++        Kokkos::deep_copy(execution_space, s_re_view, Precision(0));
++        Kokkos::deep_copy(execution_space, s_im_view, Precision(0));
++        Kokkos::parallel_for(
++            "LesEwald::structure_factors",
++            Kokkos::MDRangePolicy<Kokkos::Rank<2>>(
++                execution_space, {0, 0}, {num_k, num_nodes}),
++            KOKKOS_LAMBDA(const int kk, const int node) {
++                const Precision kr =
++                    kvec(kk, 0)*position_component<Precision>(
++                        position_view, node, 0)
++                    + kvec(kk, 1)*position_component<Precision>(
++                        position_view, node, 1)
++                    + kvec(kk, 2)*position_component<Precision>(
++                        position_view, node, 2);
++                const Precision q = static_cast<Precision>(charge_view(node));
++                Kokkos::atomic_add(&s_re_view(kk), q*Kokkos::cos(kr));
++                Kokkos::atomic_add(&s_im_view(kk), q*Kokkos::sin(kr));
++            });
++    }
++
++    // ---- 2. Reciprocal energy (norm_factor/V) sum_k w_k |S_k|^2 ---------
++    Precision k_sum = Precision(0);
++    if (num_k > 0) {
++        Kokkos::parallel_reduce(
++            "LesEwald::reciprocal_energy",
++            Kokkos::RangePolicy<>(execution_space, 0, num_k),
++            KOKKOS_LAMBDA(const int kk, Precision& acc) {
++                const Precision sr = s_re_view(kk);
++                const Precision si = s_im_view(kk);
++                acc += kweight(kk)*(sr*sr + si*si);
++            },
++            k_sum);
++    }
++    Precision energy =
++        static_cast<Precision>(norm_factor/volume)*k_sum;
++
++    // ---- 3. Self-interaction subtraction --------------------------------
++    if (remove_self) {
++        Precision q_sq = Precision(0);
++        Kokkos::parallel_reduce(
++            "LesEwald::self_energy",
++            Kokkos::RangePolicy<>(execution_space, 0, num_nodes),
++            KOKKOS_LAMBDA(const int node, Precision& acc) {
++                const Precision q = static_cast<Precision>(charge_view(node));
++                acc += q*q;
++            },
++            q_sq);
++        energy -= static_cast<Precision>(norm_factor*self_coeff)*q_sq;
++    }
++
++    // ---- 4. Analytic forces (and optional charge gradient) --------------
++    // F_i = (2*norm_factor/V) sum_k w_k q_i
++    //       * (S_re sin(k.r_i) - S_im cos(k.r_i)) * k
++    // dE/dq_i = (2*norm_factor/V) sum_k w_k
++    //       * (S_re cos(k.r_i) + S_im sin(k.r_i))
++    //       - 2*norm_factor*self_coeff*q_i   [remove_self]
++    const Precision force_scale =
++        static_cast<Precision>(2.0*norm_factor/volume);
++    Kokkos::parallel_for(
++        "LesEwald::forces",
++        Kokkos::RangePolicy<>(execution_space, 0, num_nodes),
++        KOKKOS_LAMBDA(const int node) {
++            const Precision q = static_cast<Precision>(charge_view(node));
++            const Precision x = position_component<Precision>(
++                position_view, node, 0);
++            const Precision y = position_component<Precision>(
++                position_view, node, 1);
++            const Precision z = position_component<Precision>(
++                position_view, node, 2);
++            Precision fx = Precision(0);
++            Precision fy = Precision(0);
++            Precision fz = Precision(0);
++            Precision charge_grad_value = Precision(0);
++            for (int kk = 0; kk < num_k; ++kk) {
++                const Precision kr =
++                    kvec(kk, 0)*x + kvec(kk, 1)*y + kvec(kk, 2)*z;
++                const Precision sin_kr = Kokkos::sin(kr);
++                const Precision cos_kr = Kokkos::cos(kr);
++                const Precision c = kweight(kk)*q
++                    *(s_re_view(kk)*sin_kr - s_im_view(kk)*cos_kr);
++                fx += c*kvec(kk, 0);
++                fy += c*kvec(kk, 1);
++                fz += c*kvec(kk, 2);
++                accumulate_charge_gradient<WriteChargeGradient>(
++                    kweight, s_re_view, s_im_view, kk, cos_kr, sin_kr,
++                    charge_grad_value);
++            }
++            set_force_component<Precision>(
++                force_view, node, 0, force_scale*fx);
++            set_force_component<Precision>(
++                force_view, node, 1, force_scale*fy);
++            set_force_component<Precision>(
++                force_view, node, 2, force_scale*fz);
++            store_charge_gradient<WriteChargeGradient>(
++                charge_grad_view, node, charge_grad_value, force_scale,
++                remove_self, self_scale, q);
++        });
++
++    return energy;
++}
++
++}  // namespace les_ewald_detail
++
++template <typename Precision>
++class LesEwaldKokkosT {
++public:
++    using precision_type = Precision;
++    using scalar_view = Kokkos::View<Precision*>;
++    using k_vector_view = Kokkos::View<Precision*[3], Kokkos::LayoutRight>;
++
++    struct HostResult {
++        double energy = 0.0;
++        std::vector<double> forces;  // 3N, empty unless requested
++    };
++
++    struct HostResultWithChargeGradient {
++        double energy = 0.0;
++        std::vector<double> forces;           // 3N, empty unless requested
++        std::vector<double> charge_gradient;  // N, empty unless requested
++    };
++
++    LesEwaldKokkosT() = default;
++
++    LesEwaldKokkosT(const double sigma, const double dl,
++                    const bool remove_self) {
++        set_params(sigma, dl, remove_self);
++    }
++
++    void set_params(const double sigma, const double dl, const bool remove_self) {
++        if (!std::isfinite(sigma) || !(sigma > 0.0))
++            throw std::invalid_argument("LesEwald: sigma must be finite and > 0.");
++        if (!std::isfinite(dl) || !(dl > 0.0))
++            throw std::invalid_argument("LesEwald: dl must be finite and > 0.");
++        if (sigma != sigma_ || dl != dl_ || !k_cache_valid_)
++            k_cache_valid_ = false;
++        sigma_ = sigma;
++        dl_ = dl;
++        remove_self_ = remove_self;
++        sigma_sq_half_ = 0.5*sigma*sigma;
++        const double cutoff = les_ewald_detail::kTwoPi/dl;
++        k_sq_max_ = cutoff*cutoff;
++        self_coeff_ = 1.0/(sigma*std::pow(les_ewald_detail::kTwoPi, 1.5));
++    }
++
++    double sigma() const noexcept { return sigma_; }
++    double dl() const noexcept { return dl_; }
++    bool remove_self() const noexcept { return remove_self_; }
++
++    // Coulomb constant used by the model (2*pi*14.3996 = 90.4756 for the
++    // reference convention; MACELES checkpoints store their own
++    // les_norm_factor, e.g. 90.0474, and the engine must honour it).
++    void set_norm_factor(const double value) {
++        if (!std::isfinite(value) || !(value > 0.0))
++            throw std::invalid_argument(
++                "LesEwald: norm_factor must be finite and > 0.");
++        norm_factor_ = value;
++    }
++    double norm_factor() const noexcept { return norm_factor_; }
++
++    // Number of reciprocal vectors in the cached k-list for the last cell.
++    // Returns 0 before the first energy_forces() call.
++    std::size_t kpoint_count() const noexcept {
++        return k_cache_valid_
++            ? static_cast<std::size_t>(k_vectors_.extent(0)) : 0u;
++    }
++
++    // ------------------------------------------------------------------
++    // Primary entry point. `cell` is const Precision[3][3], row-major,
++    // lattice vectors on the rows. Returns the total monopole energy (eV)
++    // and overwrites the force components of the first `num_nodes` nodes.
++    // ------------------------------------------------------------------
++    template <class PositionView, class ChargeView, class ForceView>
++    Precision energy_forces(const int num_nodes,
++                            const PositionView& positions,
++                            const Precision cell[3][3],
++                            const ChargeView& charges,
++                            const ForceView& forces) const {
++        return energy_forces(Kokkos::DefaultExecutionSpace(), num_nodes,
++                             positions, cell, charges, forces);
++    }
++
++    template <class PositionView, class ChargeView, class ForceView>
++    Precision energy_forces(const Kokkos::DefaultExecutionSpace& execution_space,
++                            const int num_nodes,
++                            const PositionView& positions,
++                            const Precision cell[3][3],
++                            const ChargeView& charges,
++                            const ForceView& forces) const {
++        return energy_forces_impl<false>(
++            execution_space, num_nodes, positions, cell, charges, forces,
++            les_ewald_detail::NoChargeGradientView{});
++    }
++
++    // ------------------------------------------------------------------
++    // Same as energy_forces(), and additionally fills
++    //     charge_grad(i) = dE/dq_i
++    //         = (2*norm_factor/V) sum_k w_k
++    //               * (S_re cos(k.r_i) + S_im sin(k.r_i))
++    //           - 2*norm_factor*self_coeff*q_i   [remove_self only]
++    // `charge_grad` is a rank-1 view of length >= num_nodes. The k=0 term is
++    // excluded, matching the energy/force conventions above.
++    // ------------------------------------------------------------------
++    template <class PositionView, class ChargeView, class ForceView,
++              class ChargeGradView>
++    Precision energy_forces_with_charge_gradient(
++        const int num_nodes,
++        const PositionView& positions,
++        const Precision cell[3][3],
++        const ChargeView& charges,
++        const ForceView& forces,
++        const ChargeGradView& charge_grad) const {
++        return energy_forces_with_charge_gradient(
++            Kokkos::DefaultExecutionSpace(), num_nodes, positions, cell,
++            charges, forces, charge_grad);
++    }
++
++    template <class PositionView, class ChargeView, class ForceView,
++              class ChargeGradView>
++    Precision energy_forces_with_charge_gradient(
++        const Kokkos::DefaultExecutionSpace& execution_space,
++        const int num_nodes,
++        const PositionView& positions,
++        const Precision cell[3][3],
++        const ChargeView& charges,
++        const ForceView& forces,
++        const ChargeGradView& charge_grad) const {
++        return energy_forces_impl<true>(
++            execution_space, num_nodes, positions, cell, charges, forces,
++            charge_grad);
++    }
++
++    // Convenience overload for the engine's std::span<const double> cell.
++    template <class PositionView, class ChargeView, class ForceView>
++    Precision energy_forces(const int num_nodes,
++                            const PositionView& positions,
++                            const std::span<const Precision> cell_row_major,
++                            const ChargeView& charges,
++                            const ForceView& forces) const {
++        return energy_forces(Kokkos::DefaultExecutionSpace(), num_nodes,
++                             positions, cell_row_major, charges, forces);
++    }
++
++    template <class PositionView, class ChargeView, class ForceView>
++    Precision energy_forces(const Kokkos::DefaultExecutionSpace& execution_space,
++                            const int num_nodes,
++                            const PositionView& positions,
++                            const std::span<const Precision> cell_row_major,
++                            const ChargeView& charges,
++                            const ForceView& forces) const {
++        if (cell_row_major.size() != 9)
++            throw std::invalid_argument(
++                "LesEwald: cell span must contain 9 row-major entries.");
++        Precision cell[3][3];
++        for (int row = 0; row < 3; ++row)
++            for (int column = 0; column < 3; ++column)
++                cell[row][column] = cell_row_major[3*row + column];
++        return energy_forces(execution_space, num_nodes, positions, cell,
++                             charges, forces);
++    }
++
++    // ------------------------------------------------------------------
++    // Host reference (double precision, no Kokkos). Useful for regression
++    // tests and for the finite-difference self-test below. positions is
++    // flat 3N (x fastest), cell_row_major is 9 entries with lattice vectors
++    // on the rows, charges is N.
++    // ------------------------------------------------------------------
++    static HostResult host_reference_energy_forces(
++        const std::size_t num_nodes,
++        const double* positions,
++        const double* cell_row_major,
++        const double* charges,
++        const double sigma,
++        const double dl,
++        const bool remove_self,
++        const bool compute_forces = true) {
++        const HostResultWithChargeGradient full =
++            host_reference_energy_forces_and_charge_gradient(
++                num_nodes, positions, cell_row_major, charges, sigma, dl,
++                remove_self, compute_forces, false);
++        HostResult result;
++        result.energy = full.energy;
++        result.forces = full.forces;
++        return result;
++    }
++
++    // Same as host_reference_energy_forces(), plus the analytic charge
++    // gradient dE/dq_i:
++    //     (2*norm_factor/V) sum_k w_k (S_re cos(k.r_i) + S_im sin(k.r_i))
++    //     - 2*norm_factor*self_coeff*q_i   [remove_self only]
++    static HostResultWithChargeGradient
++    host_reference_energy_forces_and_charge_gradient(
++        const std::size_t num_nodes,
++        const double* positions,
++        const double* cell_row_major,
++        const double* charges,
++        const double sigma,
++        const double dl,
++        const bool remove_self,
++        const bool compute_forces = true,
++        const bool compute_charge_gradient = true,
++        const double norm_factor = les_ewald_detail::kNormFactor) {
++        if (cell_row_major == nullptr)
++            throw std::invalid_argument("LesEwald reference: null cell.");
++        if (num_nodes != 0 && (positions == nullptr || charges == nullptr))
++            throw std::invalid_argument("LesEwald reference: null positions/charges.");
++
++        const HostKList klist = build_k_list_host(cell_row_major, sigma, dl);
++        const std::size_t num_k = klist.kx.size();
++
++        std::vector<double> s_re(num_k, 0.0);
++        std::vector<double> s_im(num_k, 0.0);
++        std::vector<double> cos_kr;
++        std::vector<double> sin_kr;
++        const bool need_per_node_trig = compute_forces || compute_charge_gradient;
++        if (need_per_node_trig) {
++            cos_kr.resize(num_nodes*num_k);
++            sin_kr.resize(num_nodes*num_k);
++        }
++        for (std::size_t i = 0; i < num_nodes; ++i) {
++            const double x = positions[3*i];
++            const double y = positions[3*i + 1];
++            const double z = positions[3*i + 2];
++            const double q = charges[i];
++            for (std::size_t kk = 0; kk < num_k; ++kk) {
++                const double kr = klist.kx[kk]*x + klist.ky[kk]*y + klist.kz[kk]*z;
++                const double c = std::cos(kr);
++                const double s = std::sin(kr);
++                s_re[kk] += q*c;
++                s_im[kk] += q*s;
++                if (need_per_node_trig) {
++                    cos_kr[i*num_k + kk] = c;
++                    sin_kr[i*num_k + kk] = s;
++                }
++            }
++        }
++
++        HostResultWithChargeGradient result;
++        double k_sum = 0.0;
++        for (std::size_t kk = 0; kk < num_k; ++kk)
++            k_sum += klist.weight[kk]*(s_re[kk]*s_re[kk] + s_im[kk]*s_im[kk]);
++        result.energy = norm_factor/klist.volume*k_sum;
++        if (remove_self) {
++            double q_sq = 0.0;
++            for (std::size_t i = 0; i < num_nodes; ++i)
++                q_sq += charges[i]*charges[i];
++            result.energy -= norm_factor*q_sq
++                /(sigma*std::pow(les_ewald_detail::kTwoPi, 1.5));
++        }
++
++        const double force_scale =
++            2.0*norm_factor/klist.volume;
++
++        if (compute_forces) {
++            result.forces.assign(3*num_nodes, 0.0);
++            for (std::size_t i = 0; i < num_nodes; ++i) {
++                const double q = charges[i];
++                double fx = 0.0;
++                double fy = 0.0;
++                double fz = 0.0;
++                for (std::size_t kk = 0; kk < num_k; ++kk) {
++                    const double c = klist.weight[kk]*q
++                        *(s_re[kk]*sin_kr[i*num_k + kk]
++                          - s_im[kk]*cos_kr[i*num_k + kk]);
++                    fx += c*klist.kx[kk];
++                    fy += c*klist.ky[kk];
++                    fz += c*klist.kz[kk];
++                }
++                result.forces[3*i] = force_scale*fx;
++                result.forces[3*i + 1] = force_scale*fy;
++                result.forces[3*i + 2] = force_scale*fz;
++            }
++        }
++
++        if (compute_charge_gradient) {
++            result.charge_gradient.assign(num_nodes, 0.0);
++            const double self_scale =
++                2.0*norm_factor
++                /(sigma*std::pow(les_ewald_detail::kTwoPi, 1.5));
++            for (std::size_t i = 0; i < num_nodes; ++i) {
++                double grad = 0.0;
++                for (std::size_t kk = 0; kk < num_k; ++kk) {
++                    grad += klist.weight[kk]
++                        *(s_re[kk]*cos_kr[i*num_k + kk]
++                          + s_im[kk]*sin_kr[i*num_k + kk]);
++                }
++                grad *= force_scale;
++                if (remove_self)
++                    grad -= self_scale*charges[i];
++                result.charge_gradient[i] = grad;
++            }
++        }
++        return result;
++    }
++
++    static double host_reference_energy(
++        const std::size_t num_nodes,
++        const double* positions,
++        const double* cell_row_major,
++        const double* charges,
++        const double sigma,
++        const double dl,
++        const bool remove_self) {
++        return host_reference_energy_forces(
++            num_nodes, positions, cell_row_major, charges, sigma, dl,
++            remove_self, false).energy;
++    }
++
++#ifdef SYMMETRIX_LES_EWALD_SELF_TEST
++    // Finite-difference check of the analytic forces and charge gradient on
++    // a deterministic 4-atom triclinic cell. Needs an initialized Kokkos
++    // session. Returns 0 on success, 1 on failure.
++    static int run_self_test(const bool verbose = true) {
++        constexpr int num_nodes = 4;
++        const Precision cell[3][3] = {
++            {Precision(5.6), Precision(0.0), Precision(0.0)},
++            {Precision(1.1), Precision(5.9), Precision(0.0)},
++            {Precision(-0.7), Precision(0.9), Precision(6.3)}};
++        const double host_positions[3*num_nodes] = {
++            0.4, 0.3, 0.2,
++            2.1, 1.2, 0.7,
++            3.5, 4.4, 2.3,
++            -1.0, 2.8, 5.8};
++        const double host_charges[num_nodes] = {0.7, -0.9, 0.4, -0.2};
++        const double sigma = 1.1;
++        const double dl = 1.8;
++
++        LesEwaldKokkosT<Precision> ewald(sigma, dl, true);
++
++        Kokkos::View<Precision*[3]> positions("LesEwald::test positions", num_nodes);
++        Kokkos::View<Precision*> charges("LesEwald::test charges", num_nodes);
++        Kokkos::View<Precision*[3]> forces("LesEwald::test forces", num_nodes);
++        Kokkos::View<Precision*[3]> forces_with_charge_grad(
++            "LesEwald::test forces with charge grad", num_nodes);
++        Kokkos::View<Precision*> charge_grad("LesEwald::test charge grad", num_nodes);
++        {
++            auto hp = Kokkos::create_mirror_view(positions);
++            auto hq = Kokkos::create_mirror_view(charges);
++            for (int i = 0; i < num_nodes; ++i) {
++                for (int axis = 0; axis < 3; ++axis)
++                    hp(i, axis) = static_cast<Precision>(host_positions[3*i + axis]);
++                hq(i) = static_cast<Precision>(host_charges[i]);
++            }
++            Kokkos::deep_copy(positions, hp);
++            Kokkos::deep_copy(charges, hq);
++        }
++
++        // Existing API (must be unchanged) and the new gradient API on the
++        // same inputs; their energy/force results should be identical.
++        const double energy = static_cast<double>(
++            ewald.energy_forces(num_nodes, positions, cell, charges, forces));
++        const double energy_with_charge_grad = static_cast<double>(
++            ewald.energy_forces_with_charge_gradient(
++                num_nodes, positions, cell, charges, forces_with_charge_grad,
++                charge_grad));
++        const auto host_forces = Kokkos::create_mirror_view_and_copy(
++            Kokkos::HostSpace(), forces);
++        const auto host_forces_with_charge_grad =
++            Kokkos::create_mirror_view_and_copy(
++                Kokkos::HostSpace(), forces_with_charge_grad);
++        const auto host_charge_grad = Kokkos::create_mirror_view_and_copy(
++            Kokkos::HostSpace(), charge_grad);
++
++        double max_api_force_diff = 0.0;
++        for (int i = 0; i < num_nodes; ++i)
++            for (int axis = 0; axis < 3; ++axis)
++                max_api_force_diff = std::max(
++                    max_api_force_diff,
++                    std::abs(static_cast<double>(host_forces(i, axis))
++                             - static_cast<double>(
++                                 host_forces_with_charge_grad(i, axis))));
++        const double api_energy_diff =
++            std::abs(energy - energy_with_charge_grad);
++
++        double cell_row_major[9];
++        for (int row = 0; row < 3; ++row)
++            for (int column = 0; column < 3; ++column)
++                cell_row_major[3*row + column] = static_cast<double>(cell[row][column]);
++
++        const HostResultWithChargeGradient reference =
++            host_reference_energy_forces_and_charge_gradient(
++                num_nodes, host_positions, cell_row_major, host_charges,
++                sigma, dl, true);
++        const double reference_energy = reference.energy;
++
++        // ---- forces: analytic vs central difference in position ----------
++        const double step = 1e-5;
++        double max_force_error = 0.0;
++        for (int i = 0; i < num_nodes; ++i) {
++            for (int axis = 0; axis < 3; ++axis) {
++                std::vector<double> plus(host_positions, host_positions + 3*num_nodes);
++                std::vector<double> minus(plus);
++                plus[3*i + axis] += step;
++                minus[3*i + axis] -= step;
++                const double e_plus = host_reference_energy(
++                    num_nodes, plus.data(), cell_row_major, host_charges,
++                    sigma, dl, true);
++                const double e_minus = host_reference_energy(
++                    num_nodes, minus.data(), cell_row_major, host_charges,
++                    sigma, dl, true);
++                const double finite_difference = -(e_plus - e_minus)/(2.0*step);
++                const double error = std::abs(
++                    static_cast<double>(host_forces_with_charge_grad(i, axis))
++                    - finite_difference);
++                if (error > max_force_error)
++                    max_force_error = error;
++            }
++        }
++
++        // ---- charge gradient: analytic vs central difference in q --------
++        const double charge_step = 1e-4;
++        double max_charge_grad_abs_error = 0.0;
++        double max_charge_grad_rel_error = 0.0;
++        double max_charge_grad_host_error = 0.0;
++        double max_charge_grad_magnitude = 0.0;
++        for (int i = 0; i < num_nodes; ++i) {
++            std::vector<double> plus(host_charges, host_charges + num_nodes);
++            std::vector<double> minus(plus);
++            plus[i] += charge_step;
++            minus[i] -= charge_step;
++            const double e_plus = host_reference_energy(
++                num_nodes, host_positions, cell_row_major, plus.data(),
++                sigma, dl, true);
++            const double e_minus = host_reference_energy(
++                num_nodes, host_positions, cell_row_major, minus.data(),
++                sigma, dl, true);
++            const double finite_difference =
++                (e_plus - e_minus)/(2.0*charge_step);
++            const double analytic =
++                static_cast<double>(host_charge_grad(i));
++            const double abs_error = std::abs(analytic - finite_difference);
++            const double denominator = std::max(
++                std::abs(analytic), std::abs(finite_difference));
++            const double rel_error =
++                denominator > 0.0 ? abs_error/denominator : abs_error;
++            if (abs_error > max_charge_grad_abs_error)
++                max_charge_grad_abs_error = abs_error;
++            if (rel_error > max_charge_grad_rel_error)
++                max_charge_grad_rel_error = rel_error;
++            max_charge_grad_host_error = std::max(
++                max_charge_grad_host_error,
++                std::abs(analytic - reference.charge_gradient[i]));
++            max_charge_grad_magnitude = std::max(
++                max_charge_grad_magnitude, std::abs(analytic));
++        }
++
++        const double energy_error = std::abs(energy - reference_energy);
++        const double tolerance = std::is_same_v<Precision, float> ? 1e-3 : 1e-6;
++        const bool ok =
++            max_force_error <= tolerance
++            && energy_error <= tolerance
++            && max_charge_grad_abs_error <= tolerance
++            && max_charge_grad_rel_error <= tolerance
++            && max_charge_grad_host_error <= tolerance
++            && max_api_force_diff <= tolerance
++            && api_energy_diff <= tolerance;
++        if (verbose) {
++            std::printf(
++                "LesEwald self-test: energy=%.12f reference=%.12f "
++                "max|F_analytic-F_fd|=%.3e "
++                "max|dE/dq_analytic-dE/dq_fd|=%.3e "
++                "max rel=%.3e max|dE/dq_kokkos-dE/dq_ref|=%.3e "
++                "max|dE/dq|=%.3e max|F_api-F_new|=%.3e tolerance=%.1e "
++                "-> %s\n",
++                energy, reference_energy, max_force_error,
++                max_charge_grad_abs_error, max_charge_grad_rel_error,
++                max_charge_grad_host_error, max_charge_grad_magnitude,
++                max_api_force_diff, tolerance, ok ? "PASS" : "FAIL");
++        }
++        return ok ? 0 : 1;
++    }
++#endif  // SYMMETRIX_LES_EWALD_SELF_TEST
++
++private:
++    template <bool WriteChargeGradient, class PositionView, class ChargeView,
++              class ForceView, class ChargeGradView>
++    Precision energy_forces_impl(
++        const Kokkos::DefaultExecutionSpace& execution_space,
++        const int num_nodes,
++        const PositionView& positions,
++        const Precision cell[3][3],
++        const ChargeView& charges,
++        const ForceView& forces,
++        const ChargeGradView& charge_grad) const {
++        static_assert(static_cast<int>(PositionView::rank) == 1
++                          || static_cast<int>(PositionView::rank) == 2,
++                      "LesEwald: positions must be a flat 3N view or an (N,3) view.");
++        static_assert(static_cast<int>(ChargeView::rank) == 1,
++                      "LesEwald: charges must be a rank-1 (N) view.");
++        static_assert(static_cast<int>(ForceView::rank) == 1
++                          || static_cast<int>(ForceView::rank) == 2,
++                      "LesEwald: forces must be a flat 3N view or an (N,3) view.");
++        static_assert(std::is_arithmetic_v<typename PositionView::non_const_value_type>
++                          && std::is_arithmetic_v<typename ChargeView::non_const_value_type>
++                          && std::is_arithmetic_v<typename ForceView::non_const_value_type>,
++                      "LesEwald: views must hold arithmetic (floating-point) values.");
++        if constexpr (WriteChargeGradient) {
++            static_assert(static_cast<int>(ChargeGradView::rank) == 1,
++                          "LesEwald: charge_grad must be a rank-1 (N) view.");
++            static_assert(
++                std::is_arithmetic_v<typename ChargeGradView::non_const_value_type>,
++                "LesEwald: charge_grad must hold arithmetic (floating-point) values.");
++        }
++
++        if (num_nodes < 0)
++            throw std::invalid_argument("LesEwald: num_nodes must be non-negative.");
++        const std::size_t num = static_cast<std::size_t>(num_nodes);
++        if (node_count(positions) < num)
++            throw std::invalid_argument("LesEwald: positions extent is smaller than num_nodes.");
++        if (charges.extent(0) < num)
++            throw std::invalid_argument("LesEwald: charges extent is smaller than num_nodes.");
++        if (node_count(forces) < num)
++            throw std::invalid_argument("LesEwald: forces extent is smaller than num_nodes.");
++        if constexpr (WriteChargeGradient) {
++            if (charge_grad.extent(0) < num)
++                throw std::invalid_argument(
++                    "LesEwald: charge_grad extent is smaller than num_nodes.");
++        }
++        if (num == 0)
++            return Precision(0);
++
++        ensure_k_list(execution_space, cell);
++        const int num_k = static_cast<int>(k_vectors_.extent(0));
++
++        if (s_re_.extent(0) != static_cast<std::size_t>(num_k)) {
++            s_re_ = scalar_view("LesEwald::S_re", num_k);
++            s_im_ = scalar_view("LesEwald::S_im", num_k);
++        }
++
++        return les_ewald_detail::compute_energy_forces_impl<
++            WriteChargeGradient, Precision>(
++            execution_space, num_nodes, positions, charges, forces,
++            charge_grad, k_vectors_, k_weights_, s_re_, s_im_, num_k,
++            cached_volume_, remove_self_, self_coeff_, norm_factor_);
++    }
++
++    struct HostKList {
++        double volume = 1.0;
++        std::vector<double> kx, ky, kz, weight;
++    };
++
++    static HostKList build_k_list_host(const double cell_row_major[9],
++                                       const double sigma, const double dl) {
++        if (!std::isfinite(sigma) || !(sigma > 0.0))
++            throw std::invalid_argument("LesEwald: sigma must be finite and > 0.");
++        if (!std::isfinite(dl) || !(dl > 0.0))
++            throw std::invalid_argument("LesEwald: dl must be finite and > 0.");
++        for (int i = 0; i < 9; ++i)
++            if (!std::isfinite(cell_row_major[i]))
++                throw std::invalid_argument("LesEwald: cell contains a non-finite value.");
++
++        const double a = cell_row_major[0];
++        const double b = cell_row_major[1];
++        const double c = cell_row_major[2];
++        const double d = cell_row_major[3];
++        const double e = cell_row_major[4];
++        const double f = cell_row_major[5];
++        const double g = cell_row_major[6];
++        const double h = cell_row_major[7];
++        const double i = cell_row_major[8];
++        const double det = a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
++        if (!std::isfinite(det) || det == 0.0)
++            throw std::invalid_argument("LesEwald: cell matrix is not invertible.");
++
++        HostKList result;
++        result.volume = std::abs(det);
++        const double inv = 1.0/det;
++        // Row-major inverse of the row-major cell matrix.
++        const double m00 = (e*i - f*h)*inv;
++        const double m01 = (c*h - b*i)*inv;
++        const double m02 = (b*f - c*e)*inv;
++        const double m10 = (f*g - d*i)*inv;
++        const double m11 = (a*i - c*g)*inv;
++        const double m12 = (c*d - a*f)*inv;
++        const double m20 = (d*h - e*g)*inv;
++        const double m21 = (b*g - a*h)*inv;
++        const double m22 = (a*e - b*d)*inv;
++        // G = 2*pi*inv(C)^T, i.e. G[i][j] = 2*pi*inv_cell[j][i].
++        const double two_pi = les_ewald_detail::kTwoPi;
++        const double G[3][3] = {
++            {two_pi*m00, two_pi*m10, two_pi*m20},
++            {two_pi*m01, two_pi*m11, two_pi*m21},
++            {two_pi*m02, two_pi*m12, two_pi*m22}};
++
++        int Nk[3];
++        for (int axis = 0; axis < 3; ++axis) {
++            const double row_norm = std::sqrt(
++                cell_row_major[3*axis]*cell_row_major[3*axis]
++                + cell_row_major[3*axis + 1]*cell_row_major[3*axis + 1]
++                + cell_row_major[3*axis + 2]*cell_row_major[3*axis + 2]);
++            const double nk_real = row_norm/dl;
++            if (!std::isfinite(nk_real) || nk_real > 1.0e9)
++                throw std::runtime_error(
++                    "LesEwald: cell/dl too large; increase dl.");
++            Nk[axis] = static_cast<int>(nk_real);
++            if (Nk[axis] < 1) Nk[axis] = 1;
++        }
++        const double grid_size =
++            static_cast<double>(2*Nk[0] + 1)
++            *static_cast<double>(2*Nk[1] + 1)
++            *static_cast<double>(2*Nk[2] + 1);
++        if (grid_size > 2.0e8)
++            throw std::runtime_error(
++                "LesEwald: k-grid too large for dl; increase dl.");
++
++        const double k_sq_max = (two_pi/dl)*(two_pi/dl);
++        const double sigma_sq_half = 0.5*sigma*sigma;
++        const std::size_t reserve_hint =
++            static_cast<std::size_t>(grid_size*0.25) + 1;
++        result.kx.reserve(reserve_hint);
++        result.ky.reserve(reserve_hint);
++        result.kz.reserve(reserve_hint);
++        result.weight.reserve(reserve_hint);
++
++        for (int n1 = -Nk[0]; n1 <= Nk[0]; ++n1) {
++            for (int n2 = -Nk[1]; n2 <= Nk[1]; ++n2) {
++                for (int n3 = -Nk[2]; n3 <= Nk[2]; ++n3) {
++                    const double kx = n1*G[0][0] + n2*G[1][0] + n3*G[2][0];
++                    const double ky = n1*G[0][1] + n2*G[1][1] + n3*G[2][1];
++                    const double kz = n1*G[0][2] + n2*G[1][2] + n3*G[2][2];
++                    const double k_sq = kx*kx + ky*ky + kz*kz;
++                    if (!(k_sq > 0.0) || k_sq > k_sq_max)
++                        continue;
++                    // One hemisphere: first non-zero component of n positive.
++                    const int first_non_zero = n1 != 0 ? n1 : (n2 != 0 ? n2 : n3);
++                    if (first_non_zero <= 0)
++                        continue;
++                    // n == 0 is already excluded by k_sq > 0; keep the
++                    // reference's factor convention for clarity.
++                    const double factor =
++                        (n1 == 0 && n2 == 0 && n3 == 0) ? 1.0 : 2.0;
++                    result.kx.push_back(kx);
++                    result.ky.push_back(ky);
++                    result.kz.push_back(kz);
++                    result.weight.push_back(
++                        factor*std::exp(-sigma_sq_half*k_sq)/k_sq);
++                }
++            }
++        }
++        return result;
++    }
++
++    template <class View>
++    static std::size_t node_count(const View& view) {
++        if constexpr (static_cast<int>(View::rank) == 2)
++            return view.extent(0);
++        else
++            return view.extent(0)/3;
++    }
++
++    void ensure_k_list(const Kokkos::DefaultExecutionSpace& execution_space,
++                       const Precision cell[3][3]) const {
++        double flat[9];
++        for (int row = 0; row < 3; ++row)
++            for (int column = 0; column < 3; ++column)
++                flat[3*row + column] = static_cast<double>(cell[row][column]);
++        if (k_cache_valid_) {
++            bool same = true;
++            for (int entry = 0; entry < 9; ++entry) {
++                if (flat[entry] != cached_cell_[entry]) {
++                    same = false;
++                    break;
++                }
++            }
++            if (same)
++                return;
++        }
++
++        const HostKList klist = build_k_list_host(flat, sigma_, dl_);
++        const std::size_t num_k = klist.kx.size();
++        k_vectors_ = k_vector_view("LesEwald::k_vectors", num_k);
++        k_weights_ = scalar_view("LesEwald::k_weights", num_k);
++        auto host_k = Kokkos::create_mirror_view(k_vectors_);
++        auto host_w = Kokkos::create_mirror_view(k_weights_);
++        for (std::size_t kk = 0; kk < num_k; ++kk) {
++            host_k(kk, 0) = static_cast<Precision>(klist.kx[kk]);
++            host_k(kk, 1) = static_cast<Precision>(klist.ky[kk]);
++            host_k(kk, 2) = static_cast<Precision>(klist.kz[kk]);
++            host_w(kk) = static_cast<Precision>(klist.weight[kk]);
++        }
++        Kokkos::deep_copy(execution_space, k_vectors_, host_k);
++        Kokkos::deep_copy(execution_space, k_weights_, host_w);
++        for (int entry = 0; entry < 9; ++entry)
++            cached_cell_[entry] = flat[entry];
++        cached_volume_ = klist.volume;
++        k_cache_valid_ = true;
++    }
++
++    double sigma_ = 1.0;
++    double dl_ = 2.0;
++    bool remove_self_ = true;
++    double norm_factor_ = les_ewald_detail::kNormFactor;
++    double sigma_sq_half_ = 0.5;
++    double k_sq_max_ =
++        les_ewald_detail::kTwoPi*les_ewald_detail::kTwoPi/4.0;
++    double self_coeff_ = 1.0/std::pow(les_ewald_detail::kTwoPi, 1.5);
++
++    // Cache of the reciprocal-space geometry. Mutable because energy_forces()
++    // is const; rebuild happens only when the cell changes or set_params() is
++    // called. Single-threaded use per instance (see header comment).
++    mutable bool k_cache_valid_ = false;
++    mutable std::array<double, 9> cached_cell_{};
++    mutable double cached_volume_ = 1.0;
++    mutable k_vector_view k_vectors_;
++    mutable scalar_view k_weights_;
++    mutable scalar_view s_re_;
++    mutable scalar_view s_im_;
++};
++
++using LesEwaldKokkos = LesEwaldKokkosT<double>;
++using LesEwaldFloatKokkos = LesEwaldKokkosT<float>;
+diff --git a/libsymmetrix/source/mace_kokkos.hpp b/libsymmetrix/source/mace_kokkos.hpp
+index fefbf9b..7e7382e 100644
+--- a/libsymmetrix/source/mace_kokkos.hpp
++++ b/libsymmetrix/source/mace_kokkos.hpp
+@@ -31,6 +31,7 @@
+ #include "jit_host_plugin.hpp"
+ #include "jit_m0_host_plugin.hpp"
+ #include "jit_operator_module.hpp"
++#include "les_ewald.hpp"
+ #include "tools_kokkos.hpp"
+ #include "zbl_kokkos.hpp"
+ 
+@@ -1780,6 +1781,77 @@ void ensure_h1_adjoint_capacity();
+ Kokkos::View<double*> readout_1_weights;
+ MultilayerPerceptronKokkos readout_2;
+ Kokkos::View<double*> readout_2_output;
++
++// Latent Ewald Summation (LES) charge readout. The per-atom latent charges
++// are produced here; the Ewald energy/force kernel consumes them.
++bool les_enabled = false;
++Kokkos::View<double*> les_readout_1_weights;
++MultilayerPerceptronKokkos les_readout_2;
++Kokkos::View<double*> les_readout_2_output;
++Kokkos::View<double*> les_charges;
++double les_output_scale = 1.0;
++double les_sigma = 1.0;
++double les_dl = 2.0;
++double les_norm_factor = 90.4756;
++bool les_remove_mean = true;
++bool les_remove_self = true;
++Kokkos::View<double*> get_les_charges() const { return les_charges; }
++void reset_les_charges(int num_nodes);
++void finalize_les_charges(int num_nodes);
++// Charge adjoint for the LES Ewald term. The Ewald kernel fills
++// les_ewald_dE_dq(i) = dE_LR/dq_i; les_readout_2_feature_grad holds
++// d readout_2/dH2 computed while H2 still holds the forward features (the
++// energy readout gradient may overwrite H2 in place when H2_adj aliases H2).
++// apply_les_charge_adjoint() backpropagates dE_LR/dq through the charge
++// finalization and both LES readouts into H1_adj/H2_adj.
++Kokkos::View<double*> les_ewald_dE_dq;
++Kokkos::View<double**,Kokkos::LayoutRight> les_readout_2_feature_grad;
++void apply_les_charge_adjoint(int num_nodes);
++
++// Cached LES Ewald solver. The reciprocal k-list is rebuilt only when the
++// cell or the LES parameters change. The per-atom Ewald forces are kept in
++// les_ewald_forces (flat 3N, x fastest) and merged into atom_forces by
++// reduce_node_forces(); node_forces stays the directed per-edge array.
++LesEwaldKokkosT<Precision> les_ewald;
++Kokkos::View<double*> les_ewald_forces;
++bool les_ewald_forces_ready = false;
++int les_ewald_num_nodes = 0;
++// Resolved per-evaluation Ewald geometry: a flat 3N node-position view and a
++// row-major 3x3 host cell. fill_les_ewald_geometry() aliases the prepared
++// Execution R1 views on the direct path and copies the all-interactions
++// views into les_ewald_cell_host on the generic streamed path.
++Kokkos::View<const double*> les_ewald_positions;
++Kokkos::View<double*,Kokkos::HostSpace> les_ewald_cell_host;
++// Set by compute_node_energies_forces() for the generic streamed evaluation
++// launched from compute_prepared_all_interactions_positions(), where the
++// current node positions and cell are available.
++bool les_ewald_generic_positions_ready = false;
++// Geometry supplied by an embedding host (currently the LAMMPS pair style)
++// when the evaluator has no native all-interactions/prepared geometry. The
++// positions are a flat 3N Cartesian view with x fastest in evaluator node
++// order; the cell is copied row-major with lattice vectors on the rows.
++// When ready and the node count matches, fill_les_ewald_geometry() uses these
++// views instead of the native/prepared geometry lookup, and the generic
++// streamed path is admitted by require_les_ewald_supported().
++Kokkos::View<const double*> les_ewald_external_positions;
++double les_ewald_external_cell[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
++int les_ewald_external_num_nodes = 0;
++bool les_ewald_external_geometry_ready = false;
++void set_les_ewald_external_geometry(
++    Kokkos::View<const double*> positions,
++    const double cell[3][3],
++    int num_nodes);
++// Reject execution paths that cannot provide complete LES charges plus the
++// node positions/cell (tiled, distributed, materialized, unprepared generic).
++void require_les_ewald_supported(int num_nodes) const;
++// Fill les_ewald_positions/les_ewald_cell_host from the active path's
++// geometry. Called once per evaluation before apply_les_ewald_energy_forces().
++void fill_les_ewald_geometry(int num_nodes);
++// Run the LES Ewald sum after compute_readouts() finalized les_charges:
++// adds the reciprocal-space energy to node_energies(0) and stores the
++// per-node forces in les_ewald_forces.
++void apply_les_ewald_energy_forces(int num_nodes);
++
+ double compute_readouts(
+     int num_nodes,
+     const Kokkos::View<const int*> node_types,
+diff --git a/libsymmetrix/source/mace_kokkos_evaluate.cpp b/libsymmetrix/source/mace_kokkos_evaluate.cpp
+index 8400281..97b0943 100644
+--- a/libsymmetrix/source/mace_kokkos_evaluate.cpp
++++ b/libsymmetrix/source/mace_kokkos_evaluate.cpp
+@@ -56,6 +56,28 @@ void MACEKokkos<Precision>::reduce_node_forces(
+     if (atom_forces.extent(0) != 3*static_cast<std::size_t>(num_nodes))
+         Kokkos::realloc(atom_forces, 3*static_cast<std::size_t>(num_nodes));
+     Kokkos::deep_copy(factorized_execution_space, atom_forces, 0.0);
++    if (les_enabled) {
++        // The LES Ewald forces live on atoms, not on directed edges, so they
++        // cannot be carried by node_forces(). Seed atom_forces with them here;
++        // the edge scatter below then adds the MACE pair forces on top.
++        if (!les_ewald_forces_ready || les_ewald_num_nodes != num_nodes
++            || les_ewald_forces.extent(0)
++                < 3*static_cast<std::size_t>(num_nodes))
++            throw std::logic_error(
++                "MACE_LES Ewald atom forces are missing or do not match the "
++                "atom-force reduction extent.");
++        const auto les_forces = les_ewald_forces;
++        const auto seeded_forces = atom_forces;
++        Kokkos::parallel_for(
++            "MACEKokkos::seed_les_ewald_atom_forces",
++            Kokkos::RangePolicy<decltype(factorized_execution_space)>(
++                factorized_execution_space, 0, num_nodes),
++            KOKKOS_LAMBDA (const int atom) {
++                for (int component=0; component<3; ++component)
++                    seeded_forces(3*atom+component) +=
++                        les_forces(3*atom+component);
++            });
++    }
+     const auto reduced_forces = atom_forces;
+     const auto directed_forces = node_forces;
+     const int num_edges = static_cast<int>(edge_sources.extent(0));
+@@ -310,6 +332,200 @@ void MACEKokkos<Precision>::reduce_prepared_all_interactions_stress(
+             Kokkos::make_pair(std::size_t(0), 3*num_edges)));
+ }
+ 
++// Gate the LES Ewald sum to the monolithic paths. Tiled plans run the
++// readouts per tile and the distributed paths only own a subset of the
++// atoms, so both would produce incomplete/double-counted charges. The
++// materialized path never receives a cell or node positions, so the Ewald
++// lattice sum is not defined there. The generic streamed path is admitted
++// when the all-interactions geometry (or an external host) supplied the
++// current node positions and cell. Throw instead of silently emitting wrong
++// physics.
++template <typename Precision>
++void MACEKokkos<Precision>::require_les_ewald_supported(
++    const int num_nodes) const
++{
++    if (!les_enabled)
++        return;
++    if (single_layer_tiled_plan_active || dual_layer_tiled_plan_active)
++        throw std::runtime_error(
++            "MACE_LES Ewald is not supported by tiled execution plans: the "
++            "charge readout and Ewald sum need all atoms in one call.");
++    // An embedding host (the LAMMPS pair style) can supply the current node
++    // positions and cell directly on any monolithic path (generic, direct,
++    // materialized); then no native prepared geometry is required.
++    if (les_ewald_external_geometry_ready
++        && les_ewald_external_num_nodes == num_nodes)
++        return;
++    if (streamed_edges == MACEStreamedEdgesMode::generic) {
++        // An embedding host (the LAMMPS pair style) can supply the current
++        // node positions and cell directly; then no native all-interactions
++        // geometry is required.
++        if (les_ewald_external_geometry_ready
++            && les_ewald_external_num_nodes == num_nodes)
++            return;
++        if (!les_ewald_generic_positions_ready)
++            throw std::runtime_error(
++                "MACE_LES Ewald on the generic streamed path requires "
++                "current node positions and a cell: evaluate through "
++                "compute_prepared_all_interactions_positions() after "
++                "prepare_all_interactions_geometry().");
++        if (all_interactions_prepared_geometry_graph_generation == 0
++            || all_interactions_prepared_geometry_graph_generation
++                != all_interactions_prepared_graph_generation)
++            throw std::runtime_error(
++                "MACE_LES Ewald requires prepared all-interactions geometry "
++                "(prepare_all_interactions_geometry) so a cell and reference "
++                "positions are available.");
++        if (all_interactions_candidate_node_types.extent(0)
++                != static_cast<std::size_t>(num_nodes)
++            || all_interactions_positions.extent(0)
++                < 3*static_cast<std::size_t>(num_nodes)
++            || all_interactions_cell.extent(0) != 9)
++            throw std::runtime_error(
++                "MACE_LES Ewald requires prepared node positions and a 3x3 "
++                "cell on the generic streamed path.");
++        return;
++    }
++    if (streamed_edges == MACEStreamedEdgesMode::materialized)
++        throw std::runtime_error(
++            "MACE_LES Ewald does not support streamed_edges='materialized': "
++            "that path never receives a cell or node positions. Use "
++            "streamed_edges='direct' or 'generic'.");
++    if (execution_prepared_num_feature_nodes != num_nodes)
++        throw std::runtime_error(
++            "MACE_LES Ewald is not supported by distributed factorized "
++            "evaluation: only a subset of the atoms is present locally.");
++    if (factorized_prepared_geometry_graph_generation == 0
++        || factorized_prepared_geometry_graph_generation
++            != factorized_prepared_graph_generation
++        || factorized_prepared_geometry_uses_shifts)
++        throw std::runtime_error(
++            "MACE_LES Ewald requires the native prepared-geometry path "
++            "(prepare geometry, then update the Cartesian node positions) "
++            "so a cell and current node positions are available.");
++    if (execution_prepared_positions.extent(0)
++            < 3*static_cast<std::size_t>(num_nodes)
++        || execution_prepared_cell_host.extent(0) != 9)
++        throw std::runtime_error(
++            "MACE_LES Ewald requires prepared node positions and a 3x3 cell.");
++}
++
++template <typename Precision>
++void MACEKokkos<Precision>::set_les_ewald_external_geometry(
++    Kokkos::View<const double*> positions,
++    const double cell[3][3],
++    const int num_nodes)
++{
++    les_ewald_external_positions = positions;
++    for (int row=0; row<3; ++row)
++        for (int column=0; column<3; ++column)
++            les_ewald_external_cell[3*row + column] = cell[row][column];
++    les_ewald_external_num_nodes = num_nodes;
++    les_ewald_external_geometry_ready =
++        num_nodes > 0
++        && positions.data() != nullptr
++        && positions.extent(0) >= 3*static_cast<std::size_t>(num_nodes);
++}
++
++template <typename Precision>
++void MACEKokkos<Precision>::fill_les_ewald_geometry(
++    const int num_nodes)
++{
++    const std::size_t position_extent =
++        3*static_cast<std::size_t>(num_nodes);
++    if (les_ewald_external_geometry_ready
++        && les_ewald_external_num_nodes == num_nodes) {
++        // The host supplied current node positions in evaluator node order
++        // and the cell with lattice vectors on the rows. Skip the native or
++        // prepared geometry lookup entirely.
++        les_ewald_positions = les_ewald_external_positions;
++        if (les_ewald_cell_host.extent(0) != 9)
++            les_ewald_cell_host = Kokkos::View<double*,Kokkos::HostSpace>(
++                "MACE_LES Ewald cell", 9);
++        for (int flat=0; flat<9; ++flat)
++            les_ewald_cell_host(flat) = les_ewald_external_cell[flat];
++    } else if (streamed_edges == MACEStreamedEdgesMode::generic) {
++        les_ewald_positions =
++            Kokkos::View<const double*>(all_interactions_positions);
++        if (les_ewald_cell_host.extent(0) != 9)
++            les_ewald_cell_host = Kokkos::View<double*,Kokkos::HostSpace>(
++                "MACE_LES Ewald cell", 9);
++        Kokkos::deep_copy(les_ewald_cell_host, all_interactions_cell);
++    } else {
++        les_ewald_positions =
++            Kokkos::View<const double*>(execution_prepared_positions);
++        les_ewald_cell_host = execution_prepared_cell_host;
++    }
++    if (les_ewald_positions.extent(0) < position_extent
++        || les_ewald_cell_host.extent(0) != 9)
++        throw std::logic_error(
++            "MACE_LES Ewald geometry resolution produced incomplete views.");
++}
++
++template <typename Precision>
++void MACEKokkos<Precision>::apply_les_ewald_energy_forces(
++    const int num_nodes)
++{
++    if (!les_enabled || num_nodes <= 0)
++        return;
++    require_les_ewald_supported(num_nodes);
++    fill_les_ewald_geometry(num_nodes);
++    if (les_charges.extent(0) < static_cast<std::size_t>(num_nodes))
++        throw std::logic_error(
++            "MACE_LES Ewald ran before the LES charges were finalized.");
++
++    // Cache the solver parameters on first use (and after a model reload).
++    if (les_ewald.sigma() != les_sigma || les_ewald.dl() != les_dl
++        || les_ewald.remove_self() != les_remove_self)
++        les_ewald.set_params(les_sigma, les_dl, les_remove_self);
++    if (les_ewald.norm_factor() != les_norm_factor)
++        les_ewald.set_norm_factor(les_norm_factor);
++
++    // The engine cell is row-major with lattice vectors on the rows
++    // (cell[3*row + column]), matching LesEwaldKokkosT's convention.
++    Precision cell[3][3];
++    const auto& cell_host = les_ewald_cell_host;
++    for (int row=0; row<3; ++row)
++        for (int column=0; column<3; ++column)
++            cell[row][column] =
++                static_cast<Precision>(cell_host[3*row + column]);
++
++    const std::size_t position_extent =
++        3*static_cast<std::size_t>(num_nodes);
++    const auto positions = Kokkos::subview(
++        les_ewald_positions,
++        Kokkos::make_pair(std::size_t(0), position_extent));
++    if (les_ewald_forces.extent(0) < position_extent)
++        Kokkos::realloc(les_ewald_forces, position_extent);
++    if (les_ewald_dE_dq.extent(0) < static_cast<std::size_t>(num_nodes))
++        Kokkos::realloc(les_ewald_dE_dq, num_nodes);
++
++    // Also fill les_ewald_dE_dq(i) = dE_LR/dq_i. The explicit Ewald forces
++    // above are already the complete position derivative; the charge
++    // gradient is only used to backpropagate through the LES charge
++    // readouts (apply_les_charge_adjoint), avoiding double counting.
++    const Precision les_energy = les_ewald.energy_forces_with_charge_gradient(
++        factorized_execution_space, num_nodes, positions, cell,
++        les_charges, les_ewald_forces, les_ewald_dE_dq);
++
++    // node_energies is a per-node array that the evaluator reduces with a
++    // plain sum (numpy.sum in _collect_mace_results, and
++    // Kokkos::parallel_reduce in compute_readouts when a total is requested),
++    // so parking the reciprocal-space total on node 0 adds it exactly once.
++    const auto energies = node_energies;
++    const double total_energy = static_cast<double>(les_energy);
++    Kokkos::parallel_for(
++        "MACEKokkos::add_les_ewald_energy",
++        Kokkos::RangePolicy<decltype(factorized_execution_space)>(
++            factorized_execution_space, 0, 1),
++        KOKKOS_LAMBDA (const int) {
++            energies(0) += total_energy;
++        });
++
++    les_ewald_forces_ready = true;
++    les_ewald_num_nodes = num_nodes;
++}
++
+ template <typename Precision>
+ void MACEKokkos<Precision>::compute_node_energies_forces(
+     const int num_nodes,
+@@ -323,6 +539,16 @@ void MACEKokkos<Precision>::compute_node_energies_forces(
+     const bool streamed_schedule_prepared)
+ {
+     const auto evaluation_start = std::chrono::steady_clock::now();
++    // Any new evaluation invalidates the Ewald forces from the previous one.
++    les_ewald_forces_ready = false;
++    les_ewald_num_nodes = 0;
++    // The generic streamed path only has cell/positions when it is entered
++    // through compute_prepared_all_interactions_positions(), which refreshes
++    // the all-interactions geometry and passes streamed_schedule_prepared.
++    les_ewald_generic_positions_ready =
++        streamed_edges == MACEStreamedEdgesMode::generic
++        && streamed_schedule_prepared;
++    require_les_ewald_supported(num_nodes);
+     if (execution_graph_generation != 0) {
+         if (!mace_uses_prepared_execution(streamed_edges))
+             throw std::invalid_argument(
+@@ -491,6 +717,8 @@ void MACEKokkos<Precision>::compute_node_energies_forces(
+         compute_M1(num_nodes, node_types);
+         compute_H2(num_nodes, node_types);
+         compute_readouts(num_nodes, node_types, false, false);
++        apply_les_ewald_energy_forces(num_nodes);
++        apply_les_charge_adjoint(num_nodes);
+         reverse_H2(num_nodes, node_types, false);
+         reverse_M1(num_nodes, node_types);
+     } else {
+@@ -529,6 +757,9 @@ void MACEKokkos<Precision>::compute_node_energies_forces(
+ 
+         compute_readouts(num_nodes, node_types, false, false);
+ 
++        apply_les_ewald_energy_forces(num_nodes);
++        apply_les_charge_adjoint(num_nodes);
++
+         reverse_H2(num_nodes, node_types, false);
+         reverse_M1(num_nodes, node_types);
+         reverse_A1_scaled(num_nodes, node_types, num_neigh, neigh_types, xyz, r);
+@@ -1171,6 +1402,10 @@ void MACEKokkos<Precision>::compute_node_energies_forces_field(
+     const std::uint64_t execution_graph_generation)
+ {
+     const auto evaluation_start = std::chrono::steady_clock::now();
++    if (les_enabled)
++        throw std::runtime_error(
++            "MACE_LES Ewald is not wired into the field-coupled evaluator; "
++            "evaluate the LES model without field coupling.");
+     if (!has_field_coupling)
+         throw std::invalid_argument("MACEKokkos::compute_node_energies_forces_field requires field coupling.");
+     if (execution_graph_generation != 0) {
+@@ -1587,6 +1822,11 @@ void MACEKokkos<Precision>::begin_factorized_distributed_evaluation(
+     if (factorized_distributed_phase != FactorizedDistributedPhase::idle)
+         throw std::logic_error(
+             "A factorized distributed evaluation is already active.");
++    if (les_enabled)
++        throw std::runtime_error(
++            "MACE_LES Ewald is not supported by distributed factorized "
++            "evaluation: the charge readout only covers the local atoms and "
++            "the Ewald lattice sum would be incomplete.");
+     if (!mace_uses_prepared_execution(streamed_edges))
+         throw std::invalid_argument(
+             "Distributed prepared evaluation requires streamed_edges='direct'.");
+diff --git a/libsymmetrix/source/mace_kokkos_model.cpp b/libsymmetrix/source/mace_kokkos_model.cpp
+index 09dfaa5..a8ad8c5 100644
+--- a/libsymmetrix/source/mace_kokkos_model.cpp
++++ b/libsymmetrix/source/mace_kokkos_model.cpp
+@@ -1254,6 +1254,44 @@ void MACEKokkos<Precision>::load_from_json(
+         std::vector<int>{num_channels, readout_2_hidden_size, 1},
+         std::vector<std::vector<double>>{readout_2_weights_1, readout_2_weights_2},
+         file["readout_2_scale_factor"]);
++    if (file.contains("les_readout_1_weights")) {
++        les_enabled = true;
++        const auto les_readout_1_weights_vec =
++            file["les_readout_1_weights"].get<std::vector<double>>();
++        auto les_readout_2_weights_1 =
++            file["les_readout_2_weights_1"].get<std::vector<double>>();
++        auto les_readout_2_weights_2 =
++            file["les_readout_2_weights_2"].get<std::vector<double>>();
++        const int les_readout_2_hidden_size =
++            file.value("les_readout_2_hidden_size", 16);
++        if (les_readout_1_weights_vec.size()
++                != static_cast<std::size_t>(num_channels)) {
++            throw std::invalid_argument(
++                "MACE_LES readout 1 weights do not match the channel count.");
++        }
++        if (les_readout_2_hidden_size <= 0
++                || les_readout_2_weights_1.size()
++                    != static_cast<std::size_t>(
++                        num_channels * les_readout_2_hidden_size)
++                || les_readout_2_weights_2.size()
++                    != static_cast<std::size_t>(les_readout_2_hidden_size)) {
++            throw std::invalid_argument(
++                "MACE_LES readout 2 weights do not match the declared hidden size.");
++        }
++        les_readout_1_weights = toKokkosView(
++            "les_readout_1_weights", les_readout_1_weights_vec);
++        les_readout_2 = MultilayerPerceptronKokkos(
++            std::vector<int>{num_channels, les_readout_2_hidden_size, 1},
++            std::vector<std::vector<double>>{
++                les_readout_2_weights_1, les_readout_2_weights_2},
++            file["les_readout_2_scale_factor"]);
++        les_output_scale = file.value("les_output_scale", 1.0);
++        les_sigma = file.value("les_sigma_A", 1.0);
++        les_dl = file.value("les_dl_A", 2.0);
++        les_norm_factor = file.value("les_norm_factor", les_norm_factor);
++        les_remove_mean = file.value("les_remove_mean", true);
++        les_remove_self = file.value("les_remove_self_interaction", true);
++    }
+     record_phase("readouts");
+ }
+ 
+diff --git a/libsymmetrix/source/mace_kokkos_runtime.cpp b/libsymmetrix/source/mace_kokkos_runtime.cpp
+index 97c398e..21ad0ef 100644
+--- a/libsymmetrix/source/mace_kokkos_runtime.cpp
++++ b/libsymmetrix/source/mace_kokkos_runtime.cpp
+@@ -3000,6 +3000,9 @@ std::string MACEKokkos<Precision>::single_layer_tiled_admission_reason() const
+ #else
+     if (!single_layer_readout)
+         return "mh0-single-layer-tiled-v1 requires single_layer_readout=true";
++    if (les_enabled)
++        return "mh0-single-layer-tiled-v1 does not support MACE_LES charges: "
++            "the LES readout and Ewald sum need all atoms in one call";
+     if (!mace_uses_prepared_execution(streamed_edges))
+         return "mh0-single-layer-tiled-v1 requires direct prepared execution";
+     if (has_field_coupling)
+@@ -3028,6 +3031,9 @@ std::string MACEKokkos<Precision>::dual_layer_tiled_admission_reason() const
+ #else
+     if (single_layer_readout || num_interactions != 2)
+         return "mh0-dual-layer-tiled-v1 requires an ordinary two-layer MACE model";
++    if (les_enabled)
++        return "mh0-dual-layer-tiled-v1 does not support MACE_LES charges: "
++            "the LES readout and Ewald sum need all atoms in one call";
+     if (!mace_uses_prepared_execution(streamed_edges))
+         return "mh0-dual-layer-tiled-v1 requires direct prepared execution";
+     if (has_field_coupling)
+diff --git a/libsymmetrix/source/mace_kokkos_second_interaction.cpp b/libsymmetrix/source/mace_kokkos_second_interaction.cpp
+index 720a74f..ed395b0 100644
+--- a/libsymmetrix/source/mace_kokkos_second_interaction.cpp
++++ b/libsymmetrix/source/mace_kokkos_second_interaction.cpp
+@@ -2118,12 +2118,30 @@ void MACEKokkos<Precision>::ensure_h1_adjoint_capacity()
+     }
+ }
+ 
++template <typename Precision>
++void MACEKokkos<Precision>::reset_les_charges(const int num_nodes)
++{
++    const bool async_inference = use_factorized_async_inference();
++    const auto execution_space = async_inference
++        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
++    if (les_charges.extent(0) < static_cast<std::size_t>(num_nodes))
++        Kokkos::realloc(les_charges, num_nodes);
++    Kokkos::deep_copy(execution_space, les_charges, 0.0);
++}
++
+ template <typename Precision>
+ void MACEKokkos<Precision>::compute_readout_1(
+     const int num_nodes,
+     const Kokkos::View<const int*> node_types,
+     const bool initialize_h1_adjoint)
+ {
++    // Tiled plans run readouts per tile/batch, which would reset and
++    // finalize the LES charges repeatedly. Reject them instead of silently
++    // returning wrong charges.
++    if (les_enabled
++        && (single_layer_tiled_plan_active || dual_layer_tiled_plan_active))
++        throw std::runtime_error(
++            "MACE_LES charge readout is not supported by tiled execution plans.");
+     const bool async_inference = use_factorized_async_inference();
+     const auto execution_space = async_inference
+         ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+@@ -2133,6 +2151,14 @@ void MACEKokkos<Precision>::compute_readout_1(
+         else
+             Kokkos::deep_copy(H1_adj, 0.0);
+     }
++    if (les_enabled) {
++        if (initialize_h1_adjoint)
++            reset_les_charges(num_nodes);
++        else if (les_charges.extent(0)
++                < static_cast<std::size_t>(num_nodes))
++            throw std::logic_error(
++                "MACE_LES charges were not initialized before readout 1.");
++    }
+ 
+     auto num_channels = this->num_channels;
+     auto node_energies = this->node_energies;
+@@ -2140,6 +2166,9 @@ void MACEKokkos<Precision>::compute_readout_1(
+     auto H1 = this->H1;
+     auto H1_adj = this->H1_adj;
+     auto readout_1_weights = this->readout_1_weights;
++    const bool les_readout_enabled = this->les_enabled;
++    auto les_readout_1_weights = this->les_readout_1_weights;
++    auto les_charges = this->les_charges;
+ 
+     // atomic energies
+     Kokkos::parallel_for(
+@@ -2157,6 +2186,8 @@ void MACEKokkos<Precision>::compute_readout_1(
+         KOKKOS_LAMBDA (const int i) {
+         for (int k=0; k<num_channels; ++k) {
+             node_energies(i) += readout_1_weights(k) * H1(i,0,k);
++            if (les_readout_enabled)
++                les_charges(i) += les_readout_1_weights(k) * H1(i,0,k);
+             if (initialize_h1_adjoint)
+                 H1_adj(i,0,k) = readout_1_weights(k);
+         }
+@@ -2166,6 +2197,12 @@ void MACEKokkos<Precision>::compute_readout_1(
+ template <typename Precision>
+ void MACEKokkos<Precision>::compute_readout_2(const int num_nodes)
+ {
++    // Tiled plans evaluate readout 2 per tile, so the LES charges would only
++    // cover the active tile. Reject them instead of silently wrong charges.
++    if (les_enabled
++        && (single_layer_tiled_plan_active || dual_layer_tiled_plan_active))
++        throw std::runtime_error(
++            "MACE_LES charge readout is not supported by tiled execution plans.");
+     const bool async_inference = use_factorized_async_inference();
+     const auto execution_space = async_inference
+         ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+@@ -2181,6 +2218,44 @@ void MACEKokkos<Precision>::compute_readout_2(const int num_nodes)
+         Kokkos::realloc(readout_2_output, num_nodes);
+     auto H2 = Kokkos::subview(this->H2, make_pair(0,num_nodes), Kokkos::ALL);
+     auto H2_adj = Kokkos::subview(this->H2_adj, make_pair(0,num_nodes), Kokkos::ALL);
++    // LES readout 2 must consume the FORWARD H2. `use_mh0_adjoint_reuse()`
++    // aliases H2_adj onto H2, and the energy readout's gradient below writes
++    // the adjoint in place; evaluating the LES head afterwards would read the
++    // adjoint instead of the features. Do it first.
++    if (les_enabled) {
++        if (les_charges.extent(0) < static_cast<std::size_t>(num_nodes))
++            throw std::logic_error(
++                "MACE_LES charges were not initialized before readout 2.");
++        if (les_readout_2_output.extent(0)
++                < static_cast<std::size_t>(num_nodes))
++            Kokkos::realloc(les_readout_2_output, num_nodes);
++        auto les_readout_2_output = Kokkos::subview(
++            this->les_readout_2_output, make_pair(0,num_nodes));
++        les_readout_2.evaluate(
++            execution_space, H2, les_readout_2_output, false);
++        // H2 still holds the forward features here. The energy readout
++        // gradient below may write its adjoint into H2 in place when
++        // H2_adj aliases H2 (use_mh0_adjoint_reuse()), so cache the
++        // per-node feature gradient d readout_2/dH2 now, with seed 1.
++        // The per-sample gradient is linear in the output seed, so
++        // apply_les_charge_adjoint() scales it by dE/dq later.
++        if (les_readout_2_feature_grad.extent(0)
++                < static_cast<std::size_t>(num_nodes)
++            || les_readout_2_feature_grad.extent_int(1) != num_channels)
++            Kokkos::realloc(
++                les_readout_2_feature_grad, num_nodes, num_channels);
++        les_readout_2.evaluate_gradient(
++            execution_space, H2, les_readout_2_output,
++            les_readout_2_feature_grad, false);
++        auto les_charges = this->les_charges;
++        Kokkos::parallel_for(
++            "Compute LES Readouts 2",
++            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
++                execution_space, 0, num_nodes),
++            KOKKOS_LAMBDA (const int i) {
++            les_charges(i) += les_readout_2_output(i);
++        });
++    }
+     if (recompute_readout) {
+         readout_2.evaluate_gradient_accumulate_recompute(
+             execution_space, H2, node_energies, H2_adj, false);
+@@ -2207,6 +2282,120 @@ void MACEKokkos<Precision>::compute_readout_2(const int num_nodes)
+     }
+ }
+ 
++template <typename Precision>
++void MACEKokkos<Precision>::finalize_les_charges(const int num_nodes)
++{
++    if (!les_enabled)
++        return;
++    if (num_nodes <= 0)
++        return;
++    if (les_charges.extent(0) < static_cast<std::size_t>(num_nodes))
++        throw std::logic_error(
++            "MACE_LES charges were not accumulated before finalization.");
++    const bool async_inference = use_factorized_async_inference();
++    const auto execution_space = async_inference
++        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
++    auto les_charges = this->les_charges;
++    const double output_scale = les_output_scale;
++    const bool remove_mean = les_remove_mean;
++    double mean_charge = 0.0;
++    if (remove_mean)
++        Kokkos::parallel_reduce(
++            "MACEKokkos::finalize_les_charges_mean",
++            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
++                execution_space, 0, num_nodes),
++            KOKKOS_LAMBDA (const int i, double& local_sum) {
++            local_sum += les_charges(i);
++        },
++            mean_charge);
++    mean_charge /= static_cast<double>(num_nodes);
++    Kokkos::parallel_for(
++        "MACEKokkos::finalize_les_charges",
++        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
++            execution_space, 0, num_nodes),
++        KOKKOS_LAMBDA (const int i) {
++        double charge = output_scale * les_charges(i);
++        if (remove_mean)
++            charge -= output_scale * mean_charge;
++        les_charges(i) = charge;
++    });
++    Kokkos::fence("MACEKokkos::finalize_les_charges");
++}
++
++template <typename Precision>
++void MACEKokkos<Precision>::apply_les_charge_adjoint(const int num_nodes)
++{
++    if (!les_enabled)
++        return;
++    if (num_nodes <= 0)
++        return;
++    if (les_ewald_dE_dq.extent(0) < static_cast<std::size_t>(num_nodes))
++        throw std::logic_error(
++            "MACE_LES charge adjoint ran before the Ewald charge gradient "
++            "was computed.");
++    if (les_charges.extent(0) < static_cast<std::size_t>(num_nodes))
++        throw std::logic_error(
++            "MACE_LES charges were not finalized before the charge adjoint.");
++    if (H2_adj.extent(0) < static_cast<std::size_t>(num_nodes)
++        || H2_adj.extent_int(1) < num_channels)
++        throw std::logic_error(
++            "MACE_LES charge adjoint requires the readout-2 H2 adjoint.");
++    if (les_readout_2_feature_grad.extent(0)
++            < static_cast<std::size_t>(num_nodes)
++        || les_readout_2_feature_grad.extent_int(1) < num_channels)
++        throw std::logic_error(
++            "MACE_LES charge adjoint requires the readout-2 feature "
++            "gradient.");
++    const bool async_inference = use_factorized_async_inference();
++    const auto execution_space = async_inference
++        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
++    ensure_h1_adjoint_capacity();
++    if (H1_adj.extent(0) < static_cast<std::size_t>(num_nodes)
++        || H1_adj.extent_int(1) < 1
++        || H1_adj.extent_int(2) < num_channels)
++        throw std::logic_error(
++            "MACE_LES charge adjoint requires the readout-1 H1 adjoint.");
++
++    auto dE_dq = this->les_ewald_dE_dq;
++    const double output_scale = les_output_scale;
++    const bool remove_mean = les_remove_mean;
++    double mean_dE_dq = 0.0;
++    if (remove_mean)
++        Kokkos::parallel_reduce(
++            "MACEKokkos::apply_les_charge_adjoint_mean",
++            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
++                execution_space, 0, num_nodes),
++            KOKKOS_LAMBDA (const int i, double& local_sum) {
++            local_sum += dE_dq(i);
++        },
++            mean_dE_dq);
++    mean_dE_dq /= static_cast<double>(num_nodes);
++
++    auto H1_adj = this->H1_adj;
++    auto H2_adj = Kokkos::subview(
++        this->H2_adj, make_pair(0,num_nodes), Kokkos::ALL);
++    auto feature_grad = this->les_readout_2_feature_grad;
++    auto les_readout_1_weights = this->les_readout_1_weights;
++    const int channels = num_channels;
++    Kokkos::parallel_for(
++        "MACEKokkos::apply_les_charge_adjoint",
++        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
++            execution_space, 0, num_nodes),
++        KOKKOS_LAMBDA (const int i) {
++        // q_final_i = output_scale*(q_raw_i - remove_mean*mean(q_raw)), so
++        // dq_raw_i = output_scale*(dE/dq_final_i
++        //                         - remove_mean*mean(dE/dq_final)).
++        const double dq_raw = output_scale
++            * (dE_dq(i) - (remove_mean ? mean_dE_dq : 0.0));
++        for (int k=0; k<channels; ++k) {
++            H1_adj(i,0,k) += static_cast<Precision>(
++                dq_raw * les_readout_1_weights(k));
++            H2_adj(i,k) += dq_raw * feature_grad(i,k);
++        }
++    });
++    Kokkos::fence("MACEKokkos::apply_les_charge_adjoint");
++}
++
+ template <typename Precision>
+ double MACEKokkos<Precision>::compute_readouts(
+     int num_nodes,
+@@ -2220,6 +2409,8 @@ double MACEKokkos<Precision>::compute_readouts(
+     ensure_h1_adjoint_capacity();
+     compute_readout_1(num_nodes, node_types, true);
+     compute_readout_2(num_nodes);
++    if (les_enabled)
++        finalize_les_charges(num_nodes);
+     auto node_energies = this->node_energies;
+ 
+     double energy = 0.0;
+diff --git a/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp b/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp
+index a42f837..8316b6a 100644
+--- a/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp
++++ b/pair_symmetrix/pair_symmetrix_mace_kokkos.cpp
+@@ -28,6 +28,8 @@
+ #include "memory_kokkos.h"
+ #include "neigh_list.h"
+ #include "neighbor.h"
++#include <cstdio>
++#include <cstdlib>
+ #include "neighbor_kokkos.h"
+ #include "platform.h"
+ #include "neigh_list_kokkos.h"
+@@ -1481,6 +1483,46 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+   if (stable_execution && !rebuild_topology)
+     execution_geometry_only_update_count += 1.0;
+ 
++  // MACE_LES Ewald needs the current owned-node Cartesian positions and the
++  // cell, which the generic streamed evaluator cannot obtain from the
++  // per-edge xyz/r stream. Nodes follow the neighbor-list ilist order
++  // (node_indices), which need not match the local atom order, so gather the
++  // positions in node order. The cell is row-major with lattice vectors on
++  // the rows, matching LesEwaldKokkosT's convention.
++  if (!is_polar_model && mace->les_enabled
++      && num_nodes > 0) {
++    double les_cell[3][3] = {
++      {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
++    if (domain->triclinic) {
++      // LAMMPS restricted triclinic h: a=(h0,0,0), b=(h3,h1,0), c=(h4,h5,h2).
++      les_cell[0][0] = domain->h[0];
++      les_cell[1][0] = domain->h[3];
++      les_cell[1][1] = domain->h[1];
++      les_cell[2][0] = domain->h[4];
++      les_cell[2][1] = domain->h[5];
++      les_cell[2][2] = domain->h[2];
++    } else {
++      les_cell[0][0] = domain->boxhi[0] - domain->boxlo[0];
++      les_cell[1][1] = domain->boxhi[1] - domain->boxlo[1];
++      les_cell[2][2] = domain->boxhi[2] - domain->boxlo[2];
++    }
++    if (les_node_positions.extent(0) < static_cast<std::size_t>(3*num_nodes))
++      Kokkos::realloc(les_node_positions, 3*num_nodes);
++    auto les_positions = Kokkos::subview(
++      les_node_positions, Kokkos::make_pair(0, 3*num_nodes));
++    auto d_node_indices = node_indices;
++    Kokkos::parallel_for(
++      "PairSymmetrixMACEKokkos::set_les_node_positions",
++      num_nodes,
++      KOKKOS_LAMBDA (const int ii) {
++        const int i = d_node_indices(ii);
++        les_positions(3*ii) = x(i,0);
++        les_positions(3*ii+1) = x(i,1);
++        les_positions(3*ii+2) = x(i,2);
++      });
++    mace->set_les_ewald_external_geometry(les_positions, les_cell, num_nodes);
++  }
++
+   Kokkos::View<double*> node_energies;
+   Kokkos::View<double*> node_forces;
+   bool polar_enabled = false;
+@@ -1525,6 +1567,19 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+     node_forces = mace->node_forces;
+     polar_enabled = mace->polar_blocks_enabled();
+     polar_forces = mace->polar_node_forces;
++    if (mace->les_enabled && std::getenv("SYMMETRIX_LES_DUMP_CHARGES")) {
++      auto h_node = Kokkos::create_mirror_view_and_copy(
++          Kokkos::HostSpace(), node_indices);
++      auto h_q = Kokkos::create_mirror_view_and_copy(
++          Kokkos::HostSpace(), mace->les_charges);
++      std::FILE* fp = std::fopen("les_charges.txt", "w");
++      if (fp) {
++        for (int ii = 0; ii < num_nodes; ++ii)
++          std::fprintf(fp, "%d %.10g\n", static_cast<int>(h_node(ii)),
++                       static_cast<double>(h_q(ii)));
++        std::fclose(fp);
++      }
++    }
+   }
+ 
+   if (eflag_global) {
+@@ -1584,6 +1639,22 @@ void PairSymmetrixMACEKokkos<DeviceType, Precision>::compute_no_domain_decomposi
+       });
+   }
+ 
++  // LES latent-Ewald forces are per atom, not per directed edge; add them
++  // after the edge scatter. Node ii maps to atom node_indices(ii).
++  if (mace && mace->les_enabled && mace->les_ewald_forces_ready
++      && mace->les_ewald_forces.extent(0)
++          >= 3*static_cast<std::size_t>(num_nodes)) {
++    auto les_forces = mace->les_ewald_forces;
++    Kokkos::parallel_for(
++      "PairSymmetrixMACEKokkos::les_ewald_force_addition",
++      num_nodes,
++      KOKKOS_LAMBDA (const int ii) {
++        const int i = node_indices(ii);
++        for (int c = 0; c < 3; ++c)
++          Kokkos::atomic_add(&f(i,c), les_forces(3*ii+c));
++      });
++  }
++
+   if (vflag_global) {
+     Kokkos::View<double*,Kokkos::LayoutRight> v("v", 6);
+     Kokkos::deep_copy(v, 0.0);
+diff --git a/pair_symmetrix/pair_symmetrix_mace_kokkos.h b/pair_symmetrix/pair_symmetrix_mace_kokkos.h
+index 88d2a9c..a913ea5 100644
+--- a/pair_symmetrix/pair_symmetrix_mace_kokkos.h
++++ b/pair_symmetrix/pair_symmetrix_mace_kokkos.h
+@@ -138,6 +138,9 @@ class PairSymmetrixMACEKokkos : public Pair, public KokkosBase {
+   double polar_total_spin = 1.0;
+   Kokkos::View<double*> polar_cell;
+   Kokkos::View<double*> polar_node_positions;
++  // Flat 3N node positions (x fastest) in evaluator node order, supplied to
++  // MACEKokkos for the MACE_LES Ewald sum on the generic streamed path.
++  Kokkos::View<double*> les_node_positions;
+   Kokkos::View<Precision**,Kokkos::LayoutRight> polar_sync_device;
+   Kokkos::View<Precision**,Kokkos::LayoutRight,Kokkos::HostSpace> polar_sync_host;
+   int polar_comm_width = 0;
+diff --git a/symmetrix/source/symmetrix/extract_maceles.py b/symmetrix/source/symmetrix/extract_maceles.py
+new file mode 100644
+index 0000000..b17b200
+--- /dev/null
++++ b/symmetrix/source/symmetrix/extract_maceles.py
+@@ -0,0 +1,197 @@
++#!/usr/bin/env python3
++"""Export a MACELES checkpoint to a Symmetrix JSON with the LES readouts.
++
++The stock ``extract_mace_data`` labels every non-MACEField checkpoint as
++plain ``MACE`` and silently drops the latent-Ewald parts.  This module keeps
++the MACE backbone export and adds a ``latent_ewald`` section describing
++
++    q_i = output_scale * sum_l ( readout_l(features_l) )_i
++
++plus the fixed Gaussian-Ewald parameters of ``les.module.ewald.Ewald``.
++
++The engine still needs a ``MACE_LES`` forward branch; this file only makes
++the exported model faithful and self-describing.
++"""
++import argparse
++import json
++from pathlib import Path
++
++import numpy as np
++import torch
++
++from .extract_mace_data import extract_mace_data
++
++
++def _dense(linear):
++    """Effective e3nn Linear 0e->0e weight (mul_out, mul_in).
++
++    e3nn Linear multiplies by 1/sqrt(fan_in); store the already-normalised
++    matrix so the engine can use a plain matrix product.
++    """
++    w = linear.weight.detach().cpu().numpy()
++    instructions = getattr(linear, "instructions", None)
++    if instructions is not None and len(instructions) == 1:
++        # e3nn stores the weight as (in_dim, out_dim) per path; the forward
++        # normalises each path by 1/sqrt(in_dim), not by the total irreps.
++        in_dim, out_dim = instructions[0].path_shape
++        w = w.reshape(in_dim, out_dim).T
++        mul_in = in_dim
++    else:
++        mul_out = linear.irreps_out.num_irreps
++        mul_in = linear.irreps_in.num_irreps
++        if w.ndim == 1:
++            w = w.reshape(mul_out, mul_in)
++    w = w / np.sqrt(mul_in)
++    bias = linear.bias.detach().cpu().numpy() if linear.bias.numel() else None
++    return w.astype(np.float32), (None if bias is None else bias.astype(np.float32))
++
++
++def _activation_spec(module):
++    """Describe the MACE normalise2mom activation: cst * silu(x)."""
++    acts = getattr(module, "acts", None)
++    if acts is None or len(acts) == 0:
++        return {"activation": type(module).__name__.lower(), "scale": 1.0}
++    a = acts[0]
++    cst = float(getattr(a, "cst", 1.0))
++    fn = getattr(a, "f", None)
++    name = "silu"
++    if fn is not None:
++        try:
++            probe = float(fn(torch.tensor(0.5, dtype=torch.float64)))
++            if abs(probe - 0.5 / (1 + np.exp(-0.5))) < 1e-9:
++                name = "silu"
++        except Exception:
++            pass
++    return {"activation": name, "scale": cst,
++            "normalization": type(a).__name__}
++
++
++def _fusion_basis(model):
++    """Channel-mixing matrix that the compact exporter folds into readout 1.
++
++    The compact Symmetrix H1 basis is the fused basis of the second
++    interaction's ``linear_up``.  The stock extractor converts the linear
++    energy readout with ``inv(weights_to_fuse[0])``; the LES linear readout
++    must be converted the same way.  The nonlinear readout consumes H2 and is
++    left in the raw basis.
++    """
++    irreps = model.les_readouts[0].linear.irreps_in
++    # The linear readout only uses the 0e block; take its multiplicity.
++    channels = None
++    for mul, ir in irreps:
++        if ir.l == 0 and ir.p == 1:
++            channels = int(mul)
++            break
++    if channels is None:
++        channels = int(irreps.num_irreps)
++    up = model.interactions[1].linear_up.weight.detach().cpu().numpy()
++    up = up / np.sqrt(channels)
++    n_blocks = up.size // (channels * channels)
++    wf = up.reshape(n_blocks, channels, channels)
++    return np.linalg.inv(wf[0])
++
++
++def latent_ewald_section(model):
++    les = model.les
++    fusion = _fusion_basis(model)
++    readouts = []
++    for i, readout in enumerate(model.les_readouts):
++        entry = {"input_layer": i}
++        if hasattr(readout, "linear"):
++            w, b = _dense(readout.linear)
++            # H1 in the compact engine is fused: apply the same basis change
++            # the stock exporter applies to readout_1_weights.
++            w = fusion @ w.reshape(-1)
++            entry.update({"kind": "linear", "weight": w.tolist(),
++                          "bias": None if b is None else b.tolist()})
++        elif hasattr(readout, "linear_1") and hasattr(readout, "linear_2"):
++            w1, b1 = _dense(readout.linear_1)
++            w2, b2 = _dense(readout.linear_2)
++            entry.update({
++                "kind": "mlp",
++                **_activation_spec(readout.non_linearity),
++                "w1": w1.tolist(), "b1": None if b1 is None else b1.tolist(),
++                "w2": w2.tolist(), "b2": None if b2 is None else b2.tolist(),
++            })
++        else:
++            raise RuntimeError(f"unsupported LES readout {type(readout).__name__}")
++        readouts.append(entry)
++    return {
++        "combine": "sum_over_readouts_times_output_scale",
++        "output_scale": float(getattr(model, "les_output_scale", 1.0)),
++        "sigma_A": float(les.sigma),
++        "dl_A": float(les.dl),
++        "norm_factor": float(les.ewald.norm_factor),
++        "remove_self_interaction": bool(les.ewald.remove_self_interaction),
++        # Les.remove_mean only affects the BEC head; the Ewald energy in the
++        # reference does not subtract the mean charge.
++        "remove_mean": False,
++        "bec_remove_mean": bool(les.remove_mean),
++        "use_epsilon_r_scaling": bool(getattr(les, "use_epsilon_r_scaling", False)),
++        "epsilon_factor": float(getattr(les, "epsilon_factor", 1.0)),
++        "use_atomwise": bool(getattr(les, "use_atomwise", False)),
++        "readouts": readouts,
++    }
++
++
++def extract_maceles_data(model_path, species=None, head=None,
++                         num_spline_points=256, radial_format="compact"):
++    base = extract_mace_data(model_path, species=species, head=head,
++                             num_spline_points=num_spline_points,
++                             radial_format=radial_format)
++    model = torch.load(model_path, map_location="cpu", weights_only=False)
++    if type(model).__name__ != "MACELES":
++        raise RuntimeError(f"not a MACELES checkpoint: {type(model).__name__}")
++    base["model_type"] = "MACE_LES"
++    les = latent_ewald_section(model)
++    base["latent_ewald"] = les
++    base["les_num_readouts"] = len(model.les_readouts)
++    base["les_keep_last_layer_irreps"] = True
++
++    # Flat keys for the native MACEKokkos parser (same layout as the MACE
++    # energy readouts: linear weights + 2-layer MLP + scale factor).
++    r0, r1 = les["readouts"]
++    base["les_output_scale"] = les["output_scale"]
++    base["les_sigma_A"] = les["sigma_A"]
++    base["les_dl_A"] = les["dl_A"]
++    base["les_norm_factor"] = les["norm_factor"]
++    base["les_remove_self_interaction"] = les["remove_self_interaction"]
++    base["les_remove_mean"] = les["remove_mean"]
++    base["les_readout_1_weights"] = list(np.asarray(r0["weight"]).reshape(-1))
++    base["les_readout_2_weights_1"] = list(np.asarray(r1["w1"]).reshape(-1))
++    base["les_readout_2_weights_2"] = list(np.asarray(r1["w2"]).reshape(-1))
++    base["les_readout_2_scale_factor"] = float(r1["scale"])
++    base["les_readout_2_hidden_size"] = int(np.asarray(r1["w1"]).shape[0])
++    base["les_activation"] = r1["activation"]
++    base["les_activation_normalization"] = r1.get("normalization", "")
++    return base
++
++
++def main(argv=None):
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--model", "-m", required=True)
++    ap.add_argument("--output", "-o", required=True)
++    ap.add_argument("--chemical-symbols", "-s", nargs="+", default=None)
++    ap.add_argument("--head", "-H", default=None)
++    ap.add_argument("--num-spline-points", type=int, default=256)
++    ap.add_argument("--radial-format", default="compact",
++                    choices=["compact", "original"])
++    args = ap.parse_args(argv)
++
++    data = extract_maceles_data(
++        args.model, species=args.chemical_symbols, head=args.head,
++        num_spline_points=args.num_spline_points,
++        radial_format=args.radial_format)
++    with open(args.output, "w") as fh:
++        if args.radial_format == "compact":
++            json.dump(data, fh, separators=(",", ":"))
++        else:
++            json.dump(data, fh, indent=4)
++        fh.write("\n")
++    print(f"wrote {args.output}: model_type={data['model_type']} "
++          f"readouts={len(data['latent_ewald']['readouts'])}")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+-- 
+2.34.1
+

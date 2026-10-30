@@ -1,0 +1,2439 @@
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <exception>
+#include <fstream>
+#include <limits>
+#include <numbers>
+#include <numeric>
+#include <set>
+#include <span>
+#include <stdexcept>
+#include <string_view>
+#include <thread>
+#include <type_traits>
+#include <vector>
+
+// TODO: remove some of these headers?
+#include "KokkosBatched_Util.hpp"
+#include "KokkosBlas.hpp"
+#include "KokkosBatched_Gemm_Decl.hpp"
+#include "KokkosBlas_tpl_spec.hpp"
+#if defined(KOKKOS_ENABLE_HIP) \
+    && defined(KOKKOSKERNELS_ENABLE_TPL_ROCBLAS)
+#include <rocblas/rocblas.h>
+#endif
+#include "nlohmann/json.hpp"
+#include "sphericart.hpp"
+#include "sphericart_cuda.hpp"
+#include "spherical_harmonic_device.hpp"
+
+#include "tools_kokkos.hpp"
+#include "mace_kokkos.hpp"
+#ifdef SYMMETRIX_ENABLE_METAL
+#include "metal_m0_module.hpp"
+#include "metal_r1_module.hpp"
+#include "metal_view_registry.hpp"
+#endif
+#include "cblas.hpp"
+#include "device_backend.hpp"
+#include "factorized_blas.hpp"
+#include "host_batched_readout.hpp"
+#include "host_dense_kernels.hpp"
+#include "standard_m1.hpp"
+#include "host_worker_blas.hpp"
+#include "mace_kokkos_factorized_blas_detail.hpp"
+
+using Kokkos::ALL;
+using Kokkos::LayoutRight;
+using Kokkos::make_pair;
+using Kokkos::MemoryUnmanaged;
+using Kokkos::parallel_for;
+using Kokkos::PerTeam;
+using Kokkos::subview;
+using Kokkos::TeamPolicy;
+using Kokkos::TeamVectorRange;
+using Kokkos::TeamVectorMDRange;
+using Kokkos::View;
+
+namespace {
+
+constexpr int host_h2_blas_max_channels = 1024;
+
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::ensure_a1_blas_flatten_capacity(
+    const std::size_t input_elements,
+    const std::size_t output_elements)
+{
+    if (A1_blas_flatten_input.extent(0) >= input_elements
+        && A1_blas_flatten_output.extent(0) >= output_elements)
+        return;
+    factorized_execution_space.fence("Replace A1 flattened BLAS workspace");
+    if (A1_blas_flatten_input.extent(0) < input_elements)
+        A1_blas_flatten_input = decltype(A1_blas_flatten_input)(
+            Kokkos::view_alloc(
+                "A1 flattened BLAS input", Kokkos::WithoutInitializing),
+            input_elements);
+    if (A1_blas_flatten_output.extent(0) < output_elements)
+        A1_blas_flatten_output = decltype(A1_blas_flatten_output)(
+            Kokkos::view_alloc(
+                "A1 flattened BLAS output", Kokkos::WithoutInitializing),
+            output_elements);
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::compute_A1(
+    int num_nodes,
+    const bool completion_fence)
+{
+    // The core matrix multiplication is:
+    //         [A1_il]_mk = \sum_(ek') [Phi1_il]_m(ek') [W_il]_(ek')k
+    ensure_mh0_a1_forward_capacity(num_nodes);
+#ifdef SYMMETRIX_ENABLE_METAL
+    if constexpr (std::is_same_v<Precision, float>) {
+        symmetrix::execution::metal::MetalA1Layout layout;
+        if (metal_r1_module && metal_a1_layout(&layout)
+                && A1.extent(0) >= static_cast<std::size_t>(num_nodes)
+                && A1.span_is_contiguous() && Phi1.span_is_contiguous()) {
+            factorized_execution_space.fence();
+            metal_views->map(Phi1);
+            metal_views->map(A1);
+            if (metal_r1_module->a1_forward(
+                    Phi1.data(), static_cast<std::size_t>(num_nodes),
+                    layout, A1.data()))
+                return;
+        }
+    }
+#endif
+
+    const auto l_max = this->l_max;
+    const auto num_channels = this->num_channels;
+    const auto Phi1_l = this->Phi1_l;
+    const auto Phi1 = this->Phi1;
+    auto A1_weights = this->A1_weights;
+    auto A1 = this->A1;
+    const Precision* const phi1_data = Phi1.data();
+    Precision* const a1_data = A1.data();
+    const std::size_t phi1_channels = Phi1.extent(2);
+    const std::size_t a1_channels = A1.extent(2);
+    const std::size_t phi1_row_stride = static_cast<std::size_t>(
+        Phi1.extent(1))*phi1_channels;
+    const std::size_t a1_row_stride = static_cast<std::size_t>(
+        A1.extent(1))*a1_channels;
+    const auto inverse_scale = A1_inverse_scale;
+    const bool scale_factors_ready = a1_scale_factors_ready;
+
+    // These small fixed-l host contractions need no packing before BLAS.
+    if constexpr (std::is_same_v<
+            typename Kokkos::DefaultExecutionSpace::memory_space,
+            Kokkos::HostSpace>) {
+        if (symmetrix::host_worker_cblas_enabled()
+                && !symmetrix::host_dense_backend_overrides_cblas()) {
+            Kokkos::parallel_for(
+                "Compute A1 host BLAS",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace,
+                    Kokkos::IndexType<std::size_t>>(
+                    factorized_execution_space, 0,
+                    static_cast<std::size_t>(num_nodes)*(l_max+1)),
+                [=] (const std::size_t owner) {
+                    const std::size_t node = owner/(l_max+1);
+                    const int l = owner%(l_max+1);
+                    int lme = 0;
+                    int num_eta = 0;
+                    for (int p=0; p<Phi1_l.size(); ++p) {
+                        const int ll = Phi1_l(p);
+                        if (ll < l)
+                            lme += 2*ll+1;
+                        if (ll == l)
+                            ++num_eta;
+                    }
+                    const int component_count = 2*l+1;
+                    const int input_count = num_eta*num_channels;
+                    const auto weights = A1_weights(l);
+                    symmetrix_blas_gemm<Precision>(
+                        CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                        component_count, num_channels, input_count,
+                        Precision(1), phi1_data + node*phi1_row_stride
+                            +static_cast<std::size_t>(lme)*phi1_channels,
+                        input_count,
+                        weights.data(), num_channels,
+                        Precision(0), a1_data + node*a1_row_stride
+                            +static_cast<std::size_t>(l*l)*a1_channels,
+                        num_channels);
+                });
+            if (completion_fence)
+                factorized_execution_space.fence("Compute A1 completion");
+            return;
+        }
+        if (symmetrix::host_flat_dense_enabled()) {
+            Kokkos::parallel_for(
+                "Compute A1 flat",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace,
+                    Kokkos::IndexType<std::size_t>>(
+                    factorized_execution_space, 0,
+                    static_cast<std::size_t>(num_nodes)*(l_max+1)),
+                [=] (const std::size_t owner) {
+                    const std::size_t node = owner/(l_max+1);
+                    const int l = owner%(l_max+1);
+                    int lme = 0;
+                    int num_eta = 0;
+                    for (int p=0; p<Phi1_l.size(); ++p) {
+                        const int ll = Phi1_l(p);
+                        if (ll < l)
+                            lme += 2*ll+1;
+                        if (ll == l)
+                            ++num_eta;
+                    }
+                    const auto weights = A1_weights(l);
+                    symmetrix::host_dense_gemm_nn(
+                        phi1_data + node*phi1_row_stride
+                            +static_cast<std::size_t>(lme)*phi1_channels,
+                        weights.data(),
+                        a1_data + node*a1_row_stride
+                            +static_cast<std::size_t>(l*l)*a1_channels,
+                        2*l+1,
+                        num_eta*num_channels, num_channels);
+                });
+            if (completion_fence)
+                factorized_execution_space.fence("Compute A1 completion");
+            return;
+        }
+    }
+
+#if (defined(KOKKOS_ENABLE_CUDA) \
+        && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS)) \
+    || (defined(KOKKOS_ENABLE_HIP) \
+        && defined(KOKKOSKERNELS_ENABLE_TPL_ROCBLAS))
+    // Each l block has the same shape for every node.  Batch the complete
+    // node dimension in one cuBLAS/rocBLAS launch, with the shared weight matrix
+    // represented by a zero batch stride.  Set SYMMETRIX_A1_CUBLAS=0, false,
+    // or off to select the TeamGEMM path for diagnostics.
+    if (execution_a1_blas_enabled()) {
+        // Packing uses the factorized stream.  The unprepared path can build
+        // Phi1 on the default stream, so keep its existing node-batched BLAS
+        // implementation to avoid crossing an asynchronous stream boundary.
+        if (execution_a1_flatten_enabled()
+            && use_factorized_async_inference()
+            && factorized_prepared_graph_count != 0
+            && num_nodes >= a1_blas_flatten_min_nodes) {
+            const int tile_nodes = std::min(
+                num_nodes, a1_blas_flatten_tile_nodes);
+            int max_components = 0;
+            int max_input_columns = 0;
+            for (int l=0; l<=l_max; ++l) {
+                const auto weights = A1_weights(l);
+                max_components = std::max(max_components, 2*l+1);
+                max_input_columns = std::max(
+                    max_input_columns,
+                    weights.extent_int(0));
+            }
+            ensure_a1_blas_flatten_capacity(
+                static_cast<std::size_t>(tile_nodes)
+                    *max_components*max_input_columns,
+                static_cast<std::size_t>(tile_nodes)
+                    *max_components*num_channels);
+            const auto flatten_input = A1_blas_flatten_input;
+            const auto flatten_output = A1_blas_flatten_output;
+            // CudaSpace uses a 32-bit View size_type.  The node-major tensor
+            // row offset exceeds 4 GiB for large cells, so use explicit
+            // 64-bit pointer arithmetic in this staging path.
+            const Precision* phi1_data = Phi1.data();
+            const std::size_t phi1_channels = Phi1.extent(2);
+            const std::size_t phi1_row_stride = static_cast<std::size_t>(
+                Phi1.extent(1))*phi1_channels;
+            Precision* a1_data = A1.data();
+            const std::size_t a1_channels = A1.extent(2);
+            const std::size_t a1_row_stride = static_cast<std::size_t>(
+                A1.extent(1))*a1_channels;
+            int lme = 0;
+            for (int l=0; l<=l_max; ++l) {
+                const auto weights = A1_weights(l);
+                const int components = 2*l+1;
+                const int input_columns = weights.extent_int(0);
+                for (int node_begin=0; node_begin<num_nodes;
+                     node_begin += tile_nodes) {
+                    const int node_count = std::min(
+                        tile_nodes, num_nodes-node_begin);
+                    const std::size_t input_size = static_cast<std::size_t>(
+                        node_count)*components*input_columns;
+                    Kokkos::parallel_for(
+                        "Pack A1 forward BLAS",
+                        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace,
+                            Kokkos::IndexType<std::size_t>>(
+                            factorized_execution_space, 0, input_size),
+                        KOKKOS_LAMBDA (const std::size_t index) {
+                            const std::size_t row = index/input_columns;
+                            const int node = static_cast<int>(row/components);
+                            const int component = static_cast<int>(
+                                row%components);
+                            const int eta = static_cast<int>(
+                                (index%input_columns)/num_channels);
+                            const int channel = static_cast<int>(
+                                index%num_channels);
+                            const std::size_t phi1_node =
+                                static_cast<std::size_t>(node_begin)
+                                +static_cast<std::size_t>(node);
+                            const std::size_t phi1_column =
+                                static_cast<std::size_t>(lme)
+                                +static_cast<std::size_t>(component)
+                                    * static_cast<std::size_t>(
+                                        input_columns/num_channels)
+                                +static_cast<std::size_t>(eta);
+                            const Precision value = phi1_data[
+                                phi1_node*phi1_row_stride
+                                +phi1_column*phi1_channels
+                                +static_cast<std::size_t>(channel)];
+                            flatten_input(index) = scale_factors_ready
+                                ? static_cast<Precision>(
+                                    value*inverse_scale(node_begin+node))
+                                : value;
+                        });
+                    const int rows = node_count*components;
+                    launch_execution_row_major_strided_batched_gemm(
+                        *factorized_blas_context, factorized_execution_space,
+                        flatten_input.data(), weights.data(),
+                        flatten_output.data(), rows, input_columns,
+                        num_channels, 0, 0, 0, 1,
+                        "A1 forward flattened BLAS");
+                    const std::size_t output_size = static_cast<std::size_t>(
+                        rows)*num_channels;
+                    Kokkos::parallel_for(
+                        "Unpack A1 forward BLAS",
+                        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace,
+                            Kokkos::IndexType<std::size_t>>(
+                            factorized_execution_space, 0, output_size),
+                        KOKKOS_LAMBDA (const std::size_t index) {
+                            const std::size_t row = index/num_channels;
+                            const int node = static_cast<int>(row/components);
+                            const int component = static_cast<int>(
+                                row%components);
+                            const std::size_t a1_node =
+                                static_cast<std::size_t>(node_begin)
+                                +static_cast<std::size_t>(node);
+                            const std::size_t a1_column =
+                                static_cast<std::size_t>(l*l+component);
+                            a1_data[
+                                a1_node*a1_row_stride
+                                +a1_column*a1_channels
+                                +index%static_cast<std::size_t>(num_channels)] =
+                                flatten_output(index);
+                        });
+                }
+                lme += components*(input_columns/num_channels);
+            }
+            if (completion_fence)
+                factorized_execution_space.fence(
+                    "Compute A1 flattened BLAS completion");
+            return;
+        }
+        int lme = 0;
+        for (int l=0; l<=l_max; ++l) {
+            const auto weights = A1_weights(l);
+            const int num_eta = weights.extent_int(0)/num_channels;
+            launch_execution_row_major_strided_batched_gemm(
+                *factorized_blas_context, factorized_execution_space,
+                Phi1.data()+static_cast<std::size_t>(lme)*num_channels,
+                weights.data(),
+                A1.data()+static_cast<std::size_t>(l*l)*num_channels,
+                2*l+1, num_eta*num_channels, num_channels,
+                static_cast<std::int64_t>(num_lme)*num_channels,
+                0,
+                static_cast<std::int64_t>(num_lm)*num_channels,
+                num_nodes, "A1 forward batched BLAS");
+            lme += (2*l+1)*num_eta;
+        }
+        if (completion_fence)
+            factorized_execution_space.fence("Compute A1 batched BLAS completion");
+        return;
+    }
+#endif
+
+    Kokkos::parallel_for("Compute A1",
+        Kokkos::TeamPolicy<>(
+            factorized_execution_space,
+            num_nodes*(l_max+1), Kokkos::AUTO),
+        KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
+            const std::size_t node = static_cast<std::size_t>(
+                team_member.league_rank()/(l_max+1));
+            const int l = team_member.league_rank() % (l_max+1);
+            int lme = 0;
+            int num_eta = 0;
+            for (int p=0; p<Phi1_l.size(); ++p) {
+                const int ll = Phi1_l(p);
+                if (ll < l)
+                    lme += 2*ll+1;
+                if (ll == l)
+                    num_eta += 1;
+            }
+            // LayoutStride makes the wide row offset explicit for Kokkos 5's
+            // mdspan-backed unmanaged views.
+            auto Phi1_il = Kokkos::View<const Precision**,Kokkos::LayoutStride,Kokkos::MemoryUnmanaged>(
+                phi1_data + node*phi1_row_stride
+                    +static_cast<std::size_t>(lme)*phi1_channels,
+                Kokkos::LayoutStride(2*l+1, num_eta*num_channels,
+                    num_eta*num_channels, 1));
+            auto A1_il = Kokkos::View<
+                Precision**,Kokkos::LayoutStride,Kokkos::MemoryUnmanaged>(
+                    a1_data + node*a1_row_stride
+                        +static_cast<std::size_t>(l*l)*a1_channels,
+                    Kokkos::LayoutStride(2*l+1, num_channels,
+                        num_channels, 1));
+            KokkosBatched::TeamGemm<Kokkos::TeamPolicy<>::member_type,
+                                    KokkosBatched::Trans::NoTranspose,
+                                    KokkosBatched::Trans::NoTranspose,
+                                    KokkosBatched::Algo::Gemm::Blocked>
+                ::invoke(team_member, 1.0, Phi1_il, A1_weights(l), 0.0, A1_il);
+        });
+    if (completion_fence)
+        factorized_execution_space.fence("Compute A1 completion");
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::compute_A1_channel_tile(
+    const int num_nodes,
+    const int channel_begin)
+{
+    const int channel_count = std::min(
+        phi1_channel_tile_size, num_channels-channel_begin);
+    if (channel_begin < 0 || channel_count <= 0
+        || channel_begin%phi1_channel_tile_size != 0
+        || Phi1.extent_int(0) < num_nodes
+        || Phi1.extent_int(1) != num_lme
+        || Phi1.extent_int(2) != channel_count)
+        throw std::logic_error("Invalid forward Phi1 channel tile.");
+    ensure_mh0_a1_forward_capacity(num_nodes);
+
+    const auto l_max = this->l_max;
+    const auto Phi1_l = this->Phi1_l;
+    const auto Phi1 = this->Phi1;
+    const auto tile_weights = this->A1_channel_tile_weights;
+    auto A1 = this->A1;
+    const Precision* const phi1_data = Phi1.data();
+    Precision* const a1_data = A1.data();
+    const std::size_t phi1_channels = Phi1.extent(2);
+    const std::size_t a1_channels = A1.extent(2);
+    const std::size_t phi1_row_stride = static_cast<std::size_t>(
+        Phi1.extent(1))*phi1_channels;
+    const std::size_t a1_row_stride = static_cast<std::size_t>(
+        A1.extent(1))*a1_channels;
+    const int phase = channel_begin/phi1_channel_tile_size;
+    const Precision beta = channel_begin == 0 ? Precision(0) : Precision(1);
+    Kokkos::parallel_for(
+        "Compute A1 channel tile",
+        Kokkos::TeamPolicy<>(
+            factorized_execution_space,
+            num_nodes*(l_max+1), Kokkos::AUTO),
+        KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
+            const std::size_t node = static_cast<std::size_t>(
+                team_member.league_rank()/(l_max+1));
+            const int l = team_member.league_rank()%(l_max+1);
+            int lme = 0;
+            int num_eta = 0;
+            for (int p=0; p<Phi1_l.size(); ++p) {
+                const int ll = Phi1_l(p);
+                if (ll < l)
+                    lme += 2*ll+1;
+                if (ll == l)
+                    ++num_eta;
+            }
+            auto Phi1_il = Kokkos::View<
+                const Precision**,Kokkos::LayoutStride,Kokkos::MemoryUnmanaged>(
+                    phi1_data + node*phi1_row_stride
+                        +static_cast<std::size_t>(lme)*phi1_channels,
+                    Kokkos::LayoutStride(2*l+1, num_eta*channel_count,
+                        num_eta*channel_count, 1));
+            auto A1_il = Kokkos::View<
+                Precision**,Kokkos::LayoutStride,Kokkos::MemoryUnmanaged>(
+                    a1_data + node*a1_row_stride
+                        +static_cast<std::size_t>(l*l)*a1_channels,
+                    Kokkos::LayoutStride(2*l+1, num_channels,
+                        num_channels, 1));
+            const auto weights = tile_weights(phase*(l_max+1)+l);
+            KokkosBatched::TeamGemm<
+                Kokkos::TeamPolicy<>::member_type,
+                KokkosBatched::Trans::NoTranspose,
+                KokkosBatched::Trans::NoTranspose,
+                KokkosBatched::Algo::Gemm::Blocked>::invoke(
+                    team_member, Precision(1), Phi1_il, weights, beta, A1_il);
+        });
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::reverse_A1(
+    int num_nodes,
+    const bool completion_fence)
+{
+    reverse_A1_from(num_nodes, A1_adj, completion_fence);
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::reverse_A1_channel_tile(
+    const int num_nodes,
+    const int channel_begin)
+{
+    const int channel_count = std::min(
+        phi1_channel_tile_size, num_channels-channel_begin);
+    if (channel_begin < 0 || channel_count <= 0
+        || channel_begin%phi1_channel_tile_size != 0
+        || Phi1.extent_int(0) < num_nodes
+        || Phi1.extent_int(1) != num_lme
+        || Phi1.extent_int(2) != channel_count)
+        throw std::logic_error("Invalid reverse Phi1 channel tile.");
+
+    const auto l_max = this->l_max;
+    const auto Phi1_l = this->Phi1_l;
+    auto Phi1 = this->Phi1;
+    const auto tile_weights_trans = this->A1_channel_tile_weights_trans;
+    const auto A1_adj = this->A1_adj;
+    const Precision* const a1_adj_data = A1_adj.data();
+    Precision* const phi1_data = Phi1.data();
+    const std::size_t a1_adj_channels = A1_adj.extent(2);
+    const std::size_t phi1_channels = Phi1.extent(2);
+    const std::size_t a1_adj_row_stride = static_cast<std::size_t>(
+        A1_adj.extent(1))*a1_adj_channels;
+    const std::size_t phi1_row_stride = static_cast<std::size_t>(
+        Phi1.extent(1))*phi1_channels;
+    const int phase = channel_begin/phi1_channel_tile_size;
+    Kokkos::parallel_for(
+        "Reverse A1 channel tile",
+        Kokkos::TeamPolicy<>(
+            factorized_execution_space,
+            num_nodes*(l_max+1), Kokkos::AUTO),
+        KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
+            const std::size_t node = static_cast<std::size_t>(
+                team_member.league_rank()/(l_max+1));
+            const int l = team_member.league_rank()%(l_max+1);
+            int lme = 0;
+            int num_eta = 0;
+            for (int p=0; p<Phi1_l.size(); ++p) {
+                const int ll = Phi1_l(p);
+                if (ll < l)
+                    lme += 2*ll+1;
+                if (ll == l)
+                    ++num_eta;
+            }
+            auto dA1_il = Kokkos::View<
+                const Precision**,Kokkos::LayoutStride,Kokkos::MemoryUnmanaged>(
+                    a1_adj_data + node*a1_adj_row_stride
+                        +static_cast<std::size_t>(l*l)*a1_adj_channels,
+                    Kokkos::LayoutStride(2*l+1, num_channels,
+                        num_channels, 1));
+            auto dPhi1_il = Kokkos::View<
+                Precision**,Kokkos::LayoutStride,Kokkos::MemoryUnmanaged>(
+                    phi1_data + node*phi1_row_stride
+                        +static_cast<std::size_t>(lme)*phi1_channels,
+                    Kokkos::LayoutStride(2*l+1, num_eta*channel_count,
+                        num_eta*channel_count, 1));
+            const auto weights =
+                tile_weights_trans(phase*(l_max+1)+l);
+            KokkosBatched::TeamGemm<
+                Kokkos::TeamPolicy<>::member_type,
+                KokkosBatched::Trans::NoTranspose,
+                KokkosBatched::Trans::NoTranspose,
+                KokkosBatched::Algo::Gemm::Blocked>::invoke(
+                    team_member, Precision(1), dA1_il, weights,
+                    Precision(0), dPhi1_il);
+        });
+}
+
+template <typename Precision>
+bool MACEKokkos<Precision>::metal_a1_layout(void* destination) const
+{
+#ifdef SYMMETRIX_ENABLE_METAL
+    if constexpr (!std::is_same_v<Precision, float>) {
+        (void)destination;
+        return false;
+    } else {
+    auto& layout =
+        *static_cast<symmetrix::execution::metal::MetalA1Layout*>(destination);
+    if (l_max < 0 || l_max > 3 || A1_weights.extent_int(0) < l_max+1
+            || A1_weights_trans.extent_int(0) < l_max+1
+            || Phi1.extent_int(1) != num_lme)
+        return false;
+    layout = {};
+    layout.l_max = l_max;
+    layout.num_lme = num_lme;
+    layout.num_lm = num_lm;
+    int rows = 0;
+    for (int l=0; l<=l_max; ++l) {
+        for (std::size_t p=0; p<Phi1_l.extent(0); ++p) {
+            if (Phi1_l(p) < l)
+                layout.lme[l] += 2*Phi1_l(p)+1;
+            if (Phi1_l(p) == l)
+                ++layout.eta[l];
+        }
+        rows += (2*l+1)*layout.eta[l];
+        const std::size_t inputs =
+            static_cast<std::size_t>(layout.eta[l])*num_channels;
+        if (inputs == 0)
+            continue;
+        const auto& weights = A1_weights(l);
+        const auto& weights_trans = A1_weights_trans(l);
+        if (weights.extent(0) != inputs
+                || weights.extent_int(1) != num_channels
+                || weights_trans.extent_int(0) != num_channels
+                || weights_trans.extent(1) != inputs
+                || !weights.span_is_contiguous()
+                || !weights_trans.span_is_contiguous())
+            return false;
+        layout.weights[l] = weights.data();
+        layout.weights_trans[l] = weights_trans.data();
+    }
+    return rows == num_lme;
+    }
+#else
+    (void)destination;
+    return false;
+#endif
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::reverse_A1_from(
+    int num_nodes,
+    Kokkos::View<const Precision***,Kokkos::LayoutRight> output_adjoint,
+    const bool completion_fence)
+{
+    // The core matrix multiplication is:
+    //         [dE/dPhi1_il]_m(ek) = \sum_k' [dE/dA1_il]_mk' [trans(W_il)]_k'(ek)
+    if (use_mh0_adjoint_reuse())
+        dPhi1 = Phi1;
+    else if (dPhi1.data() != nullptr && dPhi1.data() == Phi1.data())
+        dPhi1 = decltype(dPhi1)();
+    if (dPhi1.extent(0) < static_cast<std::size_t>(num_nodes)
+        || dPhi1.extent_int(1) != num_lme
+        || dPhi1.extent_int(2) != num_channels)
+        Kokkos::realloc(dPhi1, num_nodes, num_lme, num_channels);
+
+#ifdef SYMMETRIX_ENABLE_METAL
+    if constexpr (std::is_same_v<Precision, float>) {
+        symmetrix::execution::metal::MetalA1Layout layout;
+        if (metal_r1_module && metal_a1_layout(&layout)
+                && output_adjoint.span_is_contiguous()
+                && output_adjoint.extent_int(1) == num_lm
+                && dPhi1.span_is_contiguous()) {
+            factorized_execution_space.fence();
+            metal_views->map(output_adjoint);
+            metal_views->map(dPhi1);
+            metal_r1_module->a1_reverse(
+                static_cast<std::size_t>(num_nodes), dPhi1.extent(0), layout,
+                output_adjoint.data(), dPhi1.data());
+            return;
+        }
+    }
+#endif
+    const auto l_max = this->l_max;
+    const auto num_channels = this->num_channels;
+    const auto Phi1_l = this->Phi1_l;
+    const auto A1_weights_trans = this->A1_weights_trans;
+    auto dPhi1 = this->dPhi1;
+    const Precision* const output_adjoint_data_base = output_adjoint.data();
+    Precision* const dphi1_data_base = dPhi1.data();
+    const std::size_t output_adjoint_channels = output_adjoint.extent(2);
+    const std::size_t dphi1_channels = dPhi1.extent(2);
+    const std::size_t output_adjoint_row_stride = static_cast<std::size_t>(
+        output_adjoint.extent(1))*output_adjoint_channels;
+    const std::size_t dphi1_row_stride = static_cast<std::size_t>(
+        dPhi1.extent(1))*dphi1_channels;
+
+    // Keep device execution on the backend-portable batched team kernel.
+    if constexpr (std::is_same_v<
+            typename Kokkos::DefaultExecutionSpace::memory_space,
+            Kokkos::HostSpace>) {
+        if (symmetrix::host_worker_cblas_enabled()
+                && !symmetrix::host_dense_backend_overrides_cblas()) {
+            Kokkos::parallel_for(
+                "Reverse A1 host BLAS",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace,
+                    Kokkos::IndexType<std::size_t>>(
+                    factorized_execution_space, 0,
+                    static_cast<std::size_t>(num_nodes)*(l_max+1)),
+                [=] (const std::size_t owner) {
+                    const std::size_t node = owner/(l_max+1);
+                    const int l = owner%(l_max+1);
+                    int lme = 0;
+                    int num_eta = 0;
+                    for (int p=0; p<Phi1_l.size(); ++p) {
+                        const int ll = Phi1_l(p);
+                        if (ll < l)
+                            lme += 2*ll+1;
+                        if (ll == l)
+                            ++num_eta;
+                    }
+                    const int component_count = 2*l+1;
+                    const int output_count = num_eta*num_channels;
+                    const auto weights = A1_weights_trans(l);
+                    symmetrix_blas_gemm<Precision>(
+                        CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                        component_count, output_count, num_channels,
+                        Precision(1), output_adjoint_data_base
+                            +node*output_adjoint_row_stride
+                            +static_cast<std::size_t>(l*l)*output_adjoint_channels,
+                        num_channels,
+                        weights.data(), output_count,
+                        Precision(0), dphi1_data_base + node*dphi1_row_stride
+                            +static_cast<std::size_t>(lme)*dphi1_channels,
+                        output_count);
+                });
+            if (completion_fence)
+                factorized_execution_space.fence("Reverse A1 completion");
+            return;
+        }
+        if (symmetrix::host_flat_dense_enabled()) {
+            Kokkos::parallel_for(
+                "Reverse A1 flat",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace,
+                    Kokkos::IndexType<std::size_t>>(
+                    factorized_execution_space, 0,
+                    static_cast<std::size_t>(num_nodes)*(l_max+1)),
+                [=] (const std::size_t owner) {
+                    const std::size_t node = owner/(l_max+1);
+                    const int l = owner%(l_max+1);
+                    int lme = 0;
+                    int num_eta = 0;
+                    for (int p=0; p<Phi1_l.size(); ++p) {
+                        const int ll = Phi1_l(p);
+                        if (ll < l)
+                            lme += 2*ll+1;
+                        if (ll == l)
+                            ++num_eta;
+                    }
+                    const auto weights = A1_weights_trans(l);
+                    symmetrix::host_dense_gemm_nn(
+                        output_adjoint_data_base + node*output_adjoint_row_stride
+                            +static_cast<std::size_t>(l*l)*output_adjoint_channels,
+                        weights.data(),
+                        dphi1_data_base + node*dphi1_row_stride
+                            +static_cast<std::size_t>(lme)*dphi1_channels,
+                        2*l+1,
+                        num_channels, num_eta*num_channels);
+                });
+            if (completion_fence)
+                factorized_execution_space.fence("Reverse A1 completion");
+            return;
+        }
+    }
+
+#if (defined(KOKKOS_ENABLE_CUDA) \
+        && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS)) \
+    || (defined(KOKKOS_ENABLE_HIP) \
+        && defined(KOKKOSKERNELS_ENABLE_TPL_ROCBLAS))
+    if (execution_a1_blas_enabled()) {
+        if (execution_a1_flatten_enabled()
+            && use_factorized_async_inference()
+            && factorized_prepared_graph_count != 0
+            && num_nodes >= a1_blas_flatten_min_nodes) {
+            const int tile_nodes = std::min(
+                num_nodes, a1_blas_flatten_tile_nodes);
+            int max_components = 0;
+            int max_output_columns = 0;
+            for (int l=0; l<=l_max; ++l) {
+                const auto weights = A1_weights_trans(l);
+                max_components = std::max(max_components, 2*l+1);
+                max_output_columns = std::max(
+                    max_output_columns, weights.extent_int(1));
+            }
+            ensure_a1_blas_flatten_capacity(
+                static_cast<std::size_t>(tile_nodes)
+                    *max_components*num_channels,
+                static_cast<std::size_t>(tile_nodes)
+                    *max_components*max_output_columns);
+            const auto flatten_input = A1_blas_flatten_input;
+            const auto flatten_output = A1_blas_flatten_output;
+            const Precision* output_adjoint_data = output_adjoint.data();
+            const std::size_t output_adjoint_channels = output_adjoint.extent(2);
+            const std::size_t output_adjoint_row_stride = static_cast<std::size_t>(
+                output_adjoint.extent(1))*output_adjoint_channels;
+            Precision* dphi1_data = dPhi1.data();
+            const std::size_t dphi1_channels = dPhi1.extent(2);
+            const std::size_t dphi1_row_stride = static_cast<std::size_t>(
+                dPhi1.extent(1))*dphi1_channels;
+            int lme = 0;
+            for (int l=0; l<=l_max; ++l) {
+                const auto weights = A1_weights_trans(l);
+                const int components = 2*l+1;
+                const int output_columns = weights.extent_int(1);
+                for (int node_begin=0; node_begin<num_nodes;
+                     node_begin += tile_nodes) {
+                    const int node_count = std::min(
+                        tile_nodes, num_nodes-node_begin);
+                    const std::size_t input_size = static_cast<std::size_t>(
+                        node_count)*components*num_channels;
+                    Kokkos::parallel_for(
+                        "Pack A1 reverse BLAS",
+                        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace,
+                            Kokkos::IndexType<std::size_t>>(
+                            factorized_execution_space, 0, input_size),
+                        KOKKOS_LAMBDA (const std::size_t index) {
+                            const std::size_t row = index/num_channels;
+                            const int node = static_cast<int>(row/components);
+                            const int component = static_cast<int>(
+                                row%components);
+                            const std::size_t output_node =
+                                static_cast<std::size_t>(node_begin)
+                                +static_cast<std::size_t>(node);
+                            const std::size_t output_column =
+                                static_cast<std::size_t>(l*l+component);
+                            flatten_input(index) = output_adjoint_data[
+                                output_node*output_adjoint_row_stride
+                                +output_column*output_adjoint_channels
+                                +index%static_cast<std::size_t>(num_channels)];
+                        });
+                    const int rows = node_count*components;
+                    launch_execution_row_major_strided_batched_gemm(
+                        *factorized_blas_context, factorized_execution_space,
+                        flatten_input.data(), weights.data(),
+                        flatten_output.data(), rows, num_channels,
+                        output_columns, 0, 0, 0, 1,
+                        "A1 reverse flattened BLAS");
+                    const std::size_t output_size = static_cast<std::size_t>(
+                        rows)*output_columns;
+                    Kokkos::parallel_for(
+                        "Unpack A1 reverse BLAS",
+                        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace,
+                            Kokkos::IndexType<std::size_t>>(
+                            factorized_execution_space, 0, output_size),
+                        KOKKOS_LAMBDA (const std::size_t index) {
+                            const std::size_t row = index/output_columns;
+                            const int node = static_cast<int>(row/components);
+                            const int component = static_cast<int>(
+                                row%components);
+                            const int eta = static_cast<int>(
+                                (index%output_columns)/num_channels);
+                            const int channel = static_cast<int>(
+                                index%num_channels);
+                            const std::size_t dphi1_node =
+                                static_cast<std::size_t>(node_begin)
+                                +static_cast<std::size_t>(node);
+                            const std::size_t dphi1_column =
+                                static_cast<std::size_t>(lme)
+                                +static_cast<std::size_t>(component)
+                                    *static_cast<std::size_t>(
+                                        output_columns/num_channels)
+                                +static_cast<std::size_t>(eta);
+                            dphi1_data[
+                                dphi1_node*dphi1_row_stride
+                                +dphi1_column*dphi1_channels
+                                +static_cast<std::size_t>(channel)] =
+                                flatten_output(index);
+                        });
+                }
+                lme += components*(output_columns/num_channels);
+            }
+            if (completion_fence)
+                factorized_execution_space.fence(
+                    "Reverse A1 flattened BLAS completion");
+            return;
+        }
+        int lme = 0;
+        for (int l=0; l<=l_max; ++l) {
+            const auto weights = A1_weights_trans(l);
+            const int num_eta = weights.extent_int(1)/num_channels;
+            launch_execution_row_major_strided_batched_gemm(
+                *factorized_blas_context, factorized_execution_space,
+                output_adjoint.data()+static_cast<std::size_t>(l*l)*num_channels,
+                weights.data(),
+                dPhi1.data()+static_cast<std::size_t>(lme)*num_channels,
+                2*l+1, num_channels, num_eta*num_channels,
+                static_cast<std::int64_t>(num_lm)*num_channels,
+                0,
+                static_cast<std::int64_t>(num_lme)*num_channels,
+                num_nodes, "A1 reverse batched BLAS");
+            lme += (2*l+1)*num_eta;
+        }
+        if (completion_fence)
+            factorized_execution_space.fence("Reverse A1 batched BLAS completion");
+        return;
+    }
+#endif
+
+    Kokkos::parallel_for("Reverse A1",
+        Kokkos::TeamPolicy<>(
+            factorized_execution_space,
+            num_nodes*(l_max+1), Kokkos::AUTO),
+        KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
+            const std::size_t node = static_cast<std::size_t>(
+                team_member.league_rank()/(l_max+1));
+            const int l = team_member.league_rank() % (l_max+1);
+            int lme = 0;
+            int num_eta = 0;
+            for (int p=0; p<Phi1_l.size(); ++p) {
+                const int ll = Phi1_l(p);
+                if (ll < l)
+                    lme += 2*ll+1;
+                if (ll == l)
+                    num_eta += 1;
+            }
+            auto dA1_il = Kokkos::View<
+                const Precision**,Kokkos::LayoutStride,Kokkos::MemoryUnmanaged>(
+                    output_adjoint_data_base + node*output_adjoint_row_stride
+                        +static_cast<std::size_t>(l*l)*output_adjoint_channels,
+                    Kokkos::LayoutStride(2*l+1, num_channels,
+                        num_channels, 1));
+            auto dPhi1_il = Kokkos::View<
+                Precision**,Kokkos::LayoutStride,Kokkos::MemoryUnmanaged>(
+                    dphi1_data_base + node*dphi1_row_stride
+                        +static_cast<std::size_t>(lme)*dphi1_channels,
+                    Kokkos::LayoutStride(2*l+1, num_eta*num_channels,
+                        num_eta*num_channels, 1));
+            KokkosBatched::TeamGemm<Kokkos::TeamPolicy<>::member_type,
+                                    KokkosBatched::Trans::NoTranspose,
+                                    KokkosBatched::Trans::NoTranspose,
+                                    KokkosBatched::Algo::Gemm::Blocked>
+                ::invoke(team_member, 1.0, dA1_il, A1_weights_trans(l), 0.0, dPhi1_il);
+        });
+    if (completion_fence)
+        factorized_execution_space.fence("Reverse A1 completion");
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::scale_A1_rows_by_inverse(
+    Precision* rows,
+    const int num_nodes,
+    const std::size_t row_length,
+    const std::vector<double>& scales)
+{
+#ifdef SYMMETRIX_ENABLE_METAL
+    if constexpr (std::is_same_v<Precision, float>) {
+        std::vector<float> factors(scales.size());
+        for (std::size_t node = 0; node < scales.size(); ++node)
+            factors[node] = static_cast<float>(1.0/scales[node]);
+        if (metal_r1_module && metal_r1_module->scale_node_rows(
+                rows, static_cast<std::size_t>(num_nodes), row_length,
+                factors.data()))
+            return;
+    }
+#endif
+    for (std::size_t node = 0; node < static_cast<std::size_t>(num_nodes); ++node) {
+        Precision* row = rows+node*row_length;
+        for (std::size_t lmk = 0; lmk < row_length; ++lmk)
+            row[lmk] /= scales[node];
+    }
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::prepare_A1_scale_factors(
+    const int num_nodes,
+    Kokkos::View<const int*> node_types,
+    Kokkos::View<const int*> num_neigh,
+    Kokkos::View<const int*> neigh_types,
+    Kokkos::View<const double*> r)
+{
+    a1_scale_factors_ready = false;
+#if (defined(KOKKOS_ENABLE_CUDA) \
+        && defined(KOKKOSKERNELS_ENABLE_TPL_CUBLAS)) \
+    || (defined(KOKKOS_ENABLE_HIP) \
+        && defined(KOKKOSKERNELS_ENABLE_TPL_ROCBLAS))
+    if (!A1_scaled || !execution_a1_blas_enabled()
+        || !execution_a1_flatten_enabled()
+        || !use_factorized_async_inference()
+        || factorized_prepared_graph_count == 0
+        || num_nodes < a1_blas_flatten_min_nodes)
+        return;
+
+    ensure_mh0_a1_forward_capacity(num_nodes);
+    const bool recompute_splines = use_mh0_adjoint_reuse();
+    if (recompute_splines) {
+        A1_spline_values = decltype(A1_spline_values)();
+        A1_spline_derivs = decltype(A1_spline_derivs)();
+    } else if (A1_spline_values.extent(0) < r.size()) {
+        Kokkos::realloc(A1_spline_values, r.size(), 1);
+        Kokkos::realloc(A1_spline_derivs, r.size(), 1);
+    }
+    if (!recompute_splines) {
+        const auto splines = A1_splines;
+        const auto edge_receivers = execution_edge_receivers;
+        const auto type_map = type_to_active;
+        const int active_type_count = num_active_types;
+        const auto values = A1_spline_values;
+        const auto derivatives = A1_spline_derivs;
+        Kokkos::parallel_for(
+            "Prepare A1 scale splines",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                factorized_execution_space, 0, r.extent_int(0)),
+            KOKKOS_LAMBDA (const int edge) {
+                const int type_i = type_map(node_types(edge_receivers(edge)));
+                const int type_j = type_map(neigh_types(edge));
+                const int edge_type = type_i <= type_j
+                    ? type_i*(2*active_type_count-type_i-1)/2+type_j
+                    : type_j*(2*active_type_count-type_j-1)/2+type_i;
+                splines.evaluate_function(
+                    edge_type, r(edge), 0,
+                    values(edge,0), derivatives(edge,0));
+            });
+    }
+
+    const auto first_neigh = streamed_first_neigh;
+    const auto inverse_scale = A1_inverse_scale;
+    const auto splines = A1_splines;
+    const auto values = A1_spline_values;
+    const auto type_map = type_to_active;
+    const int active_type_count = num_active_types;
+    Kokkos::parallel_for(
+        "Prepare A1 inverse scale",
+        Kokkos::TeamPolicy<>(
+            factorized_execution_space, num_nodes, Kokkos::AUTO, Kokkos::AUTO),
+        KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
+            const std::size_t node = static_cast<std::size_t>(
+                team_member.league_rank());
+            const int i0 = first_neigh(node);
+            const int type_i = type_map(node_types(node));
+            double scale_factor = 0.0;
+            Kokkos::parallel_reduce(
+                Kokkos::TeamThreadRange(team_member, num_neigh(node)),
+                [=] (const int j, double& lsum) {
+                    const int edge = i0+j;
+                    if (recompute_splines) {
+                        const int type_j = type_map(neigh_types(edge));
+                        const int edge_type = type_i <= type_j
+                            ? type_i*(2*active_type_count-type_i-1)/2+type_j
+                            : type_j*(2*active_type_count-type_j-1)/2+type_i;
+                        lsum += splines.evaluate_function(edge_type, r(edge), 0);
+                    } else
+                        lsum += values(edge,0);
+                }, scale_factor);
+            if (team_member.team_rank() == 0)
+                inverse_scale(node) = 1.0/(scale_factor+1.0);
+        });
+    a1_scale_factors_ready = true;
+    complete_device_stage("MACEKokkos::prepare_A1_scale_factors");
+#else
+    (void)num_nodes;
+    (void)node_types;
+    (void)num_neigh;
+    (void)neigh_types;
+    (void)r;
+#endif
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::compute_A1_scaled(
+    const int num_nodes,
+    Kokkos::View<const int*> node_types,
+    Kokkos::View<const int*> num_neigh,
+    Kokkos::View<const int*> neigh_types,
+    Kokkos::View<const double*> r)
+{
+    if (not A1_scaled) return;
+    if (a1_scale_factors_ready) {
+        complete_device_stage("MACEKokkos::compute_A1_scaled_fused");
+        a1_scale_factors_ready = false;
+        return;
+    }
+    const bool async_inference = use_factorized_async_inference();
+    const auto execution_space = async_inference
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+    const bool recompute_splines = async_inference && use_mh0_adjoint_reuse();
+
+    // compute A1 splines
+    if (recompute_splines) {
+        A1_spline_values = decltype(A1_spline_values)();
+        A1_spline_derivs = decltype(A1_spline_derivs)();
+    } else if (A1_spline_values.extent(0) < r.size()) {
+        Kokkos::realloc(A1_spline_values, r.size(), 1);
+        Kokkos::realloc(A1_spline_derivs, r.size(), 1);
+    }
+    if (async_inference && !recompute_splines) {
+        const auto splines = A1_splines;
+        const auto edge_receivers = execution_edge_receivers;
+        const auto type_map = type_to_active;
+        const int active_type_count = num_active_types;
+        const auto values = A1_spline_values;
+        const auto derivatives = A1_spline_derivs;
+        Kokkos::parallel_for(
+            "MACEKokkos::compute_A1_scale_splines",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                execution_space, 0, r.extent_int(0)),
+            KOKKOS_LAMBDA (const int edge) {
+                const int type_i = type_map(node_types(edge_receivers(edge)));
+                const int type_j = type_map(neigh_types(edge));
+                const int edge_type = type_i <= type_j
+                    ? type_i*(2*active_type_count-type_i-1)/2+type_j
+                    : type_j*(2*active_type_count-type_j-1)/2+type_i;
+                splines.evaluate_function(
+                    edge_type, r(edge), 0,
+                    values(edge,0), derivatives(edge,0));
+            });
+    } else if (!async_inference)
+        A1_splines.evaluate(
+            num_nodes, node_types, num_neigh, neigh_types,
+            type_to_active, num_active_types, r,
+            A1_spline_values, A1_spline_derivs);
+
+    // compute first_neigh
+    Kokkos::View<int*> first_neigh;
+    if (async_inference)
+        first_neigh = streamed_first_neigh;
+    else {
+        first_neigh = Kokkos::View<int*>("first_neigh", num_nodes);
+        Kokkos::parallel_scan("Compute first_neigh",
+            num_nodes,
+            KOKKOS_LAMBDA (const int i, int& update, const bool final) {
+                if (final)
+                    first_neigh(i) = update;
+                update += num_neigh(i);
+            });
+    }
+
+    // perform the scaling
+    auto A1 = this->A1;
+    Precision* const a1_data = A1.data();
+    const std::size_t a1_channels = A1.extent(2);
+    const std::size_t a1_row_stride = static_cast<std::size_t>(
+        A1.extent(1))*a1_channels;
+    auto A1_spline_values = this->A1_spline_values;
+    auto A1_spline_derivs = this->A1_spline_derivs;
+    const auto splines = A1_splines;
+    const auto type_map = type_to_active;
+    const int active_type_count = num_active_types;
+    const auto num_channels = this->num_channels;
+    const auto num_lm = this->num_lm;
+#ifdef SYMMETRIX_ENABLE_METAL
+    // Host fast path, compiled into the Metal build only.
+    if constexpr (std::is_same_v<
+            typename Kokkos::DefaultExecutionSpace::memory_space,
+            Kokkos::HostSpace>) {
+        // One host worker per node streams its contiguous [lm, channel] row,
+        // which vectorizes where the team decomposition does not.
+        if (A1.extent_int(1) == num_lm && A1.extent_int(2) == num_channels) {
+            const std::size_t row_length =
+                static_cast<std::size_t>(num_lm)*static_cast<std::size_t>(num_channels);
+            // With Metal, the host computes the per-node factors and the GPU
+            // scales the shared A1 rows in place.
+            std::vector<double> gpu_scales;
+#ifdef SYMMETRIX_ENABLE_METAL
+            if constexpr (std::is_same_v<Precision, float>)
+                if (metal_r1_module && metal_views) {
+                    metal_views->map(A1);
+                    gpu_scales.resize(static_cast<std::size_t>(num_nodes));
+                }
+#endif
+            double* const scale_out = gpu_scales.empty() ? nullptr : gpu_scales.data();
+            Kokkos::parallel_for(
+                "MACEKokkos::compute_A1_scaled host",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace,
+                    Kokkos::IndexType<std::size_t>>(execution_space, 0, num_nodes),
+                [=] (const std::size_t node) {
+                    const int i0 = first_neigh(node);
+                    const int type_i = recompute_splines
+                        ? type_map(node_types(node)) : 0;
+                    double A1_scale_factor = 0.0;
+                    for (int j=0; j<num_neigh(node); ++j) {
+                        const int edge = i0+j;
+                        if (recompute_splines) {
+                            const int type_j = type_map(neigh_types(edge));
+                            const int edge_type = type_i <= type_j
+                                ? type_i*(2*active_type_count-type_i-1)/2+type_j
+                                : type_j*(2*active_type_count-type_j-1)/2+type_i;
+                            A1_scale_factor +=
+                                splines.evaluate_function(edge_type, r(edge), 0);
+                        } else
+                            A1_scale_factor += A1_spline_values(edge,0);
+                    }
+                    A1_scale_factor += 1.0;
+                    if (scale_out != nullptr) {
+                        scale_out[node] = A1_scale_factor;
+                        return;
+                    }
+                    Precision* row = &A1(node,0,0);
+                    for (std::size_t lmk=0; lmk<row_length; ++lmk)
+                        row[lmk] /= A1_scale_factor;
+                });
+            if (scale_out != nullptr)
+                scale_A1_rows_by_inverse(A1.data(), num_nodes, row_length, gpu_scales);
+            complete_device_stage("MACEKokkos::compute_A1_scaled");
+            return;
+        }
+    }
+#endif
+    Kokkos::parallel_for(
+        "MACEKokkos::compute_A1_scaled",
+        Kokkos::TeamPolicy<>(
+            execution_space, num_nodes, Kokkos::AUTO, Kokkos::AUTO),
+        KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
+            const std::size_t node = static_cast<std::size_t>(
+                team_member.league_rank());
+            const int i0 = first_neigh(node);
+            const int type_i = recompute_splines
+                ? type_map(node_types(node)) : 0;
+            // compute scale factor
+            double A1_scale_factor;
+            Kokkos::parallel_reduce(
+                Kokkos::TeamThreadRange(team_member, num_neigh(node)),
+                [=] (const int j, double& lsum) {
+                    const int edge = i0+j;
+                    if (recompute_splines) {
+                        const int type_j = type_map(neigh_types(edge));
+                        const int edge_type = type_i <= type_j
+                            ? type_i*(2*active_type_count-type_i-1)/2+type_j
+                            : type_j*(2*active_type_count-type_j-1)/2+type_i;
+                        lsum += splines.evaluate_function(edge_type, r(edge), 0);
+                    } else
+                        lsum += A1_spline_values(edge,0);
+                }, A1_scale_factor);
+            A1_scale_factor += 1.0;
+            const Precision inverse_scale = static_cast<Precision>(
+                1.0/A1_scale_factor);
+            team_member.team_barrier();
+            // perform the scaling
+            Kokkos::parallel_for(
+                Kokkos::TeamThreadRange(team_member, num_lm*num_channels),
+                [=] (int lmk) {
+                    a1_data[node*a1_row_stride
+                        +static_cast<std::size_t>(lmk/num_channels)
+                            *a1_channels
+                        +static_cast<std::size_t>(lmk%num_channels)] *=
+                        inverse_scale;
+                });
+        });
+    complete_device_stage("MACEKokkos::compute_A1_scaled");
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::reverse_A1_scaled(
+    const int num_nodes,
+    Kokkos::View<const int*> node_types,
+    Kokkos::View<const int*> num_neigh,
+    Kokkos::View<const int*> neigh_types,
+    Kokkos::View<const double*> xyz,
+    Kokkos::View<const double*> r)
+{
+    if (not A1_scaled) return;
+    const bool async_inference = use_factorized_async_inference();
+    const auto execution_space = async_inference
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+
+    Kokkos::View<int*> first_neigh;
+    if (async_inference)
+        first_neigh = streamed_first_neigh;
+    else {
+        first_neigh = Kokkos::View<int*>("first_neigh", num_nodes);
+        Kokkos::parallel_scan("Compute first_neigh",
+            num_nodes,
+            KOKKOS_LAMBDA (const int i, int& update, const bool final) {
+                if (final)
+                    first_neigh(i) = update;
+                update += num_neigh(i);
+            });
+    }
+
+    // update the derivatives
+    // Warning: Assumes node_forces have been initialized elsewhere
+    const auto A1 = this->A1;
+    const auto A1_adj = this->A1_adj;
+    const Precision* const a1_data = A1.data();
+    Precision* const a1_adj_data = A1_adj.data();
+    const std::size_t a1_channels = A1.extent(2);
+    const std::size_t a1_row_stride = static_cast<std::size_t>(
+        A1.extent(1))*a1_channels;
+    const std::size_t a1_adj_channels = A1_adj.extent(2);
+    const std::size_t a1_adj_row_stride = static_cast<std::size_t>(
+        A1_adj.extent(1))*a1_adj_channels;
+    const auto A1_spline_values = this->A1_spline_values;
+    const auto A1_spline_derivs = this->A1_spline_derivs;
+    const bool reuse_adjoint = use_mh0_adjoint_reuse();
+    const bool recompute_splines = async_inference && reuse_adjoint;
+    const auto splines = A1_splines;
+    const auto type_map = type_to_active;
+    const int active_type_count = num_active_types;
+    const auto scale_adjoint = mh0_a1_scale_adjoint;
+    const auto num_channels = this->num_channels;
+    const auto num_lm = this->num_lm;
+    const bool compact_geometry = use_compact_edge_geometry();
+    const auto unit_direction = execution_prepared_unit_direction;
+    auto node_forces = this->node_forces;
+#ifdef SYMMETRIX_ENABLE_METAL
+    // Host fast path, compiled into the Metal build only.
+    if constexpr (std::is_same_v<
+            typename Kokkos::DefaultExecutionSpace::memory_space,
+            Kokkos::HostSpace>) {
+        // Host counterpart of the team kernel below; contiguous node rows let
+        // the dot product and scaling vectorize.
+        if (A1.extent_int(1) == num_lm && A1.extent_int(2) == num_channels
+                && A1_adj.extent_int(1) == num_lm
+                && A1_adj.extent_int(2) == num_channels) {
+            const std::size_t row_length =
+                static_cast<std::size_t>(num_lm)*static_cast<std::size_t>(num_channels);
+            std::vector<double> gpu_scales;
+#ifdef SYMMETRIX_ENABLE_METAL
+            if constexpr (std::is_same_v<Precision, float>)
+                if (metal_r1_module && metal_views) {
+                    metal_views->map(A1_adj);
+                    gpu_scales.resize(static_cast<std::size_t>(num_nodes));
+                }
+#endif
+            double* const scale_out = gpu_scales.empty() ? nullptr : gpu_scales.data();
+            Kokkos::parallel_for(
+                "MACEKokkos::reverse_A1_scaled host",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace,
+                    Kokkos::IndexType<std::size_t>>(execution_space, 0, num_nodes),
+                [=] (const std::size_t node) {
+                    const int i0 = first_neigh(node);
+                    const int type_i = recompute_splines
+                        ? type_map(node_types(node)) : 0;
+                    const auto edge_type_of = [&] (const int edge) {
+                        const int type_j = type_map(neigh_types(edge));
+                        return type_i <= type_j
+                            ? type_i*(2*active_type_count-type_i-1)/2+type_j
+                            : type_j*(2*active_type_count-type_j-1)/2+type_i;
+                    };
+                    double A1_scale_factor = 0.0;
+                    for (int j=0; j<num_neigh(node); ++j) {
+                        const int edge = i0+j;
+                        A1_scale_factor += recompute_splines
+                            ? splines.evaluate_function(edge_type_of(edge), r(edge), 0)
+                            : A1_spline_values(edge,0);
+                    }
+                    A1_scale_factor += 1.0;
+                    Precision* adjoint_row = &A1_adj(node,0,0);
+                    double dA1_dot_A1 = 0.0;
+                    if (reuse_adjoint)
+                        dA1_dot_A1 = scale_adjoint(node);
+                    else {
+                        // Four partial sums break the FP64 add dependency chain.
+                        const Precision* value_row = &A1(node,0,0);
+                        double partial[4] = {0.0, 0.0, 0.0, 0.0};
+                        std::size_t lmk = 0;
+                        for (; lmk+4<=row_length; lmk+=4)
+                            for (int lane=0; lane<4; ++lane)
+                                partial[lane] +=
+                                    adjoint_row[lmk+lane]*value_row[lmk+lane];
+                        for (; lmk<row_length; ++lmk)
+                            partial[0] += adjoint_row[lmk]*value_row[lmk];
+                        dA1_dot_A1 = (partial[0]+partial[1])+(partial[2]+partial[3]);
+                    }
+                    for (int j=0; j<num_neigh(node); ++j) {
+                        const int ij = i0+j;
+                        const std::size_t edge = static_cast<std::size_t>(ij);
+                        double f;
+                        double d;
+                        if (recompute_splines)
+                            splines.evaluate_function(edge_type_of(ij), r(ij), 0, f, d);
+                        else {
+                            f = A1_spline_values(ij,0);
+                            d = A1_spline_derivs(ij,0);
+                        }
+                        const double scale = dA1_dot_A1/A1_scale_factor*d;
+                        for (int k=0; k<3; ++k)
+                            node_forces(3*edge+k) += scale*(compact_geometry
+                                ? unit_direction(3*edge+k) : xyz(3*edge+k)/r(ij));
+                    }
+                    if (scale_out != nullptr) {
+                        scale_out[node] = A1_scale_factor;
+                        return;
+                    }
+                    for (std::size_t lmk=0; lmk<row_length; ++lmk)
+                        adjoint_row[lmk] /= A1_scale_factor;
+                });
+            if (scale_out != nullptr)
+                scale_A1_rows_by_inverse(A1_adj.data(), num_nodes, row_length, gpu_scales);
+            complete_device_stage("MACEKokkos::reverse_A1_scaled");
+            return;
+        }
+    }
+#endif
+    Kokkos::parallel_for(
+        "MACEKokkos::reverse_A1_scaled",
+        Kokkos::TeamPolicy<>(
+            execution_space, num_nodes, Kokkos::AUTO, Kokkos::AUTO),
+        KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
+            const std::size_t node = static_cast<std::size_t>(
+                team_member.league_rank());
+            const int i0 = first_neigh(node);
+            const int type_i = recompute_splines
+                ? type_map(node_types(node)) : 0;
+            // scale factor
+            double A1_scale_factor;// = 1.0;
+            Kokkos::parallel_reduce(
+                Kokkos::TeamThreadRange(team_member, num_neigh(node)),
+                [=] (const int j, double& lsum) {
+                    const int edge = i0+j;
+                    if (recompute_splines) {
+                        const int type_j = type_map(neigh_types(edge));
+                        const int edge_type = type_i <= type_j
+                            ? type_i*(2*active_type_count-type_i-1)/2+type_j
+                            : type_j*(2*active_type_count-type_j-1)/2+type_i;
+                        lsum += splines.evaluate_function(edge_type, r(edge), 0);
+                    } else
+                        lsum += A1_spline_values(edge,0);
+                }, A1_scale_factor);
+            A1_scale_factor += 1.0;
+            const Precision inverse_scale = static_cast<Precision>(
+                1.0/A1_scale_factor);
+            team_member.team_barrier();
+            // update dE/dxyz
+            double dA1_dot_A1 = 0.0;
+            if (reuse_adjoint)
+                dA1_dot_A1 = scale_adjoint(node);
+            else
+                Kokkos::parallel_reduce(
+                    Kokkos::TeamThreadRange(team_member, num_lm*num_channels),
+                    [=] (const int lmk, double& lsum) {
+                        const int lm = lmk / num_channels;
+                        const int k = lmk % num_channels;
+                        lsum += a1_adj_data[node*a1_adj_row_stride
+                            +static_cast<std::size_t>(lm)*a1_adj_channels
+                            +static_cast<std::size_t>(k)]
+                            *a1_data[node*a1_row_stride
+                                +static_cast<std::size_t>(lm)*a1_channels
+                                +static_cast<std::size_t>(k)];
+                    }, dA1_dot_A1);
+            team_member.team_barrier();
+            Kokkos::parallel_for(
+                Kokkos::TeamThreadRange(team_member, num_neigh(node)),
+                [=] (const int j) {
+                    const int ij = first_neigh(node) + j;
+                    const std::size_t edge = static_cast<std::size_t>(ij);
+                    double f;
+                    double d;
+                    if (recompute_splines) {
+                        const int type_i = type_map(node_types(node));
+                        const int type_j = type_map(neigh_types(ij));
+                        const int edge_type = type_i <= type_j
+                            ? type_i*(2*active_type_count-type_i-1)/2+type_j
+                            : type_j*(2*active_type_count-type_j-1)/2+type_i;
+                        splines.evaluate_function(edge_type, r(ij), 0, f, d);
+                    } else {
+                        f = A1_spline_values(ij,0);
+                        d = A1_spline_derivs(ij,0);
+                    }
+                    const double scale = dA1_dot_A1/A1_scale_factor*d;
+                    node_forces(3*edge+0) += scale*(compact_geometry
+                        ? unit_direction(3*edge+0) : xyz(3*edge+0)/r(ij));
+                    node_forces(3*edge+1) += scale*(compact_geometry
+                        ? unit_direction(3*edge+1) : xyz(3*edge+1)/r(ij));
+                    node_forces(3*edge+2) += scale*(compact_geometry
+                        ? unit_direction(3*edge+2) : xyz(3*edge+2)/r(ij));
+                });
+            // update dE/dA1
+            Kokkos::parallel_for(
+                Kokkos::TeamThreadRange(team_member, num_lm*num_channels),
+                [=] (int lmk) {
+                    a1_adj_data[node*a1_adj_row_stride
+                        +static_cast<std::size_t>(lmk/num_channels)
+                            *a1_adj_channels
+                        +static_cast<std::size_t>(lmk%num_channels)]
+                        *= inverse_scale;
+                });
+        });
+    complete_device_stage("MACEKokkos::reverse_A1_scaled");
+    a1_scale_factors_ready = false;
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::compute_M1(int num_nodes, Kokkos::View<const int*> node_types)
+{
+    const auto execution_space = use_factorized_async_inference()
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+    ensure_mh0_m1_forward_capacity(num_nodes);
+    if (m1_polynomial_policy == M1PolynomialPolicy::recompute) {
+        release_m1_polynomial_workspace();
+#ifdef SYMMETRIX_ENABLE_METAL
+        if constexpr (std::is_same_v<Precision, float>) {
+            if (!single_layer_readout && standard_m1_module_ready
+                    && metal_m1_module && A1.span_is_contiguous()
+                    && M1.span_is_contiguous() && M1_weights.span_is_contiguous()) {
+                execution_space.fence();
+                metal_views->map(A1);
+                metal_views->map(M1);
+                metal_m1_module->forward(
+                    num_nodes, node_types.data(), A1.data(), M1_weights.data(),
+                    M1_weights.size(), M1.data());
+                standard_m1_module_forward_launch_count += 1;
+                m1_recompute_forward_launch_count += 1;
+                return;
+            }
+        }
+#endif
+        auto M1 = this->M1;
+        const auto M1_weights = this->M1_weights;
+        if constexpr (!std::is_same_v<
+                typename Kokkos::DefaultExecutionSpace::memory_space,
+                Kokkos::HostSpace>) {
+            // The standard M1 structure is the scalar l=0 M0 polynomial.
+            // Reuse its device kernel so CUDA/HIP avoid the generic
+            // polynomial-value scratch and per-tile barriers.
+            if (!single_layer_readout && standard_m1_module_ready
+                && standard_m0_module_ready) {
+                Kokkos::View<Precision***,Kokkos::LayoutRight,
+                    Kokkos::MemoryUnmanaged> M1_scalar(
+                        M1.data(), num_nodes, 1, num_channels);
+                const int persistent_blocks =
+                    resolve_execution_persistent_blocks(
+                        standard_m0_module_id(), execution_space,
+                        static_cast<std::size_t>(num_nodes)*num_channels,
+                        "m1_forward_scalar");
+                if (persistent_blocks > 0
+                    && symmetrix::standard_m0::launch_scalar_forward(
+                        execution_space, persistent_blocks, num_nodes,
+                        node_types, A1, M1_weights, M1_scalar)) {
+                    standard_m1_module_forward_launch_count += 1;
+                    m1_recompute_forward_launch_count += 1;
+                    complete_device_stage("MACEKokkos::compute_M1_standard");
+                    return;
+                }
+            }
+        }
+        if (!single_layer_readout && standard_m1_module_ready
+            && symmetrix::standard_m1::launch_forward(
+                execution_space, num_nodes, num_channels, node_types,
+                A1, M1_weights, M1)) {
+            standard_m1_module_forward_launch_count += 1;
+            m1_recompute_forward_launch_count += 1;
+            complete_device_stage("MACEKokkos::compute_M1_recompute");
+            return;
+        }
+        const auto polynomial_input = single_layer_readout ? H1 : A1;
+        const auto M1_poly_spec = this->M1_poly_spec;
+        const auto M1_poly_coeff = this->M1_poly_coeff;
+        const int channels = num_channels;
+        const int harmonics = single_layer_readout ? num_LM : num_lm;
+        const int polynomial_nodes = static_cast<int>(M1_poly_coeff.extent(1));
+        const int multiplication_nodes = static_cast<int>(M1_poly_spec.extent(0));
+        const int tile_channels = m1_recompute_tile_channels;
+        const int vector_length = m1_recompute_vector_length();
+        const int scratch_level = m1_recompute_scratch_level();
+        using TeamMember = typename Kokkos::TeamPolicy<>::member_type;
+        using ScratchView = Kokkos::View<
+            Precision**, Kokkos::LayoutRight,
+            typename TeamMember::scratch_memory_space,
+            Kokkos::MemoryUnmanaged>;
+        auto policy = vector_length == 1
+            ? Kokkos::TeamPolicy<>(
+                execution_space, num_nodes, Kokkos::AUTO, 1)
+            : Kokkos::TeamPolicy<>(
+                execution_space, num_nodes, 1, vector_length);
+        policy.set_scratch_size(
+            scratch_level, Kokkos::PerTeam(
+                sizeof(Precision)*polynomial_nodes*tile_channels));
+        Kokkos::parallel_for(
+            "Compute M1 recompute", policy,
+            KOKKOS_LAMBDA (const TeamMember& member) {
+                const std::size_t node =
+                    static_cast<std::size_t>(member.league_rank());
+                ScratchView values(
+                    member.team_scratch(scratch_level),
+                    polynomial_nodes, tile_channels);
+                for (int channel_begin=0; channel_begin<channels;
+                     channel_begin += tile_channels) {
+                    const int active_channels =
+                        Kokkos::min(tile_channels, channels-channel_begin);
+                    Kokkos::parallel_for(
+                        Kokkos::TeamVectorRange(member, active_channels),
+                        [=] (const int lane) {
+                            const int channel = channel_begin+lane;
+                            Precision output = 0;
+                            for (int p=0; p<harmonics; ++p) {
+                                values(p,lane) = polynomial_input(node,p,channel);
+                                output += M1_poly_coeff(
+                                    node_types(node),p,channel)*values(p,lane);
+                            }
+                            for (int p=0; p<multiplication_nodes; ++p) {
+                                const int output_node = harmonics+p;
+                                values(output_node,lane) =
+                                    values(M1_poly_spec(p,0),lane)
+                                    *values(M1_poly_spec(p,1),lane);
+                                output += M1_poly_coeff(
+                                    node_types(node),output_node,channel)
+                                    *values(output_node,lane);
+                            }
+                            M1(node,channel) = output;
+                        });
+                    member.team_barrier();
+                }
+            });
+        m1_recompute_forward_launch_count += 1;
+        complete_device_stage("MACEKokkos::compute_M1_recompute");
+        return;
+    }
+    if (M1_poly_values.extent(0) < num_nodes)
+        Kokkos::realloc(
+            Kokkos::WithoutInitializing, M1_poly_values,
+            num_nodes, (single_layer_readout ? num_LM : num_lm)
+                +M1_poly_spec.extent(0), num_channels);
+    if (use_factorized_async_inference())
+        Kokkos::deep_copy(execution_space, M1, Precision(0));
+    else
+        Kokkos::deep_copy(M1, Precision(0));
+
+    const auto polynomial_input = single_layer_readout ? H1 : A1;
+    const auto M1_monomials = this->M1_monomials;
+    const auto M1_weights = this->M1_weights;
+    const auto M1_poly_spec = this->M1_poly_spec;
+    const auto M1_poly_coeff = this->M1_poly_coeff;
+    const auto M1_poly_values = this->M1_poly_values;
+    const auto num_channels = this->num_channels;
+    const int harmonics = single_layer_readout ? num_LM : num_lm;
+    auto M1 = this->M1;
+
+    Kokkos::parallel_for("Compute M1",
+        Kokkos::TeamPolicy<>(execution_space, num_nodes, Kokkos::AUTO, 32),
+        KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
+            const int i = team_member.league_rank();
+            const std::size_t node = static_cast<std::size_t>(i);
+            // initialize
+            Kokkos::parallel_for(
+                Kokkos::TeamVectorMDRange<
+                    Kokkos::Rank<2,Kokkos::Iterate::Right>,Kokkos::TeamPolicy<>::member_type>(
+                        team_member, harmonics, num_channels),
+                [&] (const int p, const int k) {
+                    M1_poly_values(node,p,k) = polynomial_input(node,p,k);
+                    Kokkos::atomic_add(
+                        &M1(node,k), M1_poly_coeff(node_types(node),p,k)
+                            *M1_poly_values(node,p,k));
+                });
+            team_member.team_barrier();
+            // forward pass
+            for (int p=0; p<M1_poly_spec.extent(0); ++p) {
+                const int p0 = M1_poly_spec(p,0);
+                const int p1 = M1_poly_spec(p,1);
+                Kokkos::parallel_for(
+                    Kokkos::TeamVectorRange(team_member, num_channels),
+                    [&] (const int k) {
+                        M1_poly_values(node,harmonics+p,k) =
+                            M1_poly_values(node,p0,k)
+                            *M1_poly_values(node,p1,k);
+                        M1(node,k) += M1_poly_coeff(
+                            node_types(node),harmonics+p,k)
+                            *M1_poly_values(node,harmonics+p,k);
+                    });
+            }
+        });
+    complete_device_stage("MACEKokkos::compute_M1");
+}
+template <typename Precision>
+void MACEKokkos<Precision>::reverse_M1(int num_nodes, Kokkos::View<const int*> node_types)
+{
+    const auto execution_space = use_factorized_async_inference()
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+    const bool reuse_adjoint = use_mh0_adjoint_reuse() && !single_layer_readout;
+    if (reuse_adjoint) {
+        A1_adj = A1;
+        if (A1_scaled && mh0_a1_scale_adjoint.extent(0)
+                != static_cast<std::size_t>(num_nodes))
+            Kokkos::realloc(mh0_a1_scale_adjoint, num_nodes);
+    }
+    auto polynomial_adjoint = single_layer_readout ? H1_adj : A1_adj;
+    const auto polynomial_input = single_layer_readout ? H1 : A1;
+    const int harmonics = single_layer_readout ? num_LM : num_lm;
+    const bool accumulate_h1_adjoint = single_layer_readout;
+    if (polynomial_adjoint.extent(0) < static_cast<std::size_t>(num_nodes)) {
+        if (single_layer_readout)
+            Kokkos::realloc(H1_adj, H1.extent(0), H1.extent(1), H1.extent(2));
+        else
+            Kokkos::realloc(A1_adj, A1.extent(0), A1.extent(1), A1.extent(2));
+        polynomial_adjoint = single_layer_readout ? H1_adj : A1_adj;
+    }
+    if (m1_polynomial_policy == M1PolynomialPolicy::recompute) {
+        release_m1_polynomial_workspace();
+        const bool capture_scale_adjoint = reuse_adjoint && A1_scaled;
+#ifdef SYMMETRIX_ENABLE_METAL
+        if constexpr (std::is_same_v<Precision, float>) {
+            if (!single_layer_readout && standard_m1_module_ready
+                    && metal_m1_module && A1.span_is_contiguous()
+                    && M1_adj.span_is_contiguous() && A1_adj.span_is_contiguous()
+                    && M1_weights.span_is_contiguous()) {
+                // A1_adj may alias A1: the module then stages A1_adj and
+                // writes it back only after the kernel.
+                execution_space.fence();
+                // The host owner assigns the per-node scale adjoint; the Metal
+                // module accumulates into it.
+                if (capture_scale_adjoint)
+                    Kokkos::deep_copy(
+                        Kokkos::subview(mh0_a1_scale_adjoint,
+                            Kokkos::make_pair(std::size_t(0),
+                                static_cast<std::size_t>(num_nodes))),
+                        0.0);
+                metal_views->map(A1);
+                metal_views->map(M1_adj);
+                metal_views->map(A1_adj);
+                metal_m1_module->reverse(
+                    num_nodes, node_types.data(), A1.data(), M1_weights.data(),
+                    M1_weights.size(), M1_adj.data(), A1_adj.data(),
+                    capture_scale_adjoint ? mh0_a1_scale_adjoint.data() : nullptr,
+                    capture_scale_adjoint);
+                standard_m1_module_reverse_launch_count += 1;
+                m1_recompute_reverse_launch_count += 1;
+                return;
+            }
+        }
+#endif
+        if (!single_layer_readout && standard_m1_module_ready
+            && symmetrix::standard_m1::launch_reverse(
+                execution_space, num_nodes, num_channels, node_types,
+                A1, M1_weights, M1_adj, A1_adj,
+                mh0_a1_scale_adjoint, capture_scale_adjoint)) {
+            standard_m1_module_reverse_launch_count += 1;
+            m1_recompute_reverse_launch_count += 1;
+            complete_device_stage("MACEKokkos::reverse_M1_recompute");
+            return;
+        }
+        const auto M1_adj = this->M1_adj;
+        const auto M1_poly_spec = this->M1_poly_spec;
+        const auto M1_poly_coeff = this->M1_poly_coeff;
+        const int channels = num_channels;
+        const int polynomial_nodes = static_cast<int>(M1_poly_coeff.extent(1));
+        const int multiplication_nodes = static_cast<int>(M1_poly_spec.extent(0));
+        const int tile_channels = m1_recompute_tile_channels;
+        const int vector_length = m1_recompute_vector_length();
+        const int scratch_level = m1_recompute_scratch_level();
+        const auto scale_adjoint = mh0_a1_scale_adjoint;
+        using TeamMember = typename Kokkos::TeamPolicy<>::member_type;
+        using ScratchView = Kokkos::View<
+            Precision**, Kokkos::LayoutRight,
+            typename TeamMember::scratch_memory_space,
+            Kokkos::MemoryUnmanaged>;
+        auto policy = vector_length == 1
+            ? Kokkos::TeamPolicy<>(
+                execution_space, num_nodes, Kokkos::AUTO, 1)
+            : Kokkos::TeamPolicy<>(
+                execution_space, num_nodes, 1, vector_length);
+        policy.set_scratch_size(
+            scratch_level, Kokkos::PerTeam(
+                2*sizeof(Precision)*polynomial_nodes*tile_channels));
+        Kokkos::parallel_for(
+            "Reverse M1 recompute", policy,
+            KOKKOS_LAMBDA (const TeamMember& member) {
+                const std::size_t node =
+                    static_cast<std::size_t>(member.league_rank());
+                ScratchView workspace(
+                    member.team_scratch(scratch_level),
+                    2*polynomial_nodes, tile_channels);
+                if (capture_scale_adjoint)
+                    Kokkos::single(Kokkos::PerTeam(member), [=] () {
+                        scale_adjoint(node) = 0.0;
+                    });
+                member.team_barrier();
+                for (int channel_begin=0; channel_begin<channels;
+                     channel_begin += tile_channels) {
+                    const int active_channels =
+                        Kokkos::min(tile_channels, channels-channel_begin);
+                    double tile_dot = 0.0;
+                    Kokkos::parallel_reduce(
+                        Kokkos::TeamVectorRange(member, active_channels),
+                        [=] (const int lane, double& local_dot) {
+                            const int channel = channel_begin+lane;
+                            for (int p=0; p<harmonics; ++p)
+                                workspace(p,lane) = polynomial_input(node,p,channel);
+                            for (int p=0; p<multiplication_nodes; ++p) {
+                                const int output_node = harmonics+p;
+                                workspace(output_node,lane) =
+                                    workspace(M1_poly_spec(p,0),lane)
+                                    *workspace(M1_poly_spec(p,1),lane);
+                            }
+                            for (int p=0; p<polynomial_nodes; ++p)
+                                workspace(polynomial_nodes+p,lane) =
+                                    M1_poly_coeff(node_types(node),p,channel);
+                            for (int p=multiplication_nodes-1; p>=0; --p) {
+                                const int output_node = harmonics+p;
+                                const int p0 = M1_poly_spec(p,0);
+                                const int p1 = M1_poly_spec(p,1);
+                                const Precision output_adjoint =
+                                    workspace(polynomial_nodes+output_node,lane);
+                                workspace(polynomial_nodes+p0,lane) +=
+                                    output_adjoint*workspace(p1,lane);
+                                workspace(polynomial_nodes+p1,lane) +=
+                                    output_adjoint*workspace(p0,lane);
+                            }
+                            for (int lm=0; lm<harmonics; ++lm) {
+                                const Precision adjoint =
+                                    workspace(polynomial_nodes+lm,lane)
+                                    *M1_adj(node,channel);
+                                if (capture_scale_adjoint)
+                                    local_dot += static_cast<double>(
+                                        workspace(lm,lane))*adjoint;
+                                if (accumulate_h1_adjoint)
+                                    polynomial_adjoint(node,lm,channel) += adjoint;
+                                else
+                                    polynomial_adjoint(node,lm,channel) = adjoint;
+                            }
+                        }, tile_dot);
+                    if (capture_scale_adjoint)
+                        Kokkos::single(Kokkos::PerTeam(member), [=] () {
+                            scale_adjoint(node) += tile_dot;
+                        });
+                    member.team_barrier();
+                }
+            });
+        m1_recompute_reverse_launch_count += 1;
+        complete_device_stage("MACEKokkos::reverse_M1_recompute");
+        return;
+    }
+    if (use_factorized_async_inference())
+        if (!single_layer_readout)
+            Kokkos::deep_copy(execution_space, polynomial_adjoint, Precision(0));
+    else if (!single_layer_readout)
+        Kokkos::deep_copy(polynomial_adjoint, Precision(0));
+    if (M1_poly_adjoints.extent(0) < num_nodes)
+        Kokkos::realloc(
+            Kokkos::WithoutInitializing, M1_poly_adjoints,
+            num_nodes, M1_poly_coeff.extent(1), num_channels);
+
+    // TODO: prune
+    const auto M1_adj = this->M1_adj;
+    const auto M1_monomials = this->M1_monomials;
+    const auto M1_weights = this->M1_weights;
+    const auto M1_poly_spec = this->M1_poly_spec;
+    const auto M1_poly_coeff = this->M1_poly_coeff;
+    const auto M1_poly_adjoints = this->M1_poly_adjoints;
+    const auto M1_poly_values = this->M1_poly_values;
+    const auto num_channels = this->num_channels;
+    auto M1 = this->M1;
+
+    Kokkos::parallel_for("Reverse M1",
+        Kokkos::TeamPolicy<>(execution_space, num_nodes, Kokkos::AUTO, 32),
+        KOKKOS_LAMBDA (Kokkos::TeamPolicy<>::member_type team_member) {
+            const int i = team_member.league_rank();
+            const std::size_t node = static_cast<std::size_t>(i);
+            // initialize
+            Kokkos::parallel_for(
+                Kokkos::TeamVectorMDRange<
+                    Kokkos::Rank<2,Kokkos::Iterate::Right>,Kokkos::TeamPolicy<>::member_type>(
+                        team_member, M1_poly_coeff.extent(1), num_channels),
+                [&] (const int p, const int k) {
+                    M1_poly_adjoints(node,p,k) =
+                        M1_poly_coeff(node_types(node),p,k);
+                });
+            team_member.team_barrier();
+            // backwards pass
+            for (int p=M1_poly_spec.extent(0)-1; p>=0; --p) {
+                const int p0 = M1_poly_spec(p,0);
+                const int p1 = M1_poly_spec(p,1);
+                Kokkos::parallel_for(
+                    Kokkos::TeamVectorRange(team_member, num_channels),
+                    [&] (const int k) {
+                        M1_poly_adjoints(node,p0,k) +=
+                            M1_poly_adjoints(node,harmonics+p,k)
+                            *M1_poly_values(node,p1,k);
+                        M1_poly_adjoints(node,p1,k) +=
+                            M1_poly_adjoints(node,harmonics+p,k)
+                            *M1_poly_values(node,p0,k);
+                    });
+            }
+            team_member.team_barrier();
+            Kokkos::parallel_for(
+                Kokkos::TeamVectorMDRange<
+                    Kokkos::Rank<2,Kokkos::Iterate::Right>,Kokkos::TeamPolicy<>::member_type>(
+                        team_member, harmonics, num_channels),
+                [&] (const int lm, const int k) {
+                    const Precision adjoint =
+                        M1_poly_adjoints(node,lm,k) * M1_adj(node,k);
+                    if (accumulate_h1_adjoint)
+                        polynomial_adjoint(node,lm,k) += adjoint;
+                    else
+                        polynomial_adjoint(node,lm,k) = adjoint;
+                });
+        });
+    complete_device_stage("MACEKokkos::reverse_M1");
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::compute_H2(int num_nodes, Kokkos::View<const int*> node_types)
+{
+    const auto execution_space = use_factorized_async_inference()
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+    ensure_mh0_h2_forward_capacity(num_nodes);
+    auto num_channels = this->num_channels;
+    auto H2 = this->H2;
+    auto H2_weights_for_H1 = this->H2_weights_for_H1;
+    auto H1 = this->H1;
+    auto H2_weights_for_M1 = this->H2_weights_for_M1;
+    auto M1 = this->M1;
+
+    if constexpr (std::is_same_v<
+            typename Kokkos::DefaultExecutionSpace::memory_space,
+            Kokkos::HostSpace>) {
+#ifdef SYMMETRIX_ENABLE_METAL
+        // Host fast path, compiled into the Metal build only.
+        if (symmetrix::host_worker_cblas_enabled()
+                && !symmetrix::host_dense_backend_overrides_cblas()
+                && num_channels <= host_h2_blas_max_channels
+                && execution_space.concurrency() == 1 && num_nodes > 0) {
+            // One host worker: batched GEMMs instead of per-node GEMVs.
+            Kokkos::Profiling::pushRegion("Compute H2 host BLAS");
+            execution_space.fence();
+            symmetrix::host_batched_h2_forward<Precision>(
+                num_nodes, num_channels, node_types.data(),
+                H1.data(), H1.stride(0), M1.data(), M1.stride(0),
+                H2_weights_for_H1.data(), H2_weights_for_H1.stride(0),
+                H2_weights_for_M1.data(), H2.data(), H2.stride(0));
+            Kokkos::Profiling::popRegion();
+            complete_device_stage("MACEKokkos::compute_H2");
+            return;
+        }
+#endif
+        if (symmetrix::host_worker_cblas_enabled()
+                && !symmetrix::host_dense_backend_overrides_cblas()
+                && num_channels <= host_h2_blas_max_channels) {
+            Kokkos::parallel_for(
+                "Compute H2 host BLAS",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                    execution_space, 0, num_nodes),
+                [=] (const int node) {
+                    Precision output[host_h2_blas_max_channels];
+                    const int type = node_types(node);
+                    symmetrix_blas_gemv<Precision>(
+                        CblasRowMajor, CblasTrans,
+                        num_channels, num_channels,
+                        Precision(1), &H2_weights_for_H1(type,0), num_channels,
+                        &H1(node,0,0), 1,
+                        Precision(0), output, 1);
+                    symmetrix_blas_gemv<Precision>(
+                        CblasRowMajor, CblasTrans,
+                        num_channels, num_channels,
+                        Precision(1), H2_weights_for_M1.data(), num_channels,
+                        &M1(node,0), 1,
+                        Precision(1), output, 1);
+                    for (int channel=0; channel<num_channels; ++channel)
+                        H2(node,channel) = static_cast<double>(output[channel]);
+                });
+            complete_device_stage("MACEKokkos::compute_H2");
+            return;
+        }
+        if (symmetrix::host_flat_dense_enabled()
+                && num_channels <= host_h2_blas_max_channels) {
+            Kokkos::parallel_for(
+                "Compute H2 flat",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                    execution_space, 0, num_nodes),
+                [=] (const int node) {
+                    Precision output[host_h2_blas_max_channels];
+                    const int type = node_types(node);
+                    symmetrix::host_dense_gemm_nn(
+                        &H1(node,0,0), &H2_weights_for_H1(type,0),
+                        output, 1, num_channels, num_channels);
+                    symmetrix::host_dense_gemm_nn(
+                        &M1(node,0), H2_weights_for_M1.data(),
+                        output, 1, num_channels, num_channels, true);
+                    for (int channel=0; channel<num_channels; ++channel)
+                        H2(node,channel) = static_cast<double>(output[channel]);
+                });
+            complete_device_stage("MACEKokkos::compute_H2");
+            return;
+        }
+    }
+
+    using H2Accum = Precision;
+    Kokkos::parallel_for(
+        "Compute H2",
+        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+            execution_space, 0, num_nodes*num_channels),
+        KOKKOS_LAMBDA (const int ik) {
+            const int i = ik / num_channels;
+            const int k = ik % num_channels;
+            H2Accum output = H2Accum(0);
+            for (int kp=0; kp<num_channels; ++kp) {
+                output += static_cast<H2Accum>(H2_weights_for_H1(
+                    node_types(i),kp*num_channels+k))
+                    *static_cast<H2Accum>(H1(i,0,kp));
+                output += static_cast<H2Accum>(H2_weights_for_M1(
+                    kp*num_channels+k))
+                    *static_cast<H2Accum>(M1(i,kp));
+            }
+            H2(i,k) = static_cast<double>(output);
+        });
+    complete_device_stage("MACEKokkos::compute_H2");
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::reverse_H2(int num_nodes, Kokkos::View<const int*> node_types, bool zero_H1_adj)
+{
+    const auto execution_space = use_factorized_async_inference()
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+    ensure_h1_adjoint_capacity();
+    if (use_mh0_adjoint_reuse())
+        M1_adj = M1;
+    if (M1_adj.extent(0) < M1.extent(0))
+        Kokkos::realloc(M1_adj, M1.extent(0), M1.extent(1));
+
+    if (use_factorized_async_inference()) {
+        if (zero_H1_adj)
+            Kokkos::deep_copy(execution_space, H1_adj, 0.0);
+    } else {
+        if (zero_H1_adj)
+            Kokkos::deep_copy(H1_adj, 0.0);
+    }
+
+    auto num_channels = this->num_channels;
+    auto H1_adj = this->H1_adj;
+    auto M1_adj = this->M1_adj;
+    auto H2_adj = this->H2_adj;
+    auto H2_weights_for_H1 = this->H2_weights_for_H1;
+    auto H2_weights_for_M1 = this->H2_weights_for_M1;
+    auto H2_weights_for_H1_reverse = this->H2_weights_for_H1_reverse;
+    auto H2_weights_for_M1_reverse = this->H2_weights_for_M1_reverse;
+
+    if constexpr (std::is_same_v<
+            typename Kokkos::DefaultExecutionSpace::memory_space,
+            Kokkos::HostSpace>) {
+#ifdef SYMMETRIX_ENABLE_METAL
+        // Host fast path, compiled into the Metal build only.
+        if (symmetrix::host_worker_cblas_enabled()
+                && !symmetrix::host_dense_backend_overrides_cblas()
+                && num_channels <= host_h2_blas_max_channels
+                && execution_space.concurrency() == 1 && num_nodes > 0) {
+            // One host worker: batched GEMMs instead of per-node GEMVs.
+            Kokkos::Profiling::pushRegion("Reverse H2 host BLAS");
+            execution_space.fence();
+            symmetrix::host_batched_h2_reverse<Precision>(
+                num_nodes, num_channels, node_types.data(),
+                H2_adj.data(), H2_adj.stride(0),
+                H2_weights_for_H1.data(), H2_weights_for_H1.stride(0),
+                H2_weights_for_M1.data(), H1_adj.data(), H1_adj.stride(0),
+                M1_adj.data(), M1_adj.stride(0));
+            Kokkos::Profiling::popRegion();
+            complete_device_stage("MACEKokkos::reverse_H2");
+            return;
+        }
+#endif
+        if (symmetrix::host_worker_cblas_enabled()
+                && !symmetrix::host_dense_backend_overrides_cblas()
+                && num_channels <= host_h2_blas_max_channels) {
+            Kokkos::parallel_for(
+                "Reverse H2 host BLAS",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                    execution_space, 0, num_nodes),
+                [=] (const int node) {
+                    Precision output_adjoint[host_h2_blas_max_channels];
+                    for (int channel=0; channel<num_channels; ++channel)
+                        output_adjoint[channel] = static_cast<Precision>(
+                            H2_adj(node,channel));
+                    const int type = node_types(node);
+                    symmetrix_blas_gemv<Precision>(
+                        CblasRowMajor, CblasNoTrans,
+                        num_channels, num_channels,
+                        Precision(1), &H2_weights_for_H1(type,0), num_channels,
+                        output_adjoint, 1,
+                        Precision(1), &H1_adj(node,0,0), 1);
+                    symmetrix_blas_gemv<Precision>(
+                        CblasRowMajor, CblasNoTrans,
+                        num_channels, num_channels,
+                        Precision(1), H2_weights_for_M1.data(), num_channels,
+                        output_adjoint, 1,
+                        Precision(0), &M1_adj(node,0), 1);
+                });
+            complete_device_stage("MACEKokkos::reverse_H2");
+            return;
+        }
+        if (symmetrix::host_flat_dense_enabled()
+                && num_channels <= host_h2_blas_max_channels) {
+            Kokkos::parallel_for(
+                "Reverse H2 flat",
+                Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                    execution_space, 0, num_nodes),
+                [=] (const int node) {
+                    Precision output_adjoint[host_h2_blas_max_channels];
+                    for (int channel=0; channel<num_channels; ++channel)
+                        output_adjoint[channel] = static_cast<Precision>(
+                            H2_adj(node,channel));
+                    const int type = node_types(node);
+                    symmetrix::host_dense_gemm_nt(
+                        output_adjoint, &H2_weights_for_H1(type,0),
+                        &H1_adj(node,0,0), 1,
+                        num_channels, num_channels, true);
+                    symmetrix::host_dense_gemm_nt(
+                        output_adjoint, H2_weights_for_M1.data(),
+                        &M1_adj(node,0), 1,
+                        num_channels, num_channels);
+                });
+            complete_device_stage("MACEKokkos::reverse_H2");
+            return;
+        }
+    }
+
+    if constexpr (std::is_same_v<
+            typename Kokkos::DefaultExecutionSpace::memory_space,
+            Kokkos::HostSpace>) {
+        Kokkos::parallel_for(
+            "Reverse H2",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                execution_space, 0, num_nodes*num_channels),
+            KOKKOS_LAMBDA (const int ik) {
+                const int i = ik / num_channels;
+                const int k = ik % num_channels;
+                Precision m1_adjoint = 0;
+                for (int kp=0; kp<num_channels; ++kp) {
+                    const Precision adjoint =
+                        static_cast<Precision>(H2_adj(i,kp));
+                    H1_adj(i,0,k) += H2_weights_for_H1(
+                        node_types(i),k*num_channels+kp)*adjoint;
+                    m1_adjoint +=
+                        H2_weights_for_M1(k*num_channels+kp)*adjoint;
+                }
+                M1_adj(i,k) = m1_adjoint;
+            });
+    } else {
+        using H2Accum = Precision;
+        Kokkos::parallel_for(
+            "Reverse H2",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                execution_space, 0, num_nodes*num_channels),
+            KOKKOS_LAMBDA (const int ik) {
+                const int i = ik / num_channels;
+                const int k = ik % num_channels;
+                H2Accum h1_adjoint = H2Accum(0);
+                H2Accum m1_adjoint = H2Accum(0);
+                for (int kp=0; kp<num_channels; ++kp) {
+                    const H2Accum adjoint = static_cast<H2Accum>(H2_adj(i,kp));
+                    h1_adjoint += static_cast<H2Accum>(
+                        H2_weights_for_H1_reverse(
+                            node_types(i),kp*num_channels+k))*adjoint;
+                    m1_adjoint += static_cast<H2Accum>(
+                        H2_weights_for_M1_reverse(
+                            kp*num_channels+k))*adjoint;
+                }
+                H1_adj(i,0,k) += static_cast<Precision>(h1_adjoint);
+                M1_adj(i,k) = static_cast<Precision>(m1_adjoint);
+            });
+    }
+    complete_device_stage("MACEKokkos::reverse_H2");
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::ensure_h1_adjoint_capacity()
+{
+    // M0 is dead after H1 forward, so it can hold the H1 adjoint.
+    if (use_h1_m0_adjoint_ping_pong()
+        && M0.extent(0) >= H1.extent(0)
+        && M0.extent(1) >= H1.extent(1)
+        && M0.extent(2) >= H1.extent(2)) {
+        H1_adj = M0;
+        return;
+    }
+    if (H1_adj.extent(0) >= H1.extent(0))
+        return;
+    if (H1_adj.data() == M0.data())
+        H1_adj = {};
+    if (H1_adj.data() == nullptr) {
+        H1_adj = decltype(H1_adj)(
+            Kokkos::view_alloc(
+                "MACE H1 adjoint", Kokkos::WithoutInitializing),
+            H1.extent(0), H1.extent(1), H1.extent(2));
+    } else {
+        Kokkos::realloc(
+            Kokkos::WithoutInitializing,
+            H1_adj, H1.extent(0), H1.extent(1), H1.extent(2));
+    }
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::reset_les_charges(const int num_nodes)
+{
+    const bool async_inference = use_factorized_async_inference();
+    const auto execution_space = async_inference
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+    if (les_charges.extent(0) < static_cast<std::size_t>(num_nodes))
+        Kokkos::realloc(les_charges, num_nodes);
+    Kokkos::deep_copy(execution_space, les_charges, 0.0);
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::compute_readout_1(
+    const int num_nodes,
+    const Kokkos::View<const int*> node_types,
+    const bool initialize_h1_adjoint)
+{
+    // Tiled plans run readouts per tile/batch, which would reset and
+    // finalize the LES charges repeatedly. Reject them instead of silently
+    // returning wrong charges.
+    if (les_enabled
+        && (single_layer_tiled_plan_active || dual_layer_tiled_plan_active))
+        throw std::runtime_error(
+            "MACE_LES charge readout is not supported by tiled execution plans.");
+    const bool async_inference = use_factorized_async_inference();
+    const auto execution_space = async_inference
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+    if (initialize_h1_adjoint) {
+        if (async_inference)
+            Kokkos::deep_copy(execution_space, H1_adj, 0.0);
+        else
+            Kokkos::deep_copy(H1_adj, 0.0);
+    }
+    if (les_enabled) {
+        if (initialize_h1_adjoint)
+            reset_les_charges(num_nodes);
+        else if (les_charges.extent(0)
+                < static_cast<std::size_t>(num_nodes))
+            throw std::logic_error(
+                "MACE_LES charges were not initialized before readout 1.");
+    }
+
+    auto num_channels = this->num_channels;
+    auto node_energies = this->node_energies;
+    auto atomic_energies = this->atomic_energies;
+    auto H1 = this->H1;
+    auto H1_adj = this->H1_adj;
+    auto readout_1_weights = this->readout_1_weights;
+    const bool les_readout_enabled = this->les_enabled;
+    auto les_readout_1_weights = this->les_readout_1_weights;
+    auto les_charges = this->les_charges;
+
+    // atomic energies
+    Kokkos::parallel_for(
+        "Compute Readouts 1 atomic energies",
+        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+            execution_space, 0, num_nodes),
+        KOKKOS_LAMBDA (const int i) {
+        node_energies(i) += atomic_energies(node_types(i));
+    });
+    // first readout
+    Kokkos::parallel_for(
+        "Compute Readouts 1",
+        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+            execution_space, 0, num_nodes),
+        KOKKOS_LAMBDA (const int i) {
+        for (int k=0; k<num_channels; ++k) {
+            node_energies(i) += readout_1_weights(k) * H1(i,0,k);
+            if (les_readout_enabled)
+                les_charges(i) += les_readout_1_weights(k) * H1(i,0,k);
+            if (initialize_h1_adjoint)
+                H1_adj(i,0,k) = readout_1_weights(k);
+        }
+    });
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::compute_readout_2(const int num_nodes)
+{
+    // Tiled plans evaluate readout 2 per tile, so the LES charges would only
+    // cover the active tile. Reject them instead of silently wrong charges.
+    if (les_enabled
+        && (single_layer_tiled_plan_active || dual_layer_tiled_plan_active))
+        throw std::runtime_error(
+            "MACE_LES charge readout is not supported by tiled execution plans.");
+    const bool async_inference = use_factorized_async_inference();
+    const auto execution_space = async_inference
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+    if (use_mh0_adjoint_reuse())
+        H2_adj = H2;
+    if (H2_adj.extent(0) < static_cast<std::size_t>(num_nodes)
+        || H2_adj.extent_int(1) != num_channels)
+        Kokkos::realloc(H2_adj, num_nodes, num_channels);
+    const bool recompute_readout = readout_recompute;
+    auto node_energies = this->node_energies;
+    if (!recompute_readout && readout_2_output.extent(0)
+            < static_cast<std::size_t>(num_nodes))
+        Kokkos::realloc(readout_2_output, num_nodes);
+    auto H2 = Kokkos::subview(this->H2, make_pair(0,num_nodes), Kokkos::ALL);
+    auto H2_adj = Kokkos::subview(this->H2_adj, make_pair(0,num_nodes), Kokkos::ALL);
+    // LES readout 2 must consume the FORWARD H2. `use_mh0_adjoint_reuse()`
+    // aliases H2_adj onto H2, and the energy readout's gradient below writes
+    // the adjoint in place; evaluating the LES head afterwards would read the
+    // adjoint instead of the features. Do it first.
+    if (les_enabled) {
+        if (les_charges.extent(0) < static_cast<std::size_t>(num_nodes))
+            throw std::logic_error(
+                "MACE_LES charges were not initialized before readout 2.");
+        if (les_readout_2_output.extent(0)
+                < static_cast<std::size_t>(num_nodes))
+            Kokkos::realloc(les_readout_2_output, num_nodes);
+        auto les_readout_2_output = Kokkos::subview(
+            this->les_readout_2_output, make_pair(0,num_nodes));
+        les_readout_2.evaluate(
+            execution_space, H2, les_readout_2_output, false);
+        // H2 still holds the forward features here. The energy readout
+        // gradient below may write its adjoint into H2 in place when
+        // H2_adj aliases H2 (use_mh0_adjoint_reuse()), so cache the
+        // per-node feature gradient d readout_2/dH2 now, with seed 1.
+        // The per-sample gradient is linear in the output seed, so
+        // apply_les_charge_adjoint() scales it by dE/dq later.
+        if (les_readout_2_feature_grad.extent(0)
+                < static_cast<std::size_t>(num_nodes)
+            || les_readout_2_feature_grad.extent_int(1) != num_channels)
+            Kokkos::realloc(
+                les_readout_2_feature_grad, num_nodes, num_channels);
+        les_readout_2.evaluate_gradient(
+            execution_space, H2, les_readout_2_output,
+            les_readout_2_feature_grad, false);
+        auto les_charges = this->les_charges;
+        Kokkos::parallel_for(
+            "Compute LES Readouts 2",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                execution_space, 0, num_nodes),
+            KOKKOS_LAMBDA (const int i) {
+            les_charges(i) += les_readout_2_output(i);
+        });
+    }
+    if (recompute_readout) {
+        readout_2.evaluate_gradient_accumulate_recompute(
+            execution_space, H2, node_energies, H2_adj, false);
+    } else if (async_inference) {
+        auto readout_2_output = Kokkos::subview(
+            this->readout_2_output, make_pair(0,num_nodes));
+        readout_2.evaluate_gradient(
+            execution_space, H2, readout_2_output, H2_adj, false);
+    } else {
+        auto readout_2_output = Kokkos::subview(
+            this->readout_2_output, make_pair(0,num_nodes));
+        readout_2.evaluate_gradient(H2, readout_2_output, H2_adj);
+    }
+    if (!recompute_readout) {
+        auto readout_2_output = Kokkos::subview(
+            this->readout_2_output, make_pair(0,num_nodes));
+        Kokkos::parallel_for(
+            "Compute Readouts 2",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                execution_space, 0, num_nodes),
+            KOKKOS_LAMBDA (const int i) {
+            node_energies(i) += readout_2_output(i);
+        });
+    }
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::finalize_les_charges(const int num_nodes)
+{
+    if (!les_enabled)
+        return;
+    if (num_nodes <= 0)
+        return;
+    if (les_charges.extent(0) < static_cast<std::size_t>(num_nodes))
+        throw std::logic_error(
+            "MACE_LES charges were not accumulated before finalization.");
+    const bool async_inference = use_factorized_async_inference();
+    const auto execution_space = async_inference
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+    auto les_charges = this->les_charges;
+    const double output_scale = les_output_scale;
+    const bool remove_mean = les_remove_mean;
+    double mean_charge = 0.0;
+    if (remove_mean)
+        Kokkos::parallel_reduce(
+            "MACEKokkos::finalize_les_charges_mean",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                execution_space, 0, num_nodes),
+            KOKKOS_LAMBDA (const int i, double& local_sum) {
+            local_sum += les_charges(i);
+        },
+            mean_charge);
+    mean_charge /= static_cast<double>(num_nodes);
+    Kokkos::parallel_for(
+        "MACEKokkos::finalize_les_charges",
+        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+            execution_space, 0, num_nodes),
+        KOKKOS_LAMBDA (const int i) {
+        double charge = output_scale * les_charges(i);
+        if (remove_mean)
+            charge -= output_scale * mean_charge;
+        les_charges(i) = charge;
+    });
+    Kokkos::fence("MACEKokkos::finalize_les_charges");
+}
+
+template <typename Precision>
+void MACEKokkos<Precision>::apply_les_charge_adjoint(const int num_nodes)
+{
+    if (!les_enabled)
+        return;
+    if (num_nodes <= 0)
+        return;
+    if (les_ewald_dE_dq.extent(0) < static_cast<std::size_t>(num_nodes))
+        throw std::logic_error(
+            "MACE_LES charge adjoint ran before the Ewald charge gradient "
+            "was computed.");
+    if (les_charges.extent(0) < static_cast<std::size_t>(num_nodes))
+        throw std::logic_error(
+            "MACE_LES charges were not finalized before the charge adjoint.");
+    if (H2_adj.extent(0) < static_cast<std::size_t>(num_nodes)
+        || H2_adj.extent_int(1) < num_channels)
+        throw std::logic_error(
+            "MACE_LES charge adjoint requires the readout-2 H2 adjoint.");
+    if (les_readout_2_feature_grad.extent(0)
+            < static_cast<std::size_t>(num_nodes)
+        || les_readout_2_feature_grad.extent_int(1) < num_channels)
+        throw std::logic_error(
+            "MACE_LES charge adjoint requires the readout-2 feature "
+            "gradient.");
+    const bool async_inference = use_factorized_async_inference();
+    const auto execution_space = async_inference
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+    ensure_h1_adjoint_capacity();
+    if (H1_adj.extent(0) < static_cast<std::size_t>(num_nodes)
+        || H1_adj.extent_int(1) < 1
+        || H1_adj.extent_int(2) < num_channels)
+        throw std::logic_error(
+            "MACE_LES charge adjoint requires the readout-1 H1 adjoint.");
+
+    auto dE_dq = this->les_ewald_dE_dq;
+    const double output_scale = les_output_scale;
+    const bool remove_mean = les_remove_mean;
+    double mean_dE_dq = 0.0;
+    if (remove_mean)
+        Kokkos::parallel_reduce(
+            "MACEKokkos::apply_les_charge_adjoint_mean",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                execution_space, 0, num_nodes),
+            KOKKOS_LAMBDA (const int i, double& local_sum) {
+            local_sum += dE_dq(i);
+        },
+            mean_dE_dq);
+    mean_dE_dq /= static_cast<double>(num_nodes);
+
+    auto H1_adj = this->H1_adj;
+    auto H2_adj = Kokkos::subview(
+        this->H2_adj, make_pair(0,num_nodes), Kokkos::ALL);
+    auto feature_grad = this->les_readout_2_feature_grad;
+    auto les_readout_1_weights = this->les_readout_1_weights;
+    const int channels = num_channels;
+    Kokkos::parallel_for(
+        "MACEKokkos::apply_les_charge_adjoint",
+        Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+            execution_space, 0, num_nodes),
+        KOKKOS_LAMBDA (const int i) {
+        // q_final_i = output_scale*(q_raw_i - remove_mean*mean(q_raw)), so
+        // dq_raw_i = output_scale*(dE/dq_final_i
+        //                         - remove_mean*mean(dE/dq_final)).
+        const double dq_raw = output_scale
+            * (dE_dq(i) - (remove_mean ? mean_dE_dq : 0.0));
+        for (int k=0; k<channels; ++k) {
+            H1_adj(i,0,k) += static_cast<Precision>(
+                dq_raw * les_readout_1_weights(k));
+            H2_adj(i,k) += dq_raw * feature_grad(i,k);
+        }
+    });
+    Kokkos::fence("MACEKokkos::apply_les_charge_adjoint");
+}
+
+template <typename Precision>
+double MACEKokkos<Precision>::compute_readouts(
+    int num_nodes,
+    const Kokkos::View<const int*> node_types,
+    const bool compute_total_energy,
+    const bool completion_fence)
+{
+    const bool async_inference = use_factorized_async_inference();
+    const auto execution_space = async_inference
+        ? factorized_execution_space : Kokkos::DefaultExecutionSpace();
+    ensure_h1_adjoint_capacity();
+    compute_readout_1(num_nodes, node_types, true);
+    compute_readout_2(num_nodes);
+    if (les_enabled)
+        finalize_les_charges(num_nodes);
+    auto node_energies = this->node_energies;
+
+    double energy = 0.0;
+    if (compute_total_energy)
+        Kokkos::parallel_reduce(
+            "MACEKokkos::compute_readouts_total_energy",
+            Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(
+                execution_space, 0, num_nodes),
+            KOKKOS_LAMBDA (const int i, double& local_sum) {
+                local_sum += node_energies(i);
+            },
+            energy);
+
+    if (completion_fence) {
+        Kokkos::fence("MACEKokkos::compute_readouts");
+        if (mace_uses_prepared_execution(streamed_edges)
+            && !has_field_coupling)
+            factorized_stage_fence_count += 1;
+    }
+
+    return energy;
+}
+
+
+template class MACEKokkos<float>;
+template class MACEKokkos<double>;
