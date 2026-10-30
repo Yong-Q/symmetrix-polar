@@ -1,5 +1,6 @@
 # Large, reproducible run artifacts stay in the workspace, not in git.
 bench/
+dist/
 __pycache__/
 *.pyc
 pytools/
