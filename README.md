@@ -24,6 +24,32 @@ electrostatics — in the Symmetrix-XL C++/Kokkos/LAMMPS engine.
 >   (2.73 µs/atom) and +20 % at 1,500 ambient-density atoms (4.46).
 > - **c1/c2:** density and correlation sampling with the student or reweighted reference requires property-level validation.
 
+## MACELES / LES speed on one A100 (2026-10-30)
+
+MACELES reuses the MACE backbone and adds two latent-charge readouts (linear
+H1 + MLP H2) and a periodic triclinic GTO-Ewald energy/force kernel. All
+numbers are µs/atom/step, FP32, `streamed_edges direct` + model-specific JIT
+cubin, dedicated q4 A100, NVT ensemble at 300 K (not `run 0`):
+
+| system | atoms | density (molecules/Å³) | MACELES | same backbone | LES cost |
+|---|---:|---:|---:|---:|---:|
+| low-density bench box | 5,001 | 0.020 | **4.22** | 2.73 | +54 % |
+| low-density bench box | 1,002 | 0.020 | 5.09 | 3.66 | +39 % |
+| real water, NVT 300 K | 1,500 | 0.0334 (1.0 g/cm³) | **5.37** | 4.46 | +20 % |
+
+- **1 ns of real water MD** (1,500 atoms, 0.5 fs): **≈4.5 h** at the clean
+  20-step rate, **≈5.3 h** at the sustained 18,000-step rate, on one A100.
+- The 1,500-atom box was equilibrated for 10 ps in the engine (299.05 K,
+  −414.48 eV, 500 H₂O at 1.0 g/cm³) before timing; the 5,001/1,002 boxes are
+  the earlier 0.02 molecules/Å³ benchmark boxes.
+- **Numerical accuracy** vs PyTorch MACELES (FP64, identical geometries):
+  ΔE < 0.001 meV/atom at 1,002 / 1,500 / 5,001 atoms; force MAE
+  0.0015–0.0086 eV/Å, correlation 0.9971–0.9999.
+- LES costs more at 5,001 atoms because the Ewald reciprocal-space work grows
+  with box volume; at 1,500 ambient-density atoms the denser neighbour list
+  (143 neighbours/atom) dilutes it.
+- Full protocol and artefacts: `docs/results/MACELES_Q4_VERIFY_2026-10-30.md`.
+
 ## Distillation: MACE-Polar → linear MACE + charge/dipole readout
 
 **2026-10-27.** A 128-channel linear MACE backbone distilled from the
@@ -65,33 +91,6 @@ kernel, and the project runs it in FP64: 12.3 (backbone) + 7.9 (Ewald) +
 is **~20 µs/atom/step**, not 4.47. On a dedicated q4 A100 the same compact
 backbone measures **2.73 µs/atom/step** at 5,001 atoms; 4.47 was a local
 3-process run sharing one GPU.
-
-### MACELES (latent Ewald) in the same engine — 2026-10-30
-
-MACELES reuses the MACE backbone and adds two charge readouts (linear H1 +
-MLP H2) and a periodic triclinic GTO-Ewald energy/force kernel. On a dedicated
-q4 A100 (FP32, `streamed_edges direct` + model-specific JIT cubin):
-
-| system | atoms | density (molecules/Å³) | MACELES | same backbone only | LES cost |
-|---|---:|---:|---:|---:|---:|
-| low-density bench box | 5,001 | 0.020 | **4.22** | 2.73 | +54 % |
-| low-density bench box | 1,002 | 0.020 | 5.09 | 3.66 | +39 % |
-| real water, NVT 300 K | 1,500 | 0.0334 (1.0 g/cm³) | **5.37** | 4.46 | +20 % |
-
-All values are µs/atom/step, medians/minima of 15 × 20-step NVT samples per
-arm, interleaved LES/no-LES in one task. The 1,500-atom box also sustains
-**6.34 µs/atom/step over 18,000 consecutive NVT steps** (9 ps at 0.5 fs), i.e.
-≈ **4.5–5.3 h per 1 ns** of 1,500-atom water MD on one A100. The LES fraction
-is larger at 5,001 atoms because the Ewald reciprocal-space work grows with box
-volume; at 1,500 atoms in ambient-density water the denser neighbour list
-(143 neighbours/atom) dilutes it.
-
-Numerical validation on identical geometries against PyTorch MACELES (FP64):
-energy matches to **<0.001 meV/atom** at 1,002 / 1,500 / 5,001 atoms; force MAE
-0.0015–0.0086 eV/Å (relative ~1 %, largest on the equilibrated 1.0 g/cm³ box
-whose reference forces reach 1.12 eV/Å), correlation 0.9971–0.9999. The
-engine's step-0 energies (-174.69754, -414.48406, -956.65211 eV) are identical
-to the independent q4 runs.
 
 **Per-molecule E/F (3,465 held-out; all entries are MAE vs the teacher).
 E is in meV/atom; F is in meV/Å (mean absolute Cartesian component error):**
