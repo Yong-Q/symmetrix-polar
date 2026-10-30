@@ -158,14 +158,15 @@ def prepare_box(species: str, n_mol: int, rho: float, seed: int,
     return path
 
 
-def make_field(T: float, seed: int, L: float):
+def make_field(T: float, seed: int, L: float, scale: float = 1.0):
     rng = np.random.default_rng(seed)
     a = rng.normal(0.0, 1.0, N_HARM)
     phi = rng.uniform(0.0, 2.0 * np.pi, N_HARM)
     n = np.arange(1, N_HARM + 1, dtype=float)
     k = 2.0 * np.pi * n / L
-    A = KB_EV_PER_K * T * a          # eV
-    return {"a": a, "phi": phi, "k": k, "A": A, "L": L, "T": T, "seed": seed}
+    A = scale * KB_EV_PER_K * T * a          # eV
+    return {"a": a, "phi": phi, "k": k, "A": A, "L": L, "T": T, "seed": seed,
+            "scale": scale}
 
 
 def field_variables(f: dict) -> str:
@@ -182,6 +183,14 @@ def write_input(work: Path, T: float, seed: int, steps_eq: int,
                 steps_prod: int, dump_every: int, field: dict,
                 elements: list, sampler: dict, timestep: float = 0.001) -> Path:
     sin_terms, cos_terms = field_variables(field)
+    if field.get("scale", 1.0) == 0.0:
+        field_block = ""
+    else:
+        field_block = (f'variable field_energy atom "{sin_terms}"\n'
+                       f'variable field_force atom "{cos_terms}"\n'
+                       'fix field all addforce v_field_force 0.0 0.0 '
+                       'energy v_field_energy\n'
+                       'fix_modify field energy yes\n')
     jit = ""
     if sampler["cubin"].exists():
         jit = (f" jit_device_artifact {sampler['cubin']}"
@@ -201,11 +210,7 @@ neigh_modify every 100 delay 0 check no
 timestep {timestep}
 velocity all create {T} {seed} mom yes rot no dist gaussian
 fix 1 all nvt temp {T} {T} 0.1
-variable field_energy atom "{sin_terms}"
-variable field_force atom "{cos_terms}"
-fix field all addforce v_field_force 0.0 0.0 energy v_field_energy
-fix_modify field energy yes
-thermo 200
+{field_block}thermo 200
 thermo_style custom step time temp pe ke etotal
 run_style verlet/kk
 run {steps_eq}
@@ -256,7 +261,8 @@ def run_state(species: str, rho, T: int, seed: int, args) -> dict:
         prepare_box(species, args.nmols, rho, seed, work, args.min_steps)
     data_path = work / "data.lammps"
     elements = PAIR_ELEMENTS[species]
-    field = make_field(T, seed, box_length_x(data_path))
+    field = make_field(T, seed, box_length_x(data_path),
+                       scale=args.field_scale)
     inp = write_input(work, T, seed, args.steps_eq, args.steps_prod,
                       args.dump_every, field, elements, sampler,
                       args.timestep)
@@ -322,6 +328,8 @@ def main():
                     help="do not start a new state below this free memory")
     ap.add_argument("--timestep", type=float, default=0.001,
                     help="ps; use 0.0005 for dense/hot boxes")
+    ap.add_argument("--field-scale", type=float, default=1.0,
+                    help="multiply the site-field amplitude; 0 = unfielded MD")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
     if args.smoke:

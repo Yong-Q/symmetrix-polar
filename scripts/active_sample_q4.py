@@ -50,7 +50,7 @@ def parse_states(spec):
 
 
 def run_state(calc, species, nmols, rho, temp, seed, dt_fs, equil_ps, ps,
-              frame_ps, out, tag):
+              frame_ps, out, tag, teacher=None):
     atoms = build_box(species, nmols, rho, seed)
     atoms.calc = calc
     FIRE(atoms, logfile=None).run(fmax=0.1, steps=300)
@@ -65,8 +65,15 @@ def run_state(calc, species, nmols, rho, temp, seed, dt_fs, equil_ps, ps,
     n_written = [0]
 
     def dump(*_):
-        e = float(atoms.get_potential_energy())
-        f = atoms.get_forces()
+        if teacher is not None:
+            # Off-policy sampling: run the cheap engine, label with the teacher.
+            probe = atoms.copy()
+            probe.calc = teacher
+            e = float(probe.get_potential_energy())
+            f = probe.get_forces()
+        else:
+            e = float(atoms.get_potential_energy())
+            f = atoms.get_forces()
         atoms.info.update({
             "config_type": f"{species}_dense",
             "REF_energy": e,
@@ -76,6 +83,7 @@ def run_state(calc, species, nmols, rho, temp, seed, dt_fs, equil_ps, ps,
             "density_mol_A3": rho,
             "temperature_K": temp,
             "md_seed": seed,
+            "sampler": "off23+polar-label" if teacher is not None else "polar",
             "timestep": int(dyn.get_number_of_steps()),
         })
         atoms.arrays["REF_forces"] = f
@@ -99,19 +107,32 @@ def main():
     ap.add_argument("--equil-ps", type=float, default=1.0)
     ap.add_argument("--ps", type=float, default=6.0)
     ap.add_argument("--frame-ps", type=float, default=0.5)
+    ap.add_argument("--sampler", default="polar", choices=["polar", "off23"])
+    ap.add_argument("--off23-model", default=(
+        "/workspace/group/shared/bza/task3_sampling_database/mlip/models/"
+        "MACE-OFF23_medium.model"))
     args = ap.parse_args()
 
-    from mace.calculators import mace_polar
-    calc = mace_polar(model=args.model, device="cuda", default_dtype="float64")
+    from mace.calculators import MACECalculator, mace_polar
+    teacher = None
+    if args.sampler == "off23":
+        calc = MACECalculator(model_paths=args.off23_model, device="cuda",
+                              default_dtype="float64")
+        teacher = mace_polar(model=args.model, device="cuda",
+                             default_dtype="float64")
+    else:
+        calc = mace_polar(model=args.model, device="cuda",
+                          default_dtype="float64")
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".",
                 exist_ok=True)
-    manifest = {"states": [], "out": args.out,
+    manifest = {"states": [], "out": args.out, "sampler": args.sampler,
                 "dt_fs": args.dt_fs, "ps": args.ps}
     for species, nmols, rho, temp, seed in parse_states(args.states):
         tag = f"{species}-{nmols}mol-r{rho:g}-{int(temp)}K-f{seed % 1000}"
         t0 = time.time()
         n = run_state(calc, species, nmols, rho, temp, seed, args.dt_fs,
-                      args.equil_ps, args.ps, args.frame_ps, args.out, tag)
+                      args.equil_ps, args.ps, args.frame_ps, args.out, tag,
+                      teacher=teacher)
         manifest["states"].append({
             "tag": tag, "species": species, "n_molecules": nmols,
             "rho": rho, "T": temp, "seed": seed, "frames": n,
