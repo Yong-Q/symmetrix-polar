@@ -1,0 +1,3 @@
+sim_id,species,T_K,rho_mean_A3,n_frames,mu,mu_convention,weights_source,field_max_abs_eV,c2_pair,rho_pair_A3,c2_short_trajectory,split
+site-H2O-125mol-r0.02-300K-f103,H2O,300,0.02000000000000629,41,-4.462544348539771,profile_mean,none,0.033084978899130826,,,,val
+site-CO2-125mol-r0.02-500K-f101,CO2,500,0.02000000000000629,7,-3.2707078685690516,profile_mean,none,0.08766522920151287,,,,train

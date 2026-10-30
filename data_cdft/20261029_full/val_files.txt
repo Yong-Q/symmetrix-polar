@@ -1,0 +1,17 @@
+site-C2H4-64mol-r0.015-500K-f912
+site-C2H4-64mol-r0.02-700K-f106
+site-C2H6-64mol-r0.01-700K-f921
+site-C2H6-64mol-r0.02-300K-f104
+site-CH4-125mol-r0.02-300K-f104
+site-CH4-125mol-r0.02-500K-f103
+site-CH4-64mol-r0.03-500K-f931
+site-CO2-125mol-r0.01-300K-f101
+site-CO2-125mol-r0.01-300K-f202
+site-CO2-125mol-r0.01-500K-f101
+site-CO2-125mol-r0.02-500K-f103
+site-CO2-125mol-r0.02-700K-f101
+site-CO2-125mol-r0.03-300K-f101
+site-CO2-64mol-r0.025-500K-f901
+site-H2O-125mol-r0.02-700K-f106
+site-NH3-125mol-r0.02-700K-f106
+bulk-H2O-r0.02-300.0K

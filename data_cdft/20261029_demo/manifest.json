@@ -1,0 +1,56 @@
+{
+ "schema": "prl-f1/f2 + pnas sim_dict",
+ "generated_by": "sampling.cdft_dataset",
+ "bins": 2000,
+ "density": "molecular",
+ "val_frac": 0.2,
+ "n_runs": 2,
+ "runs": [
+  {
+   "sim_id": "site-H2O-125mol-r0.02-300K-f103",
+   "species": "H2O",
+   "T_K": 300,
+   "rho_mean_A3": 0.02000000000000629,
+   "n_frames": 41,
+   "bins": 2000,
+   "density_kind": "molecular",
+   "mu": -4.462544348539771,
+   "mu_convention": "profile_mean",
+   "weights_source": "none",
+   "units": {
+    "length": "A",
+    "density": "A^-3",
+    "Vext": "kT",
+    "mu": "kT",
+    "c1": "dimensionless"
+   },
+   "field_max_abs_eV": 0.033084978899130826,
+   "source": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_d_inhomog_2026-10-27/site-H2O-125mol-r0.02-300K-f103/traj.lammpstrj",
+   "source_sha256": "ae0bb7a149a426347a575052a6dd31fd763b7abcc60e389e4be4c6fd2e7d5c9f",
+   "field_sha256": "1475b549e64a02651d53f90dcee6ac687685a3d00f766137596bfc55dbdeed78"
+  },
+  {
+   "sim_id": "site-CO2-125mol-r0.02-500K-f101",
+   "species": "CO2",
+   "T_K": 500,
+   "rho_mean_A3": 0.02000000000000629,
+   "n_frames": 7,
+   "bins": 2000,
+   "density_kind": "molecular",
+   "mu": -3.2707078685690516,
+   "mu_convention": "profile_mean",
+   "weights_source": "none",
+   "units": {
+    "length": "A",
+    "density": "A^-3",
+    "Vext": "kT",
+    "mu": "kT",
+    "c1": "dimensionless"
+   },
+   "field_max_abs_eV": 0.08766522920151287,
+   "source": "/workspace/group/shared/bza/symmetrix-polar/bench/plan_d_inhomog_2026-10-27/site-CO2-125mol-r0.02-500K-f101/traj.lammpstrj",
+   "source_sha256": "db557d88a91e14c32597c461228fc7a37b78c978925d23d6ef7d3bdda9755afe",
+   "field_sha256": "568fa27fc0e7ed95c381355207e6b4d1c6e8328ff5f9dd959d9f6ab38fb24e33"
+  }
+ ]
+}
